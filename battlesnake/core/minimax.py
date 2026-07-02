@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from battlesnake.battlesnake_native import minimax_move as native_minimax_move
 from battlesnake.game import Board
 from battlesnake.types import Move
 
@@ -18,7 +19,5 @@ def minimax_move(board: Board, snake_id: str, time_budget_ms: int = 400) -> Move
         Selected move.
     """
 
-    # TODO: implement minimax with alpha-beta pruning for 1v1 games.
-    # Input: board, snake id, time budget in milliseconds
-    # Output: selected Move
-    raise NotImplementedError("Stub — implement me")
+    # TODO: implement minimax with alpha-beta pruning in c-core/core/core_algorithms.c.
+    return Move(native_minimax_move(board, snake_id, time_budget_ms))

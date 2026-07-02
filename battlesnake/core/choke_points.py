@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from battlesnake.game import Board
-from battlesnake.types import Coord
+from battlesnake.battlesnake_native import choke_points as native_choke_points
+from battlesnake.game import Board, Coord
 
 
 def choke_points(board: Board, snake_id: str) -> set[Coord]:
@@ -17,7 +17,5 @@ def choke_points(board: Board, snake_id: str) -> set[Coord]:
         Set of coordinates that behave as graph bridges or narrow passages.
     """
 
-    # TODO: implement Tarjan bridge/articulation analysis for choke detection.
-    # Input: board, snake id
-    # Output: set of choke-point coordinates
-    raise NotImplementedError("Stub — implement me")
+    # TODO: implement Tarjan bridge/articulation analysis in c-core/core/core_algorithms.c.
+    return native_choke_points(board, snake_id)

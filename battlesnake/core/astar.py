@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from battlesnake.game import Board
-from battlesnake.types import Coord
+from battlesnake.battlesnake_native import shortest_path as native_shortest_path
+from battlesnake.game import Board, Coord
 
 
 def shortest_path(board: Board, start: Coord, goal: Coord, snake_id: str) -> list[Coord]:
@@ -19,7 +19,5 @@ def shortest_path(board: Board, start: Coord, goal: Coord, snake_id: str) -> lis
         A list of coordinates from start to goal, or an empty list if no path exists.
     """
 
-    # TODO: implement A* pathfinding over safe board cells.
-    # Input: board, start coordinate, goal coordinate, snake id
-    # Output: list of coordinates forming the path
-    raise NotImplementedError("Stub — implement me")
+    # TODO: implement A* pathfinding in c-core/core/core_algorithms.c.
+    return native_shortest_path(board, start, goal, snake_id)

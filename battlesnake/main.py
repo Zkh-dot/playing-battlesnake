@@ -14,7 +14,7 @@ if __package__ in (None, ""):
 
 from fastapi import FastAPI, HTTPException
 
-from battlesnake.game import Board
+from battlesnake.game import Board, board_from_game_state
 from battlesnake.strategies.constrictor import StrategyConstrictor
 from battlesnake.strategies.duel import StrategyDuel
 from battlesnake.strategies.royale import StrategyRoyale
@@ -37,11 +37,17 @@ def select_strategy(state: GameState) -> StrategyStandard | StrategyRoyale | Str
     return StrategyStandard()
 
 
-def fallback_move(board: Board, snake_id: str) -> Move:
+def fallback_move(board: Board, snake_id: str) -> Move | str:
     """Return the first immediate safe move, or up when no safe move exists."""
 
     moves = board.safe_moves(snake_id)
     return moves[0] if moves else Move.UP
+
+
+def move_response_value(move: Move | str) -> str:
+    """Return the API string for either a Move enum or a native move string."""
+
+    return move.value if isinstance(move, Move) else str(move)
 
 
 @app.get("/")
@@ -69,7 +75,7 @@ def start(state: GameState) -> dict[str, str]:
 def move(state: GameState) -> dict[str, str]:
     """Select and return a move for the current Battlesnake turn."""
 
-    board = Board.from_game_state(state)
+    board = board_from_game_state(state)
     strategy = select_strategy(state)
 
     try:
@@ -79,7 +85,7 @@ def move(state: GameState) -> dict[str, str]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return {"move": selected_move.value}
+    return {"move": move_response_value(selected_move)}
 
 
 @app.post("/end")

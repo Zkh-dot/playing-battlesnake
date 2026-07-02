@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from battlesnake.game import Board
-from battlesnake.types import Coord
+from battlesnake.battlesnake_native import voronoi_territory as native_voronoi_territory
+from battlesnake.game import Board, Coord
 
 
 def voronoi_territory(board: Board) -> dict[str, set[Coord]]:
@@ -16,7 +16,4 @@ def voronoi_territory(board: Board) -> dict[str, set[Coord]]:
         Mapping from snake id to the set of cells controlled by that snake.
     """
 
-    # TODO: implement multi-source BFS territory control.
-    # Input: board
-    # Output: mapping from snake id to controlled coordinate set
-    raise NotImplementedError("Stub — implement me")
+    return native_voronoi_territory(board)

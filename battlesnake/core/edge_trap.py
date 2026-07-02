@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from battlesnake.battlesnake_native import edge_trap_move as native_edge_trap_move
 from battlesnake.game import Board
 from battlesnake.types import Move
 
@@ -17,7 +18,6 @@ def edge_trap_move(board: Board, snake_id: str) -> Move | None:
         A Move when an edge trap is available, otherwise None.
     """
 
-    # TODO: implement edge-trapping logic for pressuring opponents near walls.
-    # Input: board, snake id
-    # Output: optional Move
-    raise NotImplementedError("Stub — implement me")
+    # TODO: implement edge-trapping logic in c-core/core/core_algorithms.c.
+    move = native_edge_trap_move(board, snake_id)
+    return Move(move) if move is not None else None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from battlesnake.battlesnake_native import evaluate as native_evaluate
 from battlesnake.game import Board
 
 
@@ -26,7 +27,5 @@ def evaluate(board: Board, snake_id: str) -> float:
         Floating-point utility score where larger is better for snake_id.
     """
 
-    # TODO: implement weighted evaluation using health, length, space, food, and hazards.
-    # Input: board, snake id
-    # Output: numeric utility score
-    raise NotImplementedError("Stub — implement me")
+    # TODO: implement weighted evaluation in c-core/core/core_algorithms.c.
+    return native_evaluate(board, snake_id)

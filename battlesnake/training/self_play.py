@@ -6,8 +6,8 @@ from collections import deque
 from random import Random
 from typing import Any
 
-from battlesnake.game import Board
-from battlesnake.types import Coord, Move, Snake
+from battlesnake.game import Board, Coord, Snake
+from battlesnake.types import Move
 
 
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -184,13 +184,15 @@ def _coords_from_config(raw: Any) -> list[Coord]:
             coords.append(value)
         elif isinstance(value, dict):
             coords.append(Coord(x=int(value["x"]), y=int(value["y"])))
+        elif hasattr(value, "x") and hasattr(value, "y"):
+            coords.append(Coord(x=int(value.x), y=int(value.y)))
         else:
             x, y = value
             coords.append(Coord(x=int(x), y=int(y)))
     return coords
 
 
-def _choose_move(board: Board, snake_id: str, weights: dict[str, float], rng: Random) -> Move:
+def _choose_move(board: Board, snake_id: str, weights: dict[str, float], rng: Random) -> Move | str:
     safe_moves = board.safe_moves(snake_id)
     candidates = safe_moves or list(Move)
     scored = [
@@ -204,7 +206,7 @@ def _choose_move(board: Board, snake_id: str, weights: dict[str, float], rng: Ra
 def _score_move(
     board: Board,
     snake_id: str,
-    move: Move,
+    move: Move | str,
     weights: dict[str, float],
     rng: Random,
 ) -> float:
@@ -287,7 +289,7 @@ def _manhattan(left: Coord, right: Coord) -> int:
 
 def _record_turn_stats(
     board: Board,
-    moves: dict[str, Move],
+    moves: dict[str, Move | str],
     stats: dict[str, dict[str, int]],
 ) -> None:
     for snake_id, move in moves.items():

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from battlesnake.game import Board
-from battlesnake.types import Coord
+from battlesnake.battlesnake_native import reachable_space as native_reachable_space
+from battlesnake.game import Board, Coord
 
 
 def reachable_space(board: Board, start: Coord, snake_id: str) -> int:
@@ -18,7 +18,5 @@ def reachable_space(board: Board, start: Coord, snake_id: str) -> int:
         Count of reachable safe cells.
     """
 
-    # TODO: implement BFS flood fill that counts reachable safe cells.
-    # Input: board, start coordinate, snake id
-    # Output: integer reachable cell count
-    raise NotImplementedError("Stub — implement me")
+    # TODO: implement BFS flood fill in c-core/core/core_algorithms.c.
+    return native_reachable_space(board, start, snake_id)
