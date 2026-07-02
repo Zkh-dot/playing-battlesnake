@@ -1,0 +1,1 @@
+"""Battlesnake bot package."""

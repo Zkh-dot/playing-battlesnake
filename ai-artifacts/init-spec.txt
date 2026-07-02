@@ -1,0 +1,115 @@
+# BattleSnake — Codex Specification
+
+## Objective
+Generate a complete, deployable Battlesnake bot skeleton. Every strategic algorithm is a stub with a TODO comment — you fill those gaps yourself.
+
+## Stack
+- Python 3.11
+- FastAPI + Uvicorn
+- No ML/RL libraries (only: fastapi, uvicorn, pydantic)
+
+## Directory Structure
+```
+battlesnake/
+├── main.py              # FastAPI app, routes: /start /move /end
+├── requirements.txt
+├── Dockerfile
+├── types.py             # Coord, Snake, GameState, Move (Pydantic models)
+├── game.py              # Board representation, safe_moves filter
+├── core/
+│   ├── __init__.py
+│   ├── flood_fill.py    # TODO: BFS flood fill
+│   ├── astar.py         # TODO: A* pathfinding
+│   ├── voronoi.py       # TODO: multi-source BFS territory control
+│   ├── minimax.py       # TODO: minimax + alpha-beta for 1v1
+│   ├── choke_points.py  # TODO: Tarjan's bridges for choke detection
+│   ├── edge_trap.py     # TODO: edge-trapping logic
+│   ├── hazard.py        # TODO: hazard zone prediction (Royale)
+│   └── evaluation.py    # TODO: weighted evaluation function
+├── strategies/
+│   ├── __init__.py
+│   ├── base.py          # Abstract strategy interface
+│   ├── standard.py      # 4-snake free-for-all → TODO
+│   ├── duel.py          # 1v1 → TODO (uses minimax)
+│   ├── royale.py        # shrinking hazard → TODO
+│   └── constrictor.py   # tail never shrinks → TODO
+└── training/
+    ├── __init__.py
+    └── self_play.py     # TODO: self-play weight tuning
+```
+
+## Rules
+
+### DO implement:
+- FastAPI app with /start, /move, /end endpoints
+- Game state models in types.py (Coord, Snake, GameState, Move)
+- Board class in game.py with:
+  - Grid representation (walls, bodies, heads, food, hazards)
+  - safe_moves(snake_id) → list[Move]
+  - is_safe(coord, snake_id) → bool
+  - clone_and_apply(moves: dict[str, Move]) → Board (for minimax simulation)
+- Strategy dispatch in main.py (detect game mode → call strategy)
+- All imports, type annotations, docstrings, error handling
+- Dockerfile + requirements.txt
+
+### DO NOT implement (leave as stubs):
+Every core algorithm function body — write only:
+```python
+# TODO: implement [algorithm name]
+# Input: board, params
+# Output: expected return type
+# This is YOUR strategic decision — fill the body yourself.
+raise NotImplementedError("Stub — implement me")
+```
+
+Lists of stub functions:
+
+**core/flood_fill.py:**
+- reachable_space(board, start, snake_id) → int
+
+**core/astar.py:**
+- shortest_path(board, start, goal, snake_id) → list[Coord]
+
+**core/voronoi.py:**
+- voronoi_territory(board) → dict[str, set[Coord]]
+
+**core/minimax.py:**
+- minimax_move(board, snake_id, time_budget_ms=400) → Move
+
+**core/choke_points.py:**
+- choke_points(board, snake_id) → set[Coord]
+
+**core/edge_trap.py:**
+- edge_trap_move(board, snake_id) → Move | None
+
+**core/hazard.py:**
+- predict_hazards(board, turns_ahead=3) → set[Coord]
+
+**core/evaluation.py:**
+- evaluate(board, snake_id) → float
+- WEIGHTS dict with reasonable default values
+
+**strategies/*.py:**
+Every decide() method body in standard.py, duel.py, royale.py, constrictor.py
+
+**training/self_play.py:**
+- Play a game function stub
+
+## Game Format Detection
+In main.py, detect format from game.state.ruleset.name:
+- "standard" → StrategyStandard
+- "royale" → StrategyRoyale
+- "constrictor" → StrategyConstrictor
+- "solo" (2 players) → StrategyDuel
+
+## State Representation (for minimax simulation)
+Board.clone_and_apply(moves) must:
+1. Create a deep copy of the board
+2. Move all snakes simultaneously according to moves dict
+3. Resolve collisions (head-to-head, body, walls)
+4. Spawn food (random, simplified: keep same food positions if possible)
+5. Decrement health
+6. Return new Board
+
+## Delivery
+All files must be syntactically valid Python. The app must start with `uvicorn main:app --host 0.0.0.0 --port 8000` without import errors.
