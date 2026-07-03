@@ -108,6 +108,10 @@ static double position_elapsed_ms(struct timespec start, struct timespec end) {
     return (double)seconds * 1000.0 + (double)nanoseconds / 1000000.0;
 }
 
+static bool is_close(double a, double b) {
+    return fabs(a - b) <= 1e-12;
+}
+
 static double pure_matrix_value(
     double values[4][4],
     int rows,
@@ -147,6 +151,70 @@ static double pure_matrix_value(
 
     row_strategy[best_row] = 1.0;
     col_strategy[worst_col] = 1.0;
+    return best_row_value;
+}
+
+static double pure_matrix_value_with_confidence(
+    double values[4][4],
+    double confidences[4][4],
+    int rows,
+    int cols,
+    double row_strategy[4],
+    double col_strategy[4],
+    double* out_confidence
+) {
+    for (int i = 0; i < 4; i++) {
+        row_strategy[i] = 0.0;
+        col_strategy[i] = 0.0;
+    }
+    if (rows <= 0 || cols <= 0) {
+        if (out_confidence != NULL) {
+            *out_confidence = 0.0;
+        }
+        return 0.5;
+    }
+
+    double best_row_value = -DBL_MAX;
+    double best_row_confidence = 0.0;
+    int best_row = 0;
+    int best_row_worst_col = 0;
+
+    for (int i = 0; i < rows; i++) {
+        double row_worst = DBL_MAX;
+        double row_worst_confidence = 0.0;
+        int row_worst_col = 0;
+        for (int j = 0; j < cols; j++) {
+            if (values[i][j] < row_worst) {
+                row_worst = values[i][j];
+                row_worst_confidence = confidences[i][j];
+                row_worst_col = j;
+                continue;
+            }
+            if (is_close(values[i][j], row_worst) && confidences[i][j] > row_worst_confidence) {
+                row_worst_confidence = confidences[i][j];
+                row_worst_col = j;
+            }
+        }
+
+        if (row_worst > best_row_value) {
+            best_row_value = row_worst;
+            best_row_confidence = row_worst_confidence;
+            best_row = i;
+            best_row_worst_col = row_worst_col;
+            continue;
+        }
+        if (is_close(row_worst, best_row_value) && row_worst_confidence > best_row_confidence) {
+            best_row_confidence = row_worst_confidence;
+            best_row = i;
+            best_row_worst_col = row_worst_col;
+        }
+    }
+
+    row_strategy[best_row] = 1.0;
+    col_strategy[best_row_worst_col] = 1.0;
+    if (out_confidence != NULL) {
+        *out_confidence = best_row_confidence;
+    }
     return best_row_value;
 }
 
@@ -202,6 +270,41 @@ static double solve_zero_sum_matrix(
         }
     }
     return pure_matrix_value(values, rows, cols, row_strategy, col_strategy);
+}
+
+static double solve_zero_sum_matrix_with_confidence(
+    double values[4][4],
+    double confidences[4][4],
+    int rows,
+    int cols,
+    double row_strategy[4],
+    double col_strategy[4],
+    double* out_confidence
+) {
+    double mixed_value = 0.0;
+    if (rows == 2 && cols == 2) {
+        if (solve_2x2_mixed(values, row_strategy, col_strategy, &mixed_value)) {
+            if (out_confidence != NULL) {
+                double confidence = 0.0;
+                for (int i = 0; i < rows; i++) {
+                    for (int j = 0; j < cols; j++) {
+                        confidence += row_strategy[i] * col_strategy[j] * confidences[i][j];
+                    }
+                }
+                *out_confidence = confidence;
+            }
+            return mixed_value;
+        }
+    }
+    return pure_matrix_value_with_confidence(
+        values,
+        confidences,
+        rows,
+        cols,
+        row_strategy,
+        col_strategy,
+        out_confidence
+    );
 }
 
 static CoreStatus evaluate_heuristic_leaf(
@@ -297,14 +400,14 @@ static CoreStatus evaluate_node_pure_minimax(
         second_moves[0] = MOVE_INVALID;
     }
 
-    double best_p = -DBL_MAX;
-    double best_confidence = 0.0;
+    double probability_matrix[4][4] = {{0.0}};
+    double confidence_matrix[4][4] = {{0.0}};
+    double row_strategy[4] = {0.0};
+    double col_strategy[4] = {0.0};
     const char* ids[2] = {first_snake_id, second_snake_id};
     MoveDirection moves[2];
 
     for (int i = 0; i < first_count; i++) {
-        double worst_p = DBL_MAX;
-        double worst_confidence = 0.0;
         for (int j = 0; j < second_count; j++) {
             if (position_timed_out(&context->timer)) {
                 return evaluate_heuristic_leaf(
@@ -339,18 +442,28 @@ static CoreStatus evaluate_node_pure_minimax(
             }
 
             context->result->expanded_children++;
-            if (child_value.p < worst_p) {
-                worst_p = child_value.p;
-                worst_confidence = child_value.confidence;
-            }
-        }
-        if (worst_p > best_p) {
-            best_p = worst_p;
-            best_confidence = worst_confidence;
+            probability_matrix[i][j] = child_value.p;
+            confidence_matrix[i][j] = child_value.confidence;
         }
     }
 
-    *out_value = (PositionEvalValue){clamp01(best_p), clamp01(best_confidence)};
+    double value = pure_matrix_value_with_confidence(
+        probability_matrix,
+        confidence_matrix,
+        first_count,
+        second_count,
+        row_strategy,
+        col_strategy,
+        NULL
+    );
+    double confidence = 0.0;
+    for (int i = 0; i < first_count; i++) {
+        for (int j = 0; j < second_count; j++) {
+            confidence += row_strategy[i] * col_strategy[j] * confidence_matrix[i][j];
+        }
+    }
+
+    *out_value = (PositionEvalValue){clamp01(value), clamp01(confidence)};
     return CORE_OK;
 }
 
@@ -465,32 +578,16 @@ static CoreStatus evaluate_node_matrix(
             confidence_matrix[i][j] = child_value.confidence;
         }
     }
-
-    double value;
-    if (context->config.decision_mode == CORE_POSITION_DECISION_PURE_MINIMAX) {
-        value = pure_matrix_value(
-            probability_matrix,
-            first_count,
-            second_count,
-            row_strategy,
-            col_strategy
-        );
-    } else {
-        value = solve_zero_sum_matrix(
-            probability_matrix,
-            first_count,
-            second_count,
-            row_strategy,
-            col_strategy
-        );
-    }
-
     double confidence = 0.0;
-    for (int i = 0; i < first_count; i++) {
-        for (int j = 0; j < second_count; j++) {
-            confidence += row_strategy[i] * col_strategy[j] * confidence_matrix[i][j];
-        }
-    }
+    double value = solve_zero_sum_matrix_with_confidence(
+        probability_matrix,
+        confidence_matrix,
+        first_count,
+        second_count,
+        row_strategy,
+        col_strategy,
+        &confidence
+    );
 
     *out_value = (PositionEvalValue){clamp01(value), clamp01(confidence)};
     return CORE_OK;
@@ -537,6 +634,41 @@ double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d
     double row_strategy[4] = {0};
     double col_strategy[4] = {0};
     return solve_zero_sum_matrix(matrix, 2, 2, row_strategy, col_strategy);
+}
+
+double CorePositionEvalTestSolveMatrix2x2WithConfidence(
+    double a,
+    double b,
+    double c,
+    double d,
+    double c_ab,
+    double c_ac,
+    double c_bc,
+    double c_bd
+) {
+    double values[4][4] = {{0}};
+    values[0][0] = a;
+    values[0][1] = b;
+    values[1][0] = c;
+    values[1][1] = d;
+    double confidence_matrix[4][4] = {{0}};
+    confidence_matrix[0][0] = c_ab;
+    confidence_matrix[0][1] = c_ac;
+    confidence_matrix[1][0] = c_bc;
+    confidence_matrix[1][1] = c_bd;
+    double row_strategy[4] = {0};
+    double col_strategy[4] = {0};
+    double confidence = 0.0;
+    (void)solve_zero_sum_matrix_with_confidence(
+        values,
+        confidence_matrix,
+        2,
+        2,
+        row_strategy,
+        col_strategy,
+        &confidence
+    );
+    return confidence;
 }
 #endif
 
