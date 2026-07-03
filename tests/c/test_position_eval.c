@@ -243,6 +243,25 @@ static void test_depth_zero_uses_heuristic_probability(void) {
     BoardFree(board);
 }
 
+static void test_depth_one_expands_children(void) {
+    Board* board = make_open_duel_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 1;
+    config.decision_mode = CORE_POSITION_DECISION_PURE_MINIMAX;
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_OK);
+    assert(result.nodes > 1);
+    assert(result.expanded_children > 0);
+    assert(result.heuristic_leaves > 1);
+    assert(result.first_win_probability >= 0.0);
+    assert(result.first_win_probability <= 1.0);
+    assert(result.confidence == 0.0);
+    BoardFree(board);
+}
+
 static void test_extreme_weights_stays_finite_and_near_boundary(void) {
     Board* board = make_length_advantage_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
@@ -338,6 +357,7 @@ int main(void) {
     test_non_terminal_both_alive_is_heuristic();
     test_terminal_second_alive_is_loss();
     test_depth_zero_uses_heuristic_probability();
+    test_depth_one_expands_children();
     test_extreme_weights_stays_finite_and_near_boundary();
     test_non_finite_weight_is_sanitized_to_probability_fallback();
     test_heuristic_error_does_not_increment_heuristic_leaves();
