@@ -8,6 +8,7 @@ TRIALS="${TRIALS:-200}"
 FIXED_DEPTH="${FIXED_DEPTH:-3}"
 TIME_BUDGET_MS="${TIME_BUDGET_MS:-5000}"
 LIMIT="${LIMIT:-}"
+REMOTE_PYTHON="${REMOTE_DIR}/.venv/bin/python"
 
 mkdir -p artifacts/weight_tuning
 
@@ -16,6 +17,7 @@ rsync -az --delete \
   --exclude '__pycache__/' \
   --exclude '*.so' \
   --exclude 'build/' \
+  --exclude '.venv/' \
   --exclude 'artifacts/weight_tuning/' \
   ./ "${REMOTE}:${REMOTE_DIR}/"
 
@@ -24,24 +26,35 @@ if [[ -n "${LIMIT}" ]]; then
   LIMIT_ARGS=(--limit "${LIMIT}")
 fi
 
-ssh "${REMOTE}" "cd '${REMOTE_DIR}' && python3 -m pip show optuna >/dev/null 2>&1 || python3 -m pip install --user optuna"
+REMOTE_COMMAND="${REMOTE_PYTHON} -B -m tools.tuning.search_weights \
+  --exports exports \
+  --default-weights configs/evaluation_weights/default.json \
+  --split train \
+  --fixed-depth ${FIXED_DEPTH} \
+  --time-budget-ms ${TIME_BUDGET_MS} \
+  --trials ${TRIALS} \
+  --storage sqlite:///artifacts/weight_tuning/optuna.db \
+  --study-name opponent-pressure-v1 \
+  --output artifacts/weight_tuning/best_weights.json \
+  ${LIMIT_ARGS[*]} \
+  > artifacts/weight_tuning/search.log 2>&1"
 
-ssh "${REMOTE}" "cd '${REMOTE_DIR}' && python3 setup.py build_ext --inplace --force"
+ssh "${REMOTE}" "cd '${REMOTE_DIR}' && test -x .venv/bin/python || python3 -m venv .venv"
 
-ssh "${REMOTE}" "cd '${REMOTE_DIR}' && tmux new-session -d -s '${SESSION}' \
-  'python3 -B -m tools.tuning.search_weights \
-    --exports exports \
-    --default-weights configs/evaluation_weights/default.json \
-    --split train \
-    --fixed-depth ${FIXED_DEPTH} \
-    --time-budget-ms ${TIME_BUDGET_MS} \
-    --trials ${TRIALS} \
-    --storage sqlite:///artifacts/weight_tuning/optuna.db \
-    --study-name opponent-pressure-v1 \
-    --output artifacts/weight_tuning/best_weights.json \
-    ${LIMIT_ARGS[*]} \
-    > artifacts/weight_tuning/search.log 2>&1'"
+ssh "${REMOTE}" "cd '${REMOTE_DIR}' && '${REMOTE_PYTHON}' -m pip show optuna setuptools >/dev/null 2>&1 || '${REMOTE_PYTHON}' -m pip install optuna setuptools"
 
-echo "Started remote tmux session ${SESSION} on ${REMOTE}"
-echo "Watch: ssh ${REMOTE} 'tmux attach -t ${SESSION}'"
+ssh "${REMOTE}" "cd '${REMOTE_DIR}' && '${REMOTE_PYTHON}' setup.py build_ext --inplace --force"
+
+ssh "${REMOTE}" "cd '${REMOTE_DIR}' && mkdir -p artifacts/weight_tuning"
+
+if ssh "${REMOTE}" "command -v tmux >/dev/null 2>&1"; then
+  ssh "${REMOTE}" "cd '${REMOTE_DIR}' && tmux new-session -d -s '${SESSION}' \"${REMOTE_COMMAND}\""
+  echo "Started remote tmux session ${SESSION} on ${REMOTE}"
+  echo "Watch: ssh ${REMOTE} 'tmux attach -t ${SESSION}'"
+else
+  ssh "${REMOTE}" "cd '${REMOTE_DIR}' && setsid bash -lc \"${REMOTE_COMMAND}\" </dev/null >/dev/null 2>&1 & echo \$! > '${REMOTE_DIR}/artifacts/weight_tuning/search.pid'"
+  echo "Started remote background process on ${REMOTE}"
+  echo "Watch: ssh ${REMOTE} 'tail -f ${REMOTE_DIR}/artifacts/weight_tuning/search.log'"
+fi
+
 echo "Fetch: rsync -az ${REMOTE}:${REMOTE_DIR}/artifacts/weight_tuning/ artifacts/weight_tuning/"

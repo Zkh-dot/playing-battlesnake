@@ -1770,7 +1770,6 @@ CoreStatus CoreEvaluateWithWeights(
             if (status != CORE_OK) {
                 return status;
             }
-
             score -= (double)other_reachable * weights->opponent_reachable_space;
             score += (double)(reachable - other_reachable) * weights->territory_delta;
         }
@@ -1781,17 +1780,15 @@ CoreStatus CoreEvaluateWithWeights(
             score -= (double)other_safe_count * weights->opponent_safe_moves;
         }
 
-        if (weights->opponent_low_health_food_denial != 0.0 &&
-            (double)other->health < weights->low_health_threshold) {
-            int own_food_distance = food_distance;
-            int other_food_distance = core_nearest_food_distance(board, other_head);
-            if (own_food_distance != INT_MAX && other_food_distance != INT_MAX) {
-                int food_race_advantage = other_food_distance - own_food_distance;
-                if (food_race_advantage > 0) {
-                    double hunger_pressure = weights->low_health_threshold - (double)other->health;
-                    score += hunger_pressure *
-                        (double)food_race_advantage *
-                        weights->opponent_low_health_food_denial;
+        if (weights->opponent_low_health_food_denial != 0.0 && other->health < weights->low_health_threshold) {
+            for (int food_index = 0; food_index < board->food_count; food_index++) {
+                Coord food = board->food[food_index];
+                int my_food_distance = core_manhattan(head, food);
+                int other_food_distance = core_manhattan(other_head, food);
+                if (my_food_distance <= other_food_distance) {
+                    score += weights->opponent_low_health_food_denial / (double)(my_food_distance + 1);
+                } else {
+                    score -= weights->opponent_low_health_food_denial / (double)(other_food_distance + 1);
                 }
             }
         }

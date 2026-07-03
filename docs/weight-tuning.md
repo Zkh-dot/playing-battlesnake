@@ -53,6 +53,13 @@ Watch the run:
 ssh scv@192.168.1.6 'tmux attach -t battlesnake-weight-tuning'
 ```
 
+If `tmux` is unavailable on the compute node, the runner falls back to a
+background process. Watch that run with:
+
+```bash
+ssh scv@192.168.1.6 'tail -f /tmp/playing-battlesnake-weight-tuning/artifacts/weight_tuning/search.log'
+```
+
 Fetch results:
 
 ```bash
