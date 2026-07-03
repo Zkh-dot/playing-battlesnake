@@ -1,9 +1,19 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "core_algorithms.h"
+#include "search_workspace.h"
+#include "transposition_table.h"
+#include "zobrist.h"
 
 #include <float.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#define CORE_MINIMAX_MAX_DEPTH CORE_SEARCH_MAX_DEPTH
 
 const char* CoreNotImplementedMessage(void) {
     return "core algorithm unavailable";
@@ -275,47 +285,54 @@ CoreStatus CoreReachableSpace(const Board* board, Coord start, const char* snake
     }
 
     int start_index = core_coord_index(board, start);
-    blocked[start_index] = 0;
-    if (!blocked[start_index]) {
-        int head = 0;
-        int tail = 0;
-        queue[tail++] = start_index;
-        seen[start_index] = 1;
+    if (CoordEquals(start, SnakeHead(snake))) {
+        blocked[start_index] = 0;
+    }
+    if (blocked[start_index]) {
+        free(blocked);
+        free(seen);
+        free(queue);
+        return CORE_OK;
+    }
 
-        while (head < tail) {
-            int index = queue[head++];
-            (*out_count)++;
+    int head = 0;
+    int tail = 0;
+    queue[tail++] = start_index;
+    seen[start_index] = 1;
 
-            int x = index % board->width;
-            int y = index / board->width;
+    while (head < tail) {
+        int index = queue[head++];
+        (*out_count)++;
 
-            if (y + 1 < board->height) {
-                int next = index + board->width;
-                if (!seen[next] && !blocked[next]) {
-                    seen[next] = 1;
-                    queue[tail++] = next;
-                }
+        int x = index % board->width;
+        int y = index / board->width;
+
+        if (y + 1 < board->height) {
+            int next = index + board->width;
+            if (!seen[next] && !blocked[next]) {
+                seen[next] = 1;
+                queue[tail++] = next;
             }
-            if (y > 0) {
-                int next = index - board->width;
-                if (!seen[next] && !blocked[next]) {
-                    seen[next] = 1;
-                    queue[tail++] = next;
-                }
+        }
+        if (y > 0) {
+            int next = index - board->width;
+            if (!seen[next] && !blocked[next]) {
+                seen[next] = 1;
+                queue[tail++] = next;
             }
-            if (x > 0) {
-                int next = index - 1;
-                if (!seen[next] && !blocked[next]) {
-                    seen[next] = 1;
-                    queue[tail++] = next;
-                }
+        }
+        if (x > 0) {
+            int next = index - 1;
+            if (!seen[next] && !blocked[next]) {
+                seen[next] = 1;
+                queue[tail++] = next;
             }
-            if (x + 1 < board->width) {
-                int next = index + 1;
-                if (!seen[next] && !blocked[next]) {
-                    seen[next] = 1;
-                    queue[tail++] = next;
-                }
+        }
+        if (x + 1 < board->width) {
+            int next = index + 1;
+            if (!seen[next] && !blocked[next]) {
+                seen[next] = 1;
+                queue[tail++] = next;
             }
         }
     }
@@ -721,14 +738,544 @@ CoreStatus CoreVoronoiTerritory(const Board* board, void** out_territory) {
     return CORE_OK;
 }
 
-CoreStatus CoreMinimaxMove(
+typedef struct {
+    struct timespec deadline;
+} CoreSearchTimer;
+
+typedef struct {
+    CoreSearchTimer timer;
+    CoreSearchConfig config;
+    CoreSearchStats* stats;
+    CoreTranspositionTable tt;
+    CoreSearchWorkspace workspace;
+    bool tt_enabled;
+    MoveDirection principal_variation[CORE_MINIMAX_MAX_DEPTH + 1];
+    MoveDirection killer_moves[CORE_MINIMAX_MAX_DEPTH + 1][2];
+    int history_scores[4];
+} CoreSearchContext;
+
+static CoreSearchTimer core_search_timer_start(int time_budget_ms) {
+    if (time_budget_ms < 1) {
+        time_budget_ms = 1;
+    }
+
+    struct timespec deadline;
+    clock_gettime(CLOCK_MONOTONIC, &deadline);
+    deadline.tv_sec += time_budget_ms / 1000;
+    deadline.tv_nsec += (long)(time_budget_ms % 1000) * 1000000L;
+    while (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+
+    return (CoreSearchTimer){deadline};
+}
+
+static bool core_search_timed_out(const CoreSearchTimer* timer) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec > timer->deadline.tv_sec ||
+        (now.tv_sec == timer->deadline.tv_sec && now.tv_nsec >= timer->deadline.tv_nsec);
+}
+
+static double core_elapsed_ms(struct timespec start, struct timespec end) {
+    long seconds = end.tv_sec - start.tv_sec;
+    long nanoseconds = end.tv_nsec - start.tv_nsec;
+    return (double)seconds * 1000.0 + (double)nanoseconds / 1000000.0;
+}
+
+static bool core_valid_move_direction(MoveDirection move) {
+    return move >= MOVE_UP && move <= MOVE_RIGHT;
+}
+
+static int core_find_move_index(const MoveDirection* moves, int move_count, MoveDirection move) {
+    for (int i = 0; i < move_count; i++) {
+        if (moves[i] == move) {
+            return i;
+        }
+    }
+    return INT_MAX;
+}
+
+static void core_move_to_front(MoveDirection* moves, int move_count, MoveDirection move) {
+    int index = core_find_move_index(moves, move_count, move);
+    if (index <= 0 || index == INT_MAX) {
+        return;
+    }
+    MoveDirection selected = moves[index];
+    for (int i = index; i > 0; i--) {
+        moves[i] = moves[i - 1];
+    }
+    moves[0] = selected;
+}
+
+static int core_preferred_order_rank(
+    const MoveDirection* moves,
+    int move_count,
+    MoveDirection move,
+    MoveDirection preferred
+) {
+    int move_index = core_find_move_index(moves, move_count, move);
+    int preferred_index = core_find_move_index(moves, move_count, preferred);
+    if (preferred_index == INT_MAX) {
+        return move_index;
+    }
+    if (move_index == preferred_index) {
+        return 0;
+    }
+    return move_index < preferred_index ? move_index + 1 : move_index;
+}
+
+static int core_move_order_score(
+    CoreSearchContext* context,
+    int ply,
+    MoveDirection move,
+    MoveDirection tt_best,
+    MoveDirection previous_iteration_best
+) {
+    int score = 0;
+    if (move == tt_best) {
+        score += 100000;
+    }
+    if (move == previous_iteration_best) {
+        score += 50000;
+    }
+    if (ply >= 0 && ply <= CORE_MINIMAX_MAX_DEPTH && move == context->principal_variation[ply]) {
+        score += 25000;
+    }
+    if (ply >= 0 && ply <= CORE_MINIMAX_MAX_DEPTH && move == context->killer_moves[ply][0]) {
+        score += 12000;
+    }
+    if (ply >= 0 && ply <= CORE_MINIMAX_MAX_DEPTH && move == context->killer_moves[ply][1]) {
+        score += 8000;
+    }
+    if (core_valid_move_direction(move)) {
+        score += context->history_scores[(int)move];
+    }
+    return score;
+}
+
+static void core_order_moves(
+    CoreSearchContext* context,
+    int ply,
+    MoveDirection* moves,
+    int move_count,
+    MoveDirection tt_best,
+    MoveDirection previous_iteration_best
+) {
+    if (context == NULL) {
+        return;
+    }
+    if (!context->config.enable_move_ordering) {
+        return;
+    }
+    MoveDirection effective_preferred = core_valid_move_direction(tt_best) ? tt_best : previous_iteration_best;
+    if (ply == 0) {
+        core_move_to_front(moves, move_count, effective_preferred);
+        return;
+    }
+    for (int i = 1; i < move_count; i++) {
+        MoveDirection move = moves[i];
+        int score = core_move_order_score(context, ply, move, tt_best, previous_iteration_best);
+        int j = i - 1;
+        while (j >= 0 && core_move_order_score(context, ply, moves[j], tt_best, previous_iteration_best) < score) {
+            moves[j + 1] = moves[j];
+            j--;
+        }
+        moves[j + 1] = move;
+    }
+}
+
+static bool core_minimax_is_terminal(const Board* board, const char* snake_id) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    return snake == NULL || snake->body_len == 0 || board->snake_count <= 1;
+}
+
+static int core_reachable_after_move(
     const Board* board,
     const char* snake_id,
-    int time_budget_ms,
-    MoveDirection* out_move
+    MoveDirection move
 ) {
-    (void)time_budget_ms;
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0 || !core_valid_move_direction(move)) {
+        return 0;
+    }
+
+    int reachable = 0;
+    (void)CoreReachableSpace(board, MoveStep(SnakeHead(snake), move), snake_id, &reachable);
+    return reachable;
+}
+
+static int core_cached_reachable_after_move(
+    const Board* board,
+    const char* snake_id,
+    const MoveDirection* original_moves,
+    int move_count,
+    int* reachable_spaces,
+    MoveDirection move
+) {
+    int index = core_find_move_index(original_moves, move_count, move);
+    if (index == INT_MAX) {
+        return 0;
+    }
+    if (reachable_spaces[index] < 0) {
+        reachable_spaces[index] = core_reachable_after_move(board, snake_id, move);
+    }
+    return reachable_spaces[index];
+}
+
+static bool core_equal_score_move_is_better(
+    const Board* board,
+    const char* snake_id,
+    const MoveDirection* original_moves,
+    int move_count,
+    int* reachable_spaces,
+    MoveDirection candidate,
+    MoveDirection current_best,
+    MoveDirection preferred
+) {
+    bool preferred_valid = core_valid_move_direction(preferred);
+    if (preferred_valid && candidate == preferred && current_best != preferred) {
+        return true;
+    }
+    if (preferred_valid && current_best == preferred && candidate != preferred) {
+        return false;
+    }
+
+    int candidate_space = core_cached_reachable_after_move(
+        board,
+        snake_id,
+        original_moves,
+        move_count,
+        reachable_spaces,
+        candidate
+    );
+    int current_best_space = core_cached_reachable_after_move(
+        board,
+        snake_id,
+        original_moves,
+        move_count,
+        reachable_spaces,
+        current_best
+    );
+    if (candidate_space != current_best_space) {
+        return candidate_space > current_best_space;
+    }
+
+    return core_preferred_order_rank(original_moves, move_count, candidate, preferred) <
+        core_preferred_order_rank(original_moves, move_count, current_best, preferred);
+}
+
+static CoreStatus core_minimax_search(
+    const Board* board,
+    const char* snake_id,
+    int depth,
+    int ply,
+    double alpha,
+    double beta,
+    MoveDirection preferred_move,
+    CoreSearchContext* context,
+    bool* timed_out,
+    double* out_score,
+    MoveDirection* out_best_move
+) {
+    if (core_search_timed_out(&context->timer)) {
+        *timed_out = true;
+        return CORE_OK;
+    }
+    CoreSearchStats* stats = context->stats;
+    if (stats != NULL) {
+        stats->nodes++;
+    }
+
+    bool tt_node_enabled = context->tt_enabled && depth >= 2;
+    uint64_t hash = 0;
+    double original_alpha = alpha;
+    double original_beta = beta;
+    MoveDirection tt_best_move = MOVE_INVALID;
+    CoreTtBound tt_bound = CORE_TT_EXACT;
+    if (tt_node_enabled) {
+        hash = CoreZobristHashBoard(board);
+        if (stats != NULL) {
+            stats->tt_probes++;
+        }
+        double tt_score = 0.0;
+        bool tt_collision = false;
+        CoreTtProbeResult tt_probe = CoreTtProbe(
+            &context->tt,
+            hash,
+            depth,
+            alpha,
+            beta,
+            &tt_score,
+            &tt_best_move,
+            &tt_bound,
+            &tt_collision
+        );
+        if (stats != NULL && tt_collision) {
+            stats->tt_collisions++;
+        }
+        if (tt_probe != CORE_TT_MISS) {
+            if (stats != NULL) {
+                stats->tt_hits++;
+                if (tt_bound == CORE_TT_EXACT) {
+                    stats->tt_exact_hits++;
+                } else if (tt_bound == CORE_TT_LOWER) {
+                    stats->tt_lower_hits++;
+                } else if (tt_bound == CORE_TT_UPPER) {
+                    stats->tt_upper_hits++;
+                }
+            }
+        }
+        if (tt_probe == CORE_TT_CUTOFF) {
+            if (stats != NULL) {
+                stats->tt_cutoffs++;
+            }
+            *out_score = tt_score;
+            if (out_best_move != NULL) {
+                *out_best_move = tt_best_move;
+            }
+            return CORE_OK;
+        }
+    }
+
+    if (depth <= 0 || core_minimax_is_terminal(board, snake_id)) {
+        if (stats != NULL) {
+            stats->leaf_evals++;
+        }
+        CoreStatus status = CoreEvaluate(board, snake_id, out_score);
+        if (status == CORE_OK && tt_node_enabled) {
+            bool tt_collision = false;
+            bool stored = CoreTtStore(&context->tt, hash, depth, *out_score, CORE_TT_EXACT, MOVE_INVALID, &tt_collision);
+            if (stats != NULL && tt_collision) {
+                stats->tt_collisions++;
+            }
+            if (stats != NULL && stored) {
+                stats->tt_stores++;
+            }
+        }
+        return status;
+    }
+
+    int snake_count = board->snake_count;
+    const char** ids = CoreSearchWorkspaceSnakeIds(&context->workspace, ply);
+    MoveDirection* moves = CoreSearchWorkspaceMoves(&context->workspace, ply);
+    int* option_counts = CoreSearchWorkspaceOptionCounts(&context->workspace, ply);
+    MoveDirection(*options)[4] = CoreSearchWorkspaceOptions(&context->workspace, ply);
+
+    int own_index = -1;
+    MoveDirection own_moves[4];
+    MoveDirection original_own_moves[4];
+    int own_move_count = 0;
+    for (int i = 0; i < snake_count; i++) {
+        ids[i] = board->snakes[i].id;
+        if (strcmp(board->snakes[i].id, snake_id) == 0) {
+            own_index = i;
+            if (stats != NULL) {
+                stats->safe_move_calls++;
+            }
+            own_move_count = core_safe_moves_or_all(board, snake_id, own_moves);
+        } else {
+            if (stats != NULL) {
+                stats->safe_move_calls++;
+            }
+            option_counts[i] = BoardSafeMoves(board, board->snakes[i].id, options[i]);
+            if (option_counts[i] <= 0) {
+                option_counts[i] = 1;
+                options[i][0] = MOVE_INVALID;
+            }
+        }
+    }
+
+    if (own_index < 0 || own_move_count <= 0) {
+        if (stats != NULL) {
+            stats->leaf_evals++;
+        }
+        CoreStatus status = CoreEvaluate(board, snake_id, out_score);
+        if (status == CORE_OK && tt_node_enabled) {
+            bool tt_collision = false;
+            bool stored = CoreTtStore(&context->tt, hash, depth, *out_score, CORE_TT_EXACT, MOVE_INVALID, &tt_collision);
+            if (stats != NULL && tt_collision) {
+                stats->tt_collisions++;
+            }
+            if (stats != NULL && stored) {
+                stats->tt_stores++;
+            }
+        }
+        return status;
+    }
+
+    int original_reachable_spaces[4];
+    for (int i = 0; i < own_move_count; i++) {
+        original_own_moves[i] = own_moves[i];
+        original_reachable_spaces[i] = -1;
+    }
+    /* Preserve pre-sort order and lazily cache safety tie-break scores. */
+    MoveDirection effective_preferred = core_valid_move_direction(tt_best_move) ? tt_best_move : preferred_move;
+    MoveDirection tie_preferred = ply == 0 ? preferred_move : effective_preferred;
+    core_order_moves(context, ply, own_moves, own_move_count, tt_best_move, preferred_move);
+    double best_score = -DBL_MAX;
+    MoveDirection best_move = own_moves[0];
+
+    for (int order = 0; order < own_move_count; order++) {
+        if (core_search_timed_out(&context->timer)) {
+            *timed_out = true;
+            break;
+        }
+
+        MoveDirection own_move = own_moves[order];
+        option_counts[own_index] = 1;
+        options[own_index][0] = own_move;
+
+        int total = 1;
+        for (int i = 0; i < snake_count; i++) {
+            if (option_counts[i] <= 0 || total > INT_MAX / option_counts[i]) {
+                return CORE_ERROR;
+            }
+            total *= option_counts[i];
+        }
+
+        double worst_reply = DBL_MAX;
+        for (int combo = 0; combo < total; combo++) {
+            if (core_search_timed_out(&context->timer)) {
+                *timed_out = true;
+                break;
+            }
+
+            int remainder = combo;
+            for (int i = 0; i < snake_count; i++) {
+                int option_index = remainder % option_counts[i];
+                remainder /= option_counts[i];
+                moves[i] = options[i][option_index];
+            }
+
+            if (stats != NULL) {
+                stats->clone_calls++;
+                stats->board_allocations++;
+            }
+            Board* next = BoardCloneAndApply(board, ids, moves, snake_count);
+            if (next == NULL) {
+                return CORE_ERROR;
+            }
+
+            double score = 0.0;
+            double child_beta = worst_reply < beta ? worst_reply : beta;
+            CoreStatus status = core_minimax_search(
+                next,
+                snake_id,
+                depth - 1,
+                ply + 1,
+                alpha,
+                child_beta,
+                MOVE_INVALID,
+                context,
+                timed_out,
+                &score,
+                NULL
+            );
+            BoardFree(next);
+            if (status != CORE_OK || *timed_out) {
+                return status;
+            }
+
+            if (score < worst_reply) {
+                worst_reply = score;
+            }
+            if (worst_reply <= alpha) {
+                if (stats != NULL) {
+                    stats->beta_cutoffs++;
+                    if (order == 0) {
+                        stats->move_order_first_choice_cutoffs++;
+                    }
+                }
+                if (
+                    context->config.enable_move_ordering &&
+                    ply >= 0 &&
+                    ply <= CORE_MINIMAX_MAX_DEPTH &&
+                    own_move != context->killer_moves[ply][0]
+                ) {
+                    context->killer_moves[ply][1] = context->killer_moves[ply][0];
+                    context->killer_moves[ply][0] = own_move;
+                }
+                if (context->config.enable_move_ordering && core_valid_move_direction(own_move)) {
+                    context->history_scores[(int)own_move] += depth * depth;
+                }
+                break;
+            }
+        }
+
+        if (*timed_out) {
+            break;
+        }
+
+        if (
+            worst_reply > best_score ||
+            (
+                worst_reply == best_score &&
+                core_equal_score_move_is_better(
+                    board,
+                    snake_id,
+                    original_own_moves,
+                    own_move_count,
+                    original_reachable_spaces,
+                    own_move,
+                    best_move,
+                    tie_preferred
+                )
+            )
+        ) {
+            best_score = worst_reply;
+            best_move = own_move;
+        }
+        if (best_score > alpha) {
+            alpha = best_score;
+        }
+        if (alpha >= beta) {
+            break;
+        }
+    }
+
+    if (*timed_out) {
+        return CORE_OK;
+    }
+
+    *out_score = best_score;
+    if (out_best_move != NULL) {
+        *out_best_move = best_move;
+    }
+    if (context->config.enable_move_ordering && ply >= 0 && ply <= CORE_MINIMAX_MAX_DEPTH) {
+        context->principal_variation[ply] = best_move;
+    }
+    if (tt_node_enabled) {
+        CoreTtBound bound = CORE_TT_EXACT;
+        if (best_score <= original_alpha) {
+            bound = CORE_TT_UPPER;
+        } else if (best_score >= original_beta) {
+            bound = CORE_TT_LOWER;
+        }
+        bool tt_collision = false;
+        bool stored = CoreTtStore(&context->tt, hash, depth, best_score, bound, best_move, &tt_collision);
+        if (stats != NULL && tt_collision) {
+            stats->tt_collisions++;
+        }
+        if (stats != NULL && stored) {
+            stats->tt_stores++;
+        }
+    }
+    return CORE_OK;
+}
+
+CoreStatus CoreMinimaxMoveWithStats(
+    const Board* board,
+    const char* snake_id,
+    CoreSearchConfig config,
+    MoveDirection* out_move,
+    CoreSearchStats* out_stats
+) {
     if (board == NULL || snake_id == NULL || out_move == NULL) {
+        return CORE_ERROR;
+    }
+    if (config.fixed_depth < 0 || config.fixed_depth > CORE_MINIMAX_MAX_DEPTH) {
         return CORE_ERROR;
     }
 
@@ -737,100 +1284,105 @@ CoreStatus CoreMinimaxMove(
         return CORE_ERROR;
     }
 
+    CoreSearchStats local_stats;
+    CoreSearchStats* stats = out_stats != NULL ? out_stats : &local_stats;
+    CoreSearchStatsInit(stats);
+
     MoveDirection safe_moves[4];
-    int safe_count = core_safe_moves_or_all(board, snake_id, safe_moves);
-    double best_score = -DBL_MAX;
-    MoveDirection best_move = safe_moves[0];
-    for (int move_index = 0; move_index < safe_count; move_index++) {
-        const char** ids = (const char**)calloc((size_t)board->snake_count, sizeof(char*));
-        MoveDirection* moves = (MoveDirection*)calloc((size_t)board->snake_count, sizeof(MoveDirection));
-        int* option_counts = (int*)calloc((size_t)board->snake_count, sizeof(int));
-        MoveDirection(*options)[4] = (MoveDirection(*)[4])calloc((size_t)board->snake_count, sizeof(MoveDirection[4]));
-        if (ids == NULL || moves == NULL || option_counts == NULL || options == NULL) {
-            free(ids);
-            free(moves);
-            free(option_counts);
-            free(options);
-            return CORE_ERROR;
+    stats->safe_move_calls++;
+    core_safe_moves_or_all(board, snake_id, safe_moves);
+    MoveDirection completed_best = safe_moves[0];
+    MoveDirection preferred_move = MOVE_INVALID;
+    CoreSearchContext context;
+    memset(&context, 0, sizeof(context));
+    for (int depth = 0; depth <= CORE_MINIMAX_MAX_DEPTH; depth++) {
+        context.principal_variation[depth] = MOVE_INVALID;
+        context.killer_moves[depth][0] = MOVE_INVALID;
+        context.killer_moves[depth][1] = MOVE_INVALID;
+    }
+    context.timer = core_search_timer_start(config.time_budget_ms);
+    context.config = config;
+    context.stats = stats;
+    bool fixed_depth_requested = config.fixed_depth > 0;
+    int max_depth = fixed_depth_requested ? config.fixed_depth : CORE_MINIMAX_MAX_DEPTH;
+    size_t tt_capacity = fixed_depth_requested ? (1u << 12) : (1u << 20);
+    context.tt_enabled = config.enable_tt && CoreTtInit(&context.tt, tt_capacity);
+    size_t cell_count = (size_t)board->width * (size_t)board->height;
+    if (!CoreSearchWorkspaceInit(&context.workspace, board->snake_count, cell_count)) {
+        CoreTtFree(&context.tt);
+        return CORE_ERROR;
+    }
+    int completed_depth = 0;
+    double completed_score = 0.0;
+    bool timed_out = false;
+    struct timespec start;
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    for (int depth = 1; depth <= max_depth; depth++) {
+        bool iteration_timed_out = false;
+        double score = 0.0;
+        MoveDirection candidate = completed_best;
+        stats->max_depth_started = depth;
+        CoreStatus status = core_minimax_search(
+            board,
+            snake_id,
+            depth,
+            0,
+            -DBL_MAX,
+            DBL_MAX,
+            preferred_move,
+            &context,
+            &iteration_timed_out,
+            &score,
+            &candidate
+        );
+        if (status != CORE_OK) {
+            CoreSearchWorkspaceFree(&context.workspace);
+            CoreTtFree(&context.tt);
+            return status;
+        }
+        if (iteration_timed_out) {
+            timed_out = true;
+            break;
         }
 
-        int own_index = -1;
-        for (int i = 0; i < board->snake_count; i++) {
-            ids[i] = board->snakes[i].id;
-            if (strcmp(board->snakes[i].id, snake_id) == 0) {
-                own_index = i;
-                option_counts[i] = 1;
-                options[i][0] = safe_moves[move_index];
-            } else {
-                option_counts[i] = core_safe_moves_or_all(board, board->snakes[i].id, options[i]);
-            }
+        completed_best = candidate;
+        preferred_move = candidate;
+        if (context.config.enable_move_ordering) {
+            context.principal_variation[0] = candidate;
         }
-
-        if (own_index < 0) {
-            free(ids);
-            free(moves);
-            free(option_counts);
-            free(options);
-            return CORE_ERROR;
+        completed_depth = depth;
+        completed_score = score;
+        if (!fixed_depth_requested && (score >= 999999.0 || score <= -999999.0 || core_search_timed_out(&context.timer))) {
+            break;
         }
-
-        int total = 1;
-        for (int i = 0; i < board->snake_count; i++) {
-            total *= option_counts[i];
-        }
-
-        double worst_reply = DBL_MAX;
-        for (int combo = 0; combo < total; combo++) {
-            int remainder = combo;
-            for (int i = 0; i < board->snake_count; i++) {
-                int option_index = remainder % option_counts[i];
-                remainder /= option_counts[i];
-                moves[i] = options[i][option_index];
-            }
-
-            Board* next = BoardCloneAndApply(board, ids, moves, board->snake_count);
-            if (next == NULL) {
-                free(ids);
-                free(moves);
-                free(option_counts);
-                free(options);
-                return CORE_ERROR;
-            }
-
-            double score = 0.0;
-            if (BoardFindSnakeConst(next, snake_id) == NULL) {
-                score = -1000000.0;
-            } else {
-                CoreStatus status = CoreEvaluate(next, snake_id, &score);
-                if (status != CORE_OK) {
-                    BoardFree(next);
-                    free(ids);
-                    free(moves);
-                    free(option_counts);
-                    free(options);
-                    return status;
-                }
-            }
-            BoardFree(next);
-
-            if (score < worst_reply) {
-                worst_reply = score;
-            }
-        }
-
-        free(ids);
-        free(moves);
-        free(option_counts);
-        free(options);
-
-        if (worst_reply > best_score) {
-            best_score = worst_reply;
-            best_move = safe_moves[move_index];
+        if (context.tt_enabled) {
+            CoreTtNextGeneration(&context.tt);
         }
     }
 
-    *out_move = best_move;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    stats->completed_depth = completed_depth;
+    stats->timed_out = timed_out;
+    stats->score = completed_score;
+    stats->move = completed_best;
+    stats->elapsed_ms = core_elapsed_ms(start, end);
+    *out_move = completed_best;
+    CoreSearchWorkspaceFree(&context.workspace);
+    CoreTtFree(&context.tt);
     return CORE_OK;
+}
+
+CoreStatus CoreMinimaxMove(
+    const Board* board,
+    const char* snake_id,
+    int time_budget_ms,
+    MoveDirection* out_move
+) {
+    CoreSearchConfig config = CoreSearchConfigDefault(time_budget_ms);
+    CoreSearchStats stats;
+    return CoreMinimaxMoveWithStats(board, snake_id, config, out_move, &stats);
 }
 
 CoreStatus CoreChokePoints(
@@ -937,9 +1489,7 @@ CoreStatus CoreChokePoints(
         }
     }
 
-    if (child_count[start_index] > 1) {
-        articulation[start_index] = 1;
-    }
+    /* The current head is the search entry point, not a choke point to return. */
     articulation[start_index] = 0;
 
     bool ok = core_collect_coords_from_marks(board, articulation, out_points, out_points_count);

@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include "../datatypes/board.h"
+#include "search_stats.h"
 
 typedef enum {
     CORE_OK = 0,
@@ -43,6 +44,14 @@ CoreStatus CoreMinimaxMove(
     const char* snake_id,
     int time_budget_ms,
     MoveDirection* out_move
+);
+
+CoreStatus CoreMinimaxMoveWithStats(
+    const Board* board,
+    const char* snake_id,
+    CoreSearchConfig config,
+    MoveDirection* out_move,
+    CoreSearchStats* out_stats
 );
 
 CoreStatus CoreChokePoints(
