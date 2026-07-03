@@ -128,6 +128,23 @@ static Board* make_open_duel_board(void) {
     return board;
 }
 
+static Board* make_large_open_duel_board(void) {
+    Board* board = BoardCreate(23, 23, "duel", 0);
+    assert(board != NULL);
+
+    Coord first_body[] = {{10, 10}, {10, 9}, {10, 8}, {10, 7}};
+    Coord second_body[] = {{12, 10}, {12, 9}, {12, 8}, {12, 7}};
+    Snake first = make_snake("first", first_body, 4, 90);
+    Snake second = make_snake("second", second_body, 4, 90);
+
+    assert(BoardAddSnake(board, &first));
+    assert(BoardAddSnake(board, &second));
+
+    SnakeFree(&first);
+    SnakeFree(&second);
+    return board;
+}
+
 static double stable_sigmoid(double scaled) {
     if (scaled >= 0.0) {
         return 1.0 / (1.0 + exp(-scaled));
@@ -262,6 +279,49 @@ static void test_depth_one_expands_children(void) {
     BoardFree(board);
 }
 
+static void test_default_matrix_mode_expands_children(void) {
+    Board* board = make_open_duel_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 1;
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_OK);
+    assert(result.nodes > 1);
+    assert(result.expanded_children > 0);
+    assert(result.heuristic_leaves > 1);
+    assert(result.confidence == 0.0);
+    BoardFree(board);
+}
+
+static void test_unknown_decision_mode_errors(void) {
+    Board* board = make_open_duel_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 1;
+    config.decision_mode = (CorePositionDecisionMode)42;
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_ERROR);
+    BoardFree(board);
+}
+
+static void test_tiny_budget_times_out(void) {
+    Board* board = make_large_open_duel_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1);
+    config.max_depth = 20;
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_OK);
+    assert(result.timed_out == true);
+    assert(result.timeout_leaves > 0);
+    BoardFree(board);
+}
+
 static void test_extreme_weights_stays_finite_and_near_boundary(void) {
     Board* board = make_length_advantage_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
@@ -358,6 +418,9 @@ int main(void) {
     test_terminal_second_alive_is_loss();
     test_depth_zero_uses_heuristic_probability();
     test_depth_one_expands_children();
+    test_default_matrix_mode_expands_children();
+    test_unknown_decision_mode_errors();
+    test_tiny_budget_times_out();
     test_extreme_weights_stays_finite_and_near_boundary();
     test_non_finite_weight_is_sanitized_to_probability_fallback();
     test_heuristic_error_does_not_increment_heuristic_leaves();

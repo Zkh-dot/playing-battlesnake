@@ -99,7 +99,35 @@ static double position_elapsed_ms(struct timespec start, struct timespec end) {
     return (double)seconds * 1000.0 + (double)nanoseconds / 1000000.0;
 }
 
-static CoreStatus evaluate_node(
+static CoreStatus evaluate_heuristic_leaf(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    PositionEvalContext* context,
+    bool timed_out,
+    PositionEvalValue* out_value
+) {
+    double probability = 0.5;
+    CoreStatus status = heuristic_probability(
+        board,
+        first_snake_id,
+        second_snake_id,
+        &context->config.weights,
+        &probability
+    );
+    if (status != CORE_OK) {
+        return status;
+    }
+    if (timed_out) {
+        context->result->timed_out = true;
+        context->result->timeout_leaves++;
+    }
+    context->result->heuristic_leaves++;
+    *out_value = (PositionEvalValue){probability, 0.0};
+    return CORE_OK;
+}
+
+static CoreStatus evaluate_node_pure_minimax(
     const Board* board,
     const char* first_snake_id,
     const char* second_snake_id,
@@ -130,25 +158,25 @@ static CoreStatus evaluate_node(
         return CORE_OK;
     }
 
-    if (depth_remaining <= 0 || position_timed_out(&context->timer)) {
-        double probability = 0.5;
-        CoreStatus status = heuristic_probability(
+    if (depth_remaining <= 0) {
+        return evaluate_heuristic_leaf(
             board,
             first_snake_id,
             second_snake_id,
-            &context->config.weights,
-            &probability
+            context,
+            false,
+            out_value
         );
-        if (status != CORE_OK) {
-            return status;
-        }
-        if (position_timed_out(&context->timer)) {
-            context->result->timed_out = true;
-            context->result->timeout_leaves++;
-        }
-        context->result->heuristic_leaves++;
-        *out_value = (PositionEvalValue){probability, 0.0};
-        return CORE_OK;
+    }
+    if (position_timed_out(&context->timer)) {
+        return evaluate_heuristic_leaf(
+            board,
+            first_snake_id,
+            second_snake_id,
+            context,
+            true,
+            out_value
+        );
     }
 
     MoveDirection first_moves[4];
@@ -173,6 +201,17 @@ static CoreStatus evaluate_node(
         double worst_p = DBL_MAX;
         double worst_confidence = 0.0;
         for (int j = 0; j < second_count; j++) {
+            if (position_timed_out(&context->timer)) {
+                return evaluate_heuristic_leaf(
+                    board,
+                    first_snake_id,
+                    second_snake_id,
+                    context,
+                    true,
+                    out_value
+                );
+            }
+
             moves[0] = first_moves[i];
             moves[1] = second_moves[j];
             Board* child = BoardCloneAndApply(board, ids, moves, 2);
@@ -181,7 +220,7 @@ static CoreStatus evaluate_node(
             }
 
             PositionEvalValue child_value;
-            CoreStatus status = evaluate_node(
+            CoreStatus status = evaluate_node_pure_minimax(
                 child,
                 first_snake_id,
                 second_snake_id,
@@ -210,6 +249,38 @@ static CoreStatus evaluate_node(
     return CORE_OK;
 }
 
+static CoreStatus evaluate_node(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    int depth_remaining,
+    PositionEvalContext* context,
+    PositionEvalValue* out_value
+) {
+    if (context->config.decision_mode == CORE_POSITION_DECISION_MATRIX) {
+        // Matrix mode currently uses pure maximin backup until Task 5 adds a true matrix solver.
+        return evaluate_node_pure_minimax(
+            board,
+            first_snake_id,
+            second_snake_id,
+            depth_remaining,
+            context,
+            out_value
+        );
+    }
+    if (context->config.decision_mode == CORE_POSITION_DECISION_PURE_MINIMAX) {
+        return evaluate_node_pure_minimax(
+            board,
+            first_snake_id,
+            second_snake_id,
+            depth_remaining,
+            context,
+            out_value
+        );
+    }
+    return CORE_ERROR;
+}
+
 CorePositionEvalConfig CorePositionEvalConfigDefault(int time_budget_ms) {
     CorePositionEvalConfig config = {0};
     config.time_budget_ms = time_budget_ms < 1 ? 1 : time_budget_ms;
@@ -229,6 +300,12 @@ CoreStatus CorePositionEvaluateDuel(
         return CORE_ERROR;
     }
     if (config.max_depth < 0) {
+        return CORE_ERROR;
+    }
+    if (
+        config.decision_mode != CORE_POSITION_DECISION_MATRIX &&
+        config.decision_mode != CORE_POSITION_DECISION_PURE_MINIMAX
+    ) {
         return CORE_ERROR;
     }
 
