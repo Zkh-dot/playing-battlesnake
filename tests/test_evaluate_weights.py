@@ -55,3 +55,52 @@ class WeightConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+from dataclasses import dataclass
+
+from tools.tuning.evaluate_weights import EvaluationMetrics, evaluate_samples
+
+
+@dataclass(frozen=True)
+class FakeSample:
+    split: str
+    game_id: str
+    turn: int
+    snake_id: str
+    snake_name: str
+    target_move: str
+    board: object
+
+
+class EvaluateWeightsTests(unittest.TestCase):
+    def test_evaluate_samples_counts_matches_errors_and_timeouts(self) -> None:
+        samples = [
+            FakeSample("train", "g1", 0, "s1", "Alpha", "up", object()),
+            FakeSample("train", "g1", 1, "s1", "Alpha", "left", object()),
+            FakeSample("train", "g1", 2, "s1", "Alpha", "right", object()),
+        ]
+
+        def fake_minimax(board: object, snake_id: str, **kwargs: object) -> dict[str, object]:
+            if kwargs["weights"]["marker"] == 1.0 and snake_id == "s1":
+                if board is samples[0].board:
+                    return {"move": "up", "timed_out": False}
+                if board is samples[1].board:
+                    return {"move": "right", "timed_out": True}
+            raise RuntimeError("forced failure")
+
+        metrics = evaluate_samples(
+            samples,
+            weights={"marker": 1.0},
+            fixed_depth=3,
+            time_budget_ms=5000,
+            minimax_fn=fake_minimax,
+        )
+
+        self.assertIsInstance(metrics, EvaluationMetrics)
+        self.assertEqual(metrics.samples, 3)
+        self.assertEqual(metrics.matches, 1)
+        self.assertEqual(metrics.mismatches, 1)
+        self.assertEqual(metrics.errors, 1)
+        self.assertEqual(metrics.timeouts, 1)
+        self.assertAlmostEqual(metrics.accuracy, 1 / 3)
+        self.assertAlmostEqual(metrics.score, (1 / 3) - 0.10 * (1 / 3) - 0.02 * (1 / 3))
