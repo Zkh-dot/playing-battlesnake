@@ -7,6 +7,7 @@ SOURCE_FILES = [
     "battlesnake/c-core/datatypes/snake.c",
     "battlesnake/c-core/datatypes/board.c",
     "battlesnake/c-core/core/core_algorithms.c",
+    "battlesnake/c-core/core/zobrist.c",
     "battlesnake/c-core/py-datatypes/py_datatypes.c",
     "battlesnake/c-core/py-core/py_core.c",
     "battlesnake/c-core/py-datatypes/init_module.c",

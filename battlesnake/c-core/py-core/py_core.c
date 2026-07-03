@@ -1,6 +1,7 @@
 #include "py_core.h"
 
 #include "../core/core_algorithms.h"
+#include "../core/zobrist.h"
 #include "../py-datatypes/py_datatypes.h"
 
 #include <stdlib.h>
@@ -285,6 +286,21 @@ static PyObject* py_evaluate(PyObject* self, PyObject* args) {
     return PyFloat_FromDouble(out_score);
 }
 
+static PyObject* py_board_hash(PyObject* self, PyObject* args) {
+    (void)self;
+    PyObject* board_obj = NULL;
+    if (!PyArg_ParseTuple(args, "O", &board_obj)) {
+        return NULL;
+    }
+
+    Board* board = board_from_pyobject(board_obj);
+    if (board == NULL) {
+        return NULL;
+    }
+
+    return PyLong_FromUnsignedLongLong((unsigned long long)CoreZobristHashBoard(board));
+}
+
 PyMethodDef PyCoreMethods[] = {
     {"reachable_space", py_reachable_space, METH_VARARGS, "Compute BFS flood-fill reachable space."},
     {"shortest_path", py_shortest_path, METH_VARARGS, "Compute an A* shortest path."},
@@ -294,5 +310,6 @@ PyMethodDef PyCoreMethods[] = {
     {"edge_trap_move", py_edge_trap_move, METH_VARARGS, "Choose an optional edge-trapping move."},
     {"predict_hazards", (PyCFunction)py_predict_hazards, METH_VARARGS | METH_KEYWORDS, "Predict Royale hazard cells."},
     {"evaluate", py_evaluate, METH_VARARGS, "Evaluate board utility for one snake."},
+    {"board_hash", py_board_hash, METH_VARARGS, "Return deterministic 64-bit Zobrist hash for a board."},
     {NULL, NULL, 0, NULL}
 };
