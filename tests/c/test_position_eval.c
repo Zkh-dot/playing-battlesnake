@@ -92,6 +92,22 @@ static Board* make_length_advantage_board(void) {
     return board;
 }
 
+static Board* make_invalid_dimension_board(void) {
+    Board* board = BoardCreate(0, 5, "duel", 0);
+    assert(board != NULL);
+
+    Coord first_body[] = {{0, 0}, {0, 1}, {0, 2}};
+    Coord second_body[] = {{0, 3}, {0, 4}, {0, 2}};
+    Snake first = make_snake("first", first_body, 3, 90);
+    Snake second = make_snake("second", second_body, 3, 90);
+
+    assert(BoardAddSnake(board, &first));
+    assert(BoardAddSnake(board, &second));
+    SnakeFree(&first);
+    SnakeFree(&second);
+    return board;
+}
+
 static Board* make_open_duel_board(void) {
     Board* board = BoardCreate(7, 7, "duel", 0);
     assert(board != NULL);
@@ -268,6 +284,37 @@ static void test_extreme_weights_stays_finite_and_near_boundary(void) {
     BoardFree(board);
 }
 
+static void test_non_finite_weight_is_sanitized_to_probability_fallback(void) {
+    Board* board = make_open_duel_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.weights.length = NAN;
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_OK);
+    assert(isfinite(result.first_win_probability));
+    assert(result.first_win_probability == 0.5);
+    assert(result.confidence == 0.0);
+    assert(result.terminal_leaves == 0);
+    assert(result.heuristic_leaves == 1);
+    BoardFree(board);
+}
+
+static void test_heuristic_error_does_not_increment_heuristic_leaves(void) {
+    Board* board = make_invalid_dimension_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_ERROR);
+    assert(result.nodes == 1);
+    assert(result.terminal_leaves == 0);
+    assert(result.heuristic_leaves == 0);
+    BoardFree(board);
+}
+
 static void test_terminal_second_alive_is_loss(void) {
     Board* board = make_terminal_second_alive_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
@@ -292,6 +339,8 @@ int main(void) {
     test_terminal_second_alive_is_loss();
     test_depth_zero_uses_heuristic_probability();
     test_extreme_weights_stays_finite_and_near_boundary();
+    test_non_finite_weight_is_sanitized_to_probability_fallback();
+    test_heuristic_error_does_not_increment_heuristic_leaves();
     puts("position_eval C tests passed");
     return 0;
 }
