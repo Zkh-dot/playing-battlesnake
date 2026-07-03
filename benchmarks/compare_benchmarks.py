@@ -51,8 +51,8 @@ def main() -> int:
         before_ms = float(baseline_row["elapsed_ms_p50"])
         after_ms = float(candidate_row["elapsed_ms_p50"])
         ratio = after_ms / max(before_ms, 0.001)
-        before_depth = int(baseline_row["completed_depth"])
-        after_depth = int(candidate_row["completed_depth"])
+        before_depth = float(baseline_row["completed_depth"])
+        after_depth = float(candidate_row["completed_depth"])
 
         print(
             "scenario={scenario} budget_ms={budget_ms} fixed_depth={fixed_depth} "
@@ -69,9 +69,34 @@ def main() -> int:
             )
         )
 
-        if ratio > args.max_p50_regression and after_depth <= before_depth:
+        if key[2] == 0:
+            if after_depth < before_depth:
+                print(
+                    "budget completed depth regressed: scenario={scenario} budget_ms={budget_ms} "
+                    "fixed_depth={fixed_depth} {before}->{after}".format(
+                        scenario=key[0],
+                        budget_ms=key[1],
+                        fixed_depth=key[2],
+                        before=before_depth,
+                        after=after_depth,
+                    )
+                )
+                failed = True
+            elif ratio > args.max_p50_regression:
+                failed = True
+        candidate_move_counts = candidate_row.get("move_counts")
+        if key[2] > 0 and isinstance(candidate_move_counts, dict) and len(candidate_move_counts) > 1:
+            print(
+                "fixed-depth move unstable: scenario={scenario} budget_ms={budget_ms} "
+                "fixed_depth={fixed_depth} moves={moves}".format(
+                    scenario=key[0],
+                    budget_ms=key[1],
+                    fixed_depth=key[2],
+                    moves=candidate_move_counts,
+                )
+            )
             failed = True
-        if key[2] > 0 and after_depth == before_depth and candidate_row.get("move") != baseline_row.get("move"):
+        if key[2] > 0 and candidate_row.get("move") != baseline_row.get("move"):
             print(
                 "fixed-depth move changed: scenario={scenario} budget_ms={budget_ms} "
                 "fixed_depth={fixed_depth} {before}->{after}".format(

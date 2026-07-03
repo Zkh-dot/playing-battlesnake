@@ -40,6 +40,10 @@ def summarize(
     elapsed_ms = _numeric(rows, "elapsed_ms")
     nodes = _numeric(rows, "nodes")
     tt_probes = _numeric(rows, "tt_probes")
+    move_counts: dict[str, int] = {}
+    for row in rows:
+        move = str(row["move"])
+        move_counts[move] = move_counts.get(move, 0) + 1
     tt_hit_rates = [
         float(row["tt_hits"]) / float(row["tt_probes"]) if float(row["tt_probes"]) else 0.0
         for row in rows
@@ -58,7 +62,8 @@ def summarize(
         "runs": runs,
         "warmup": warmup,
         "move": rows[-1]["move"] if rows else "",
-        "completed_depth": int(statistics.median(int(row["completed_depth"]) for row in rows)) if rows else 0,
+        "move_counts": move_counts,
+        "completed_depth": float(statistics.median(int(row["completed_depth"]) for row in rows)) if rows else 0.0,
         "max_depth_started": max(int(row["max_depth_started"]) for row in rows) if rows else 0,
         "timed_out_count": sum(1 for row in rows if row["timed_out"]),
         "elapsed_ms_min": min(elapsed_ms) if elapsed_ms else 0.0,
@@ -78,9 +83,13 @@ def summarize(
         ),
         "tt_probes_p50": percentile(tt_probes, 0.50),
         "tt_hits_p50": percentile(_numeric(rows, "tt_hits"), 0.50),
+        "tt_exact_hits_p50": percentile(_numeric(rows, "tt_exact_hits"), 0.50),
+        "tt_lower_hits_p50": percentile(_numeric(rows, "tt_lower_hits"), 0.50),
+        "tt_upper_hits_p50": percentile(_numeric(rows, "tt_upper_hits"), 0.50),
         "tt_hit_rate_p50": percentile(tt_hit_rates, 0.50),
         "tt_cutoffs_p50": percentile(_numeric(rows, "tt_cutoffs"), 0.50),
         "tt_stores_p50": percentile(_numeric(rows, "tt_stores"), 0.50),
+        "tt_collisions_p50": percentile(_numeric(rows, "tt_collisions"), 0.50),
     }
 
 

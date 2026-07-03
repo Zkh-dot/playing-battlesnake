@@ -4,6 +4,7 @@
 #include "../core/zobrist.h"
 #include "../py-datatypes/py_datatypes.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 
 static Board* board_from_pyobject(PyObject* object) {
@@ -26,6 +27,56 @@ static PyObject* raise_for_status(CoreStatus status) {
     }
     PyErr_SetString(PyExc_RuntimeError, "core algorithm failed");
     return NULL;
+}
+
+static int dict_set_u64(PyObject* dict, const char* key, uint64_t value) {
+    PyObject* object = PyLong_FromUnsignedLongLong((unsigned long long)value);
+    if (object == NULL) {
+        return -1;
+    }
+    int result = PyDict_SetItemString(dict, key, object);
+    Py_DECREF(object);
+    return result;
+}
+
+static int dict_set_int(PyObject* dict, const char* key, int value) {
+    PyObject* object = PyLong_FromLong(value);
+    if (object == NULL) {
+        return -1;
+    }
+    int result = PyDict_SetItemString(dict, key, object);
+    Py_DECREF(object);
+    return result;
+}
+
+static int dict_set_double(PyObject* dict, const char* key, double value) {
+    PyObject* object = PyFloat_FromDouble(value);
+    if (object == NULL) {
+        return -1;
+    }
+    int result = PyDict_SetItemString(dict, key, object);
+    Py_DECREF(object);
+    return result;
+}
+
+static int dict_set_bool(PyObject* dict, const char* key, bool value) {
+    PyObject* object = PyBool_FromLong(value ? 1 : 0);
+    if (object == NULL) {
+        return -1;
+    }
+    int result = PyDict_SetItemString(dict, key, object);
+    Py_DECREF(object);
+    return result;
+}
+
+static int dict_set_string(PyObject* dict, const char* key, const char* value) {
+    PyObject* object = PyUnicode_FromString(value);
+    if (object == NULL) {
+        return -1;
+    }
+    int result = PyDict_SetItemString(dict, key, object);
+    Py_DECREF(object);
+    return result;
 }
 
 static PyObject* coord_array_to_set_and_free(Coord* coords, int count) {
@@ -99,6 +150,7 @@ static PyObject* py_shortest_path(PyObject* self, PyObject* args) {
 
     PyObject* result = PyList_New(out_path_count);
     if (result == NULL) {
+        free(out_path);
         return NULL;
     }
     for (int i = 0; i < out_path_count; i++) {
@@ -193,6 +245,96 @@ static PyObject* py_minimax_move(PyObject* self, PyObject* args, PyObject* kwds)
         return raise_for_status(status);
     }
     return PyUnicode_FromString(MoveDirectionToString(out_move));
+}
+
+static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject* kwds) {
+    (void)self;
+    static char* kwlist[] = {
+        "board",
+        "snake_id",
+        "time_budget_ms",
+        "fixed_depth",
+        "enable_tt",
+        "enable_move_ordering",
+        "enable_make_unmake",
+        NULL,
+    };
+    PyObject* board_obj = NULL;
+    const char* snake_id = NULL;
+    int time_budget_ms = 400;
+    int fixed_depth = 0;
+    int enable_tt = 1;
+    int enable_move_ordering = 1;
+    int enable_make_unmake = 1;
+    if (!PyArg_ParseTupleAndKeywords(
+            args,
+            kwds,
+            "Os|iiiii",
+            kwlist,
+            &board_obj,
+            &snake_id,
+            &time_budget_ms,
+            &fixed_depth,
+            &enable_tt,
+            &enable_move_ordering,
+            &enable_make_unmake
+        )) {
+        return NULL;
+    }
+
+    Board* board = board_from_pyobject(board_obj);
+    if (board == NULL) {
+        return NULL;
+    }
+    if (fixed_depth < 0 || fixed_depth > CORE_SEARCH_MAX_DEPTH) {
+        PyErr_Format(PyExc_ValueError, "fixed_depth must be between 0 and %d", CORE_SEARCH_MAX_DEPTH);
+        return NULL;
+    }
+
+    CoreSearchConfig config = CoreSearchConfigDefault(time_budget_ms);
+    config.fixed_depth = fixed_depth;
+    config.enable_tt = enable_tt != 0;
+    config.enable_move_ordering = enable_move_ordering != 0;
+    config.enable_make_unmake = enable_make_unmake != 0;
+
+    MoveDirection out_move = MOVE_INVALID;
+    CoreSearchStats stats;
+    CoreStatus status = CoreMinimaxMoveWithStats(board, snake_id, config, &out_move, &stats);
+    if (status != CORE_OK) {
+        return raise_for_status(status);
+    }
+
+    PyObject* result = PyDict_New();
+    if (result == NULL) {
+        return NULL;
+    }
+
+    if (dict_set_string(result, "move", MoveDirectionToString(stats.move)) < 0 ||
+        dict_set_double(result, "score", stats.score) < 0 ||
+        dict_set_double(result, "elapsed_ms", stats.elapsed_ms) < 0 ||
+        dict_set_int(result, "completed_depth", stats.completed_depth) < 0 ||
+        dict_set_int(result, "max_depth_started", stats.max_depth_started) < 0 ||
+        dict_set_bool(result, "timed_out", stats.timed_out) < 0 ||
+        dict_set_u64(result, "nodes", stats.nodes) < 0 ||
+        dict_set_u64(result, "leaf_evals", stats.leaf_evals) < 0 ||
+        dict_set_u64(result, "clone_calls", stats.clone_calls) < 0 ||
+        dict_set_u64(result, "board_allocations", stats.board_allocations) < 0 ||
+        dict_set_u64(result, "safe_move_calls", stats.safe_move_calls) < 0 ||
+        dict_set_u64(result, "beta_cutoffs", stats.beta_cutoffs) < 0 ||
+        dict_set_u64(result, "move_order_first_choice_cutoffs", stats.move_order_first_choice_cutoffs) < 0 ||
+        dict_set_u64(result, "tt_probes", stats.tt_probes) < 0 ||
+        dict_set_u64(result, "tt_hits", stats.tt_hits) < 0 ||
+        dict_set_u64(result, "tt_exact_hits", stats.tt_exact_hits) < 0 ||
+        dict_set_u64(result, "tt_lower_hits", stats.tt_lower_hits) < 0 ||
+        dict_set_u64(result, "tt_upper_hits", stats.tt_upper_hits) < 0 ||
+        dict_set_u64(result, "tt_cutoffs", stats.tt_cutoffs) < 0 ||
+        dict_set_u64(result, "tt_stores", stats.tt_stores) < 0 ||
+        dict_set_u64(result, "tt_collisions", stats.tt_collisions) < 0) {
+        Py_DECREF(result);
+        return NULL;
+    }
+
+    return result;
 }
 
 static PyObject* py_choke_points(PyObject* self, PyObject* args) {
@@ -306,6 +448,7 @@ PyMethodDef PyCoreMethods[] = {
     {"shortest_path", py_shortest_path, METH_VARARGS, "Compute an A* shortest path."},
     {"voronoi_territory", py_voronoi_territory, METH_VARARGS, "Compute multi-source BFS territory control."},
     {"minimax_move", (PyCFunction)py_minimax_move, METH_VARARGS | METH_KEYWORDS, "Choose a move with simultaneous-move minimax heuristics."},
+    {"minimax_diagnostics", (PyCFunction)py_minimax_diagnostics, METH_VARARGS | METH_KEYWORDS, "Choose a move and return minimax search diagnostics."},
     {"choke_points", py_choke_points, METH_VARARGS, "Detect articulation-point choke cells."},
     {"edge_trap_move", py_edge_trap_move, METH_VARARGS, "Choose an optional edge-trapping move."},
     {"predict_hazards", (PyCFunction)py_predict_hazards, METH_VARARGS | METH_KEYWORDS, "Predict Royale hazard cells."},
