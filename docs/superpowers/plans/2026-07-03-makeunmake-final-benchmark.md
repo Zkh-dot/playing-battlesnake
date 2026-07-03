@@ -744,7 +744,7 @@ Expected: commit succeeds with only Task 8 files staged.
 - Create: `benchmarks/results/README.md`
 - Modify: `docs/superpowers/plans/2026-07-03-makeunmake-final-benchmark.md`
 
-- [ ] **Step 1: Create benchmark result documentation**
+- [x] **Step 1: Create benchmark result documentation**
 
 Create `benchmarks/results/README.md`:
 
@@ -766,10 +766,10 @@ Use the comparator from the repository root:
 python3 -B -m benchmarks.compare_benchmarks benchmarks/results/baseline-before-tt.jsonl benchmarks/results/final.jsonl
 ```
 
-Budget rows are gated on completed depth and elapsed p50. Fixed-depth rows are gated on move stability; fixed-depth elapsed p50 is printed for review because low-millisecond rows are sensitive to host scheduler noise.
+Budget rows are gated on completed depth and elapsed p50. Baseline-matched fixed-depth rows are gated on move stability; fixed-depth elapsed p50 is printed for review because low-millisecond rows are sensitive to host scheduler noise. Extra candidate-only fixed-depth rows are retained as review evidence but are not compared by this baseline command.
 ```
 
-- [ ] **Step 2: Run full final verification**
+- [x] **Step 2: Run full final verification**
 
 Run:
 
@@ -782,7 +782,7 @@ python3 -B -m benchmarks.compare_benchmarks benchmarks/results/baseline-before-t
 
 Expected: build succeeds; unit tests pass; final benchmark writes 96 JSONL rows; comparator exits 0.
 
-- [ ] **Step 3: Extract final summary numbers**
+- [x] **Step 3: Extract final summary numbers**
 
 Run:
 
@@ -810,7 +810,7 @@ print("final_rows", len(final))'
 
 Expected: command prints `final_rows 96` plus biggest/weakest gain tuples.
 
-- [ ] **Step 4: Append execution summary to this plan**
+- [x] **Step 4: Append execution summary to this plan**
 
 Run this command to append the actual summary values to `docs/superpowers/plans/2026-07-03-makeunmake-final-benchmark.md`:
 
@@ -837,14 +837,14 @@ summary += "- Final file: `benchmarks/results/final.jsonl`\n"
 summary += f"- Final row count: {len(final)}\n"
 summary += f"- Biggest depth gain: {max(depth_gains)}\n"
 summary += f"- Biggest nodes/sec gain: {max(nps_gains)}\n"
-summary += f"- Weakest nodes/sec gain: {min(nps_gains)}\n"
-summary += "- Residual risk: Fixed-depth elapsed p50 is useful for review but noisy on this host; budget-depth gates and move stability are the hard pass/fail checks.\n"
+summary += f"- Weakest nodes/sec gain among baseline-matched rows: {min(nps_gains)}\n"
+summary += "- Residual risk: Fixed-depth elapsed p50 is useful for review but noisy on this host; budget-depth gates and baseline-matched move stability are the hard pass/fail checks. The `fixed_depth=8` rows are retained as final artifact evidence but are not compared by the baseline command because `baseline-before-tt.jsonl` has only fixed depths `0`, `4`, and `6`.\n"
 plan.write_text(plan.read_text() + summary)'
 ```
 
 Expected: the plan ends with an `Execution Summary` section containing concrete tuple values and `Final row count: 96`.
 
-- [ ] **Step 5: Commit Task 9**
+- [x] **Step 5: Commit Task 9**
 
 Run:
 
@@ -876,3 +876,13 @@ Type consistency:
 - `CoreSearchState`, `CoreUndoBoardFrame`, and `CoreUndoSnake` are defined before use.
 - `CoreSearchStateMakeMoves()`, `CoreSearchStateUnmake()`, and `CoreSearchStateBoard()` signatures match between header, C implementation, and `core_algorithms.c` usage.
 - Python tests use the existing `minimax_diagnostics()` keyword flags already exposed by the native wrapper.
+
+## Execution Summary
+
+- Baseline file: `benchmarks/results/baseline-before-tt.jsonl`
+- Final file: `benchmarks/results/final.jsonl`
+- Final row count: 96
+- Biggest depth gain: `(3.0, ('duel_open_7x7', 450, 0), 9, 12.0)`
+- Biggest nodes/sec gain: `(1.4670162592240095, ('royale_hazard_ring_duel', 180, 4), 291959.01460256276, 428308.6214489796)`
+- Weakest nodes/sec gain among baseline-matched rows: `(0.9185478078677972, ('duel_open_7x7', 320, 6), 691329.7171938581, 635019.3962422826)`
+- Residual risk: Fixed-depth elapsed p50 is useful for review but noisy on this host; budget-depth gates and baseline-matched move stability are the hard pass/fail checks. The `fixed_depth=8` rows are retained as final artifact evidence but are not compared by the baseline command because `baseline-before-tt.jsonl` has only fixed depths `0`, `4`, and `6`.
