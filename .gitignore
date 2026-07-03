@@ -220,6 +220,7 @@ __marimo__/
 
 # Benchmark outputs
 benchmarks/results/auto/
+artifacts/weight_tuning/
 
 # Streamlit
 .streamlit/secrets.toml
