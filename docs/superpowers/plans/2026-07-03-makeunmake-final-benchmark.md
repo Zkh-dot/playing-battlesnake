@@ -32,7 +32,7 @@
 - Modify: `battlesnake/c-core/core/core_algorithms.c`
 - Test: `tests/test_search_diagnostics.py`
 
-- [ ] **Step 1: Add the clone-vs-make/unmake equivalence test**
+- [x] **Step 1: Add the clone-vs-make/unmake equivalence test**
 
 Append this test method to `SearchDiagnosticsTests` in `tests/test_search_diagnostics.py`:
 
@@ -62,7 +62,7 @@ Append this test method to `SearchDiagnosticsTests` in `tests/test_search_diagno
                 self.assertLessEqual(in_place_result["board_allocations"], clone_result["board_allocations"])
 ```
 
-- [ ] **Step 2: Run the new test and verify the current behavior**
+- [x] **Step 2: Run the new test and verify the current behavior**
 
 Run:
 
@@ -72,7 +72,7 @@ python3 -B -m unittest tests.test_search_diagnostics.SearchDiagnosticsTests.test
 
 Expected: PASS before implementation because `enable_make_unmake` is currently an API flag with no search-state effect. This confirms the test is an equivalence guard, not yet a performance guard.
 
-- [ ] **Step 3: Add the make/unmake clone-counter regression test**
+- [x] **Step 3: Add the make/unmake clone-counter regression test**
 
 Append this test method to `SearchDiagnosticsTests` in `tests/test_search_diagnostics.py`:
 
@@ -100,7 +100,7 @@ Append this test method to `SearchDiagnosticsTests` in `tests/test_search_diagno
         self.assertLess(in_place_result["board_allocations"], clone_result["board_allocations"])
 ```
 
-- [ ] **Step 4: Run the clone-counter test and verify it fails**
+- [x] **Step 4: Run the clone-counter test and verify it fails**
 
 Run:
 
@@ -110,7 +110,7 @@ python3 -B -m unittest tests.test_search_diagnostics.SearchDiagnosticsTests.test
 
 Expected: FAIL with `AssertionError` because both paths still call `BoardCloneAndApply()` the same number of times.
 
-- [ ] **Step 5: Create the search-state header**
+- [x] **Step 5: Create the search-state header**
 
 Create `battlesnake/c-core/core/search_state.h`:
 
@@ -155,7 +155,7 @@ bool CoreSearchStateUnmake(CoreSearchState* state);
 const Board* CoreSearchStateBoard(const CoreSearchState* state);
 ```
 
-- [ ] **Step 6: Create search-state helpers and lifecycle**
+- [x] **Step 6: Create search-state helpers and lifecycle**
 
 Create `battlesnake/c-core/core/search_state.c` with this initial content:
 
@@ -363,7 +363,7 @@ const Board* CoreSearchStateBoard(const CoreSearchState* state) {
 }
 ```
 
-- [ ] **Step 7: Add direct mutation and undo implementation**
+- [x] **Step 7: Add direct mutation and undo implementation**
 
 Append these functions to `battlesnake/c-core/core/search_state.c`:
 
@@ -575,7 +575,7 @@ bool CoreSearchStateUnmake(CoreSearchState* state) {
 }
 ```
 
-- [ ] **Step 8: Compile the search-state source**
+- [x] **Step 8: Compile the search-state source**
 
 Add the source file to `SOURCE_FILES` in `setup.py` immediately after `search_workspace.c`:
 
@@ -591,7 +591,7 @@ python3 setup.py build_ext --inplace --force
 
 Expected: build succeeds. If it fails with a compiler diagnostic, fix the exact line reported before continuing.
 
-- [ ] **Step 9: Route recursive search through make/unmake**
+- [x] **Step 9: Route recursive search through make/unmake**
 
 In `battlesnake/c-core/core/core_algorithms.c`, add the include:
 
@@ -684,7 +684,7 @@ Replace the `BoardCloneAndApply()` block in `core_minimax_search()` with:
             }
 ```
 
-- [ ] **Step 10: Run Task 8 tests**
+- [x] **Step 10: Run Task 8 tests**
 
 Run:
 
@@ -694,7 +694,7 @@ python3 -B -m unittest tests.test_search_diagnostics.SearchDiagnosticsTests.test
 
 Expected: both tests pass. `test_make_unmake_reduces_clone_counters` must show lower `clone_calls` and `board_allocations` on the make/unmake path.
 
-- [ ] **Step 11: Run focused regression suites**
+- [x] **Step 11: Run focused regression suites**
 
 Run:
 
@@ -704,7 +704,7 @@ python3 -B -m unittest tests.test_search_diagnostics tests.test_benchmark_scenar
 
 Expected: all tests pass. Current expected count after adding the two Task 8 tests is 19 tests.
 
-- [ ] **Step 12: Generate the make/unmake benchmark artifact**
+- [x] **Step 12: Generate the make/unmake benchmark artifact**
 
 Run:
 
@@ -714,7 +714,7 @@ python3 -B -m benchmarks.run_minimax_bench --runs 20 --warmup 3 --budgets 180,32
 
 Expected: command completes and writes 72 JSONL rows.
 
-- [ ] **Step 13: Compare against the workspace baseline**
+- [x] **Step 13: Compare against the workspace baseline**
 
 Run:
 
@@ -725,7 +725,7 @@ wc -l benchmarks/results/after-makeunmake.jsonl
 
 Expected: comparator exits 0; `wc` prints `72 benchmarks/results/after-makeunmake.jsonl`. Fixed-depth rows should show lower `clone_calls_p50` and lower `board_allocations_p50` than `after-workspace.jsonl`.
 
-- [ ] **Step 14: Commit Task 8**
+- [x] **Step 14: Commit Task 8**
 
 Run:
 

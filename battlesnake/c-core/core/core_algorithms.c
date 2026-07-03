@@ -3,6 +3,7 @@
 #endif
 
 #include "core_algorithms.h"
+#include "search_state.h"
 #include "search_workspace.h"
 #include "transposition_table.h"
 #include "zobrist.h"
@@ -748,6 +749,7 @@ typedef struct {
     CoreSearchStats* stats;
     CoreTranspositionTable tt;
     CoreSearchWorkspace workspace;
+    CoreSearchState* state;
     bool tt_enabled;
     MoveDirection principal_variation[CORE_MINIMAX_MAX_DEPTH + 1];
     MoveDirection killer_moves[CORE_MINIMAX_MAX_DEPTH + 1][2];
@@ -1149,33 +1151,65 @@ static CoreStatus core_minimax_search(
                 moves[i] = options[i][option_index];
             }
 
-            if (stats != NULL) {
-                stats->clone_calls++;
-                stats->board_allocations++;
-            }
-            Board* next = BoardCloneAndApply(board, ids, moves, snake_count);
-            if (next == NULL) {
-                return CORE_ERROR;
-            }
-
             double score = 0.0;
             double child_beta = worst_reply < beta ? worst_reply : beta;
-            CoreStatus status = core_minimax_search(
-                next,
-                snake_id,
-                depth - 1,
-                ply + 1,
-                alpha,
-                child_beta,
-                MOVE_INVALID,
-                context,
-                timed_out,
-                &score,
-                NULL
-            );
-            BoardFree(next);
-            if (status != CORE_OK || *timed_out) {
-                return status;
+            if (context->config.enable_make_unmake && context->state != NULL) {
+                const Board* current = CoreSearchStateBoard(context->state);
+                if (current == NULL || current->snake_count != snake_count) {
+                    return CORE_ERROR;
+                }
+                for (int i = 0; i < snake_count; i++) {
+                    ids[i] = current->snakes[i].id;
+                }
+                if (!CoreSearchStateMakeMoves(context->state, ids, moves, snake_count)) {
+                    return CORE_ERROR;
+                }
+                const Board* next = CoreSearchStateBoard(context->state);
+                CoreStatus status = core_minimax_search(
+                    next,
+                    snake_id,
+                    depth - 1,
+                    ply + 1,
+                    alpha,
+                    child_beta,
+                    MOVE_INVALID,
+                    context,
+                    timed_out,
+                    &score,
+                    NULL
+                );
+                if (!CoreSearchStateUnmake(context->state)) {
+                    return CORE_ERROR;
+                }
+                if (status != CORE_OK || *timed_out) {
+                    return status;
+                }
+            } else {
+                if (stats != NULL) {
+                    stats->clone_calls++;
+                    stats->board_allocations++;
+                }
+                Board* next = BoardCloneAndApply(board, ids, moves, snake_count);
+                if (next == NULL) {
+                    return CORE_ERROR;
+                }
+                CoreStatus status = core_minimax_search(
+                    next,
+                    snake_id,
+                    depth - 1,
+                    ply + 1,
+                    alpha,
+                    child_beta,
+                    MOVE_INVALID,
+                    context,
+                    timed_out,
+                    &score,
+                    NULL
+                );
+                BoardFree(next);
+                if (status != CORE_OK || *timed_out) {
+                    return status;
+                }
             }
 
             if (score < worst_reply) {
@@ -1312,6 +1346,16 @@ CoreStatus CoreMinimaxMoveWithStats(
         CoreTtFree(&context.tt);
         return CORE_ERROR;
     }
+    CoreSearchState state;
+    memset(&state, 0, sizeof(state));
+    if (config.enable_make_unmake) {
+        if (!CoreSearchStateInit(&state, board)) {
+            CoreSearchWorkspaceFree(&context.workspace);
+            CoreTtFree(&context.tt);
+            return CORE_ERROR;
+        }
+        context.state = &state;
+    }
     int completed_depth = 0;
     double completed_score = 0.0;
     bool timed_out = false;
@@ -1338,6 +1382,9 @@ CoreStatus CoreMinimaxMoveWithStats(
             &candidate
         );
         if (status != CORE_OK) {
+            if (context.state != NULL) {
+                CoreSearchStateFree(context.state);
+            }
             CoreSearchWorkspaceFree(&context.workspace);
             CoreTtFree(&context.tt);
             return status;
@@ -1369,6 +1416,9 @@ CoreStatus CoreMinimaxMoveWithStats(
     stats->move = completed_best;
     stats->elapsed_ms = core_elapsed_ms(start, end);
     *out_move = completed_best;
+    if (context.state != NULL) {
+        CoreSearchStateFree(context.state);
+    }
     CoreSearchWorkspaceFree(&context.workspace);
     CoreTtFree(&context.tt);
     return CORE_OK;
