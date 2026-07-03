@@ -72,6 +72,7 @@ typedef struct {
 
 #ifdef CORE_POSITION_EVAL_TESTING
 static bool position_eval_test_force_timeout = false;
+static int position_eval_test_force_timeout_after_checks = -1;
 #endif
 
 static CoreStatus position_fill_timeout_matrix(
@@ -112,6 +113,13 @@ static bool position_timed_out(const PositionEvalTimer* timer) {
 #ifdef CORE_POSITION_EVAL_TESTING
     if (position_eval_test_force_timeout) {
         return true;
+    }
+    if (position_eval_test_force_timeout_after_checks >= 0) {
+        if (position_eval_test_force_timeout_after_checks == 0) {
+            return true;
+        }
+        position_eval_test_force_timeout_after_checks--;
+        return false;
     }
 #endif
     struct timespec now;
@@ -751,6 +759,12 @@ typedef struct {
 
 void CorePositionEvalTestForceTimeout(bool enabled) {
     position_eval_test_force_timeout = enabled;
+    position_eval_test_force_timeout_after_checks = -1;
+}
+
+void CorePositionEvalTestForceTimeoutAfterChecks(int checks) {
+    position_eval_test_force_timeout = false;
+    position_eval_test_force_timeout_after_checks = checks < 0 ? -1 : checks;
 }
 
 double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d) {

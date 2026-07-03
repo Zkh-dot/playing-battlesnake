@@ -143,22 +143,6 @@ static Board* make_forced_terminal_child_board(void) {
     return board;
 }
 
-static Board* make_timeout_pressure_board(void) {
-    Board* board = BoardCreate(31, 31, "duel", 0);
-    assert(board != NULL);
-
-    Coord first_body[] = {{15, 15}};
-    Coord second_body[] = {{15, 20}};
-    Snake first = make_snake("first", first_body, 1, 90);
-    Snake second = make_snake("second", second_body, 1, 90);
-    assert(BoardAddSnake(board, &first));
-    assert(BoardAddSnake(board, &second));
-
-    SnakeFree(&first);
-    SnakeFree(&second);
-    return board;
-}
-
 static double stable_sigmoid(double scaled) {
     if (scaled >= 0.0) {
         return 1.0 / (1.0 + exp(-scaled));
@@ -175,6 +159,7 @@ typedef struct {
 } CorePositionEvalTestTimeoutBackupResult;
 
 void CorePositionEvalTestForceTimeout(bool enabled);
+void CorePositionEvalTestForceTimeoutAfterChecks(int checks);
 
 double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d);
 double CorePositionEvalTestSolveMatrix2x2WithConfidence(
@@ -359,18 +344,20 @@ static void test_unknown_decision_mode_errors(void) {
 }
 
 static void test_forced_timeout_reports_partial_confidence(void) {
-    Board* board = make_timeout_pressure_board();
+    Board* board = make_open_duel_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
-    config.max_depth = 30;
+    config.max_depth = 1;
     CorePositionEvalResult result;
 
-    CorePositionEvalTestForceTimeout(true);
+    CorePositionEvalTestForceTimeoutAfterChecks(2);
     CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
-    CorePositionEvalTestForceTimeout(false);
+    CorePositionEvalTestForceTimeoutAfterChecks(-1);
 
     assert(status == CORE_OK);
     assert(result.timed_out == true);
     assert(result.timeout_leaves > 0);
+    assert(result.nodes > 1);
+    assert(result.expanded_children > 0);
     assert(result.first_win_probability >= 0.0);
     assert(result.first_win_probability <= 1.0);
     assert(result.confidence >= 0.0);
