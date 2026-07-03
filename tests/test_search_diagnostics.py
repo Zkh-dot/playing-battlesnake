@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from battlesnake.battlesnake_native import Board, Coord, Snake, minimax_diagnostics, minimax_move
+from battlesnake.battlesnake_native import Board, Coord, Snake, evaluate, minimax_diagnostics, minimax_move
+from battlesnake.core.evaluation import WEIGHTS
 from benchmarks.scenarios import build_board, get_scenario
 
 
@@ -306,6 +307,69 @@ class SearchDiagnosticsTests(unittest.TestCase):
         move = minimax_move(board, scenario.snake_id, time_budget_ms=25)
 
         self.assertIn(move, {"up", "down", "left", "right"})
+
+    def test_default_evaluation_weights_match_legacy_score(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        board = build_board(scenario)
+
+        self.assertAlmostEqual(
+            evaluate(board, scenario.snake_id),
+            evaluate(board, scenario.snake_id, WEIGHTS),
+        )
+
+    def test_evaluation_weight_overrides_are_used_by_evaluate_and_search(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        board = build_board(scenario)
+
+        default_score = evaluate(board, scenario.snake_id)
+        no_health_score = evaluate(board, scenario.snake_id, {"health": 0.0})
+        diagnostics = minimax_diagnostics(
+            board,
+            scenario.snake_id,
+            time_budget_ms=1000,
+            fixed_depth=2,
+            weights={"health": 0.0},
+        )
+
+        self.assertNotEqual(default_score, no_health_score)
+        self.assertEqual(set(diagnostics), EXPECTED_DIAGNOSTIC_KEYS)
+        self.assertEqual(diagnostics["completed_depth"], 2)
+
+    def test_duel_pressure_weight_overrides_are_used_by_evaluate_and_search(self) -> None:
+        board = Board(
+            width=7,
+            height=7,
+            snakes={
+                "me": Snake("me", "me", 90, [Coord(2, 3), Coord(2, 2), Coord(2, 1)], length=3),
+                "you": Snake("you", "you", 10, [Coord(5, 3), Coord(5, 2), Coord(5, 1)], length=3),
+            },
+            food=[Coord(3, 3)],
+            ruleset_name="standard",
+            hazard_damage=0,
+        )
+        weights = {
+            "opponent_reachable_space": 1.0,
+            "territory_delta": 1.0,
+            "opponent_safe_moves": 1.0,
+            "opponent_low_health_food_denial": 1.0,
+        }
+
+        default_score = evaluate(board, "me")
+        pressure_score = evaluate(board, "me", weights)
+        diagnostics = minimax_diagnostics(board, "me", time_budget_ms=1000, fixed_depth=2, weights=weights)
+
+        self.assertNotEqual(default_score, pressure_score)
+        self.assertEqual(set(diagnostics), EXPECTED_DIAGNOSTIC_KEYS)
+        self.assertEqual(diagnostics["completed_depth"], 2)
+
+    def test_invalid_evaluation_weight_type_is_rejected(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        board = build_board(scenario)
+
+        with self.assertRaises(TypeError):
+            evaluate(board, scenario.snake_id, {"health": "high"})
+        with self.assertRaises(KeyError):
+            evaluate(board, scenario.snake_id, {"space": 10.0})
 
 
 if __name__ == "__main__":

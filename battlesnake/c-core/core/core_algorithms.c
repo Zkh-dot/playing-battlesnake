@@ -1045,7 +1045,7 @@ static CoreStatus core_minimax_search(
         if (stats != NULL) {
             stats->leaf_evals++;
         }
-        CoreStatus status = CoreEvaluate(board, snake_id, out_score);
+        CoreStatus status = CoreEvaluateWithWeights(board, snake_id, &context->config.weights, out_score);
         if (status == CORE_OK && tt_node_enabled) {
             bool tt_collision = false;
             bool stored = CoreTtStore(&context->tt, hash, depth, *out_score, CORE_TT_EXACT, MOVE_INVALID, &tt_collision);
@@ -1093,7 +1093,7 @@ static CoreStatus core_minimax_search(
         if (stats != NULL) {
             stats->leaf_evals++;
         }
-        CoreStatus status = CoreEvaluate(board, snake_id, out_score);
+        CoreStatus status = CoreEvaluateWithWeights(board, snake_id, &context->config.weights, out_score);
         if (status == CORE_OK && tt_node_enabled) {
             bool tt_collision = false;
             bool stored = CoreTtStore(&context->tt, hash, depth, *out_score, CORE_TT_EXACT, MOVE_INVALID, &tt_collision);
@@ -1696,19 +1696,24 @@ CoreStatus CorePredictHazards(
     return ok ? CORE_OK : CORE_ERROR;
 }
 
-CoreStatus CoreEvaluate(const Board* board, const char* snake_id, double* out_score) {
-    if (board == NULL || snake_id == NULL || out_score == NULL) {
+CoreStatus CoreEvaluateWithWeights(
+    const Board* board,
+    const char* snake_id,
+    const CoreEvaluationWeights* weights,
+    double* out_score
+) {
+    if (board == NULL || snake_id == NULL || weights == NULL || out_score == NULL) {
         return CORE_ERROR;
     }
 
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     if (snake == NULL || snake->body_len == 0) {
-        *out_score = -1000000.0;
+        *out_score = weights->terminal_loss;
         return CORE_OK;
     }
 
     if (board->snake_count == 1) {
-        *out_score = 1000000.0;
+        *out_score = weights->terminal_win;
         return CORE_OK;
     }
 
@@ -1724,21 +1729,23 @@ CoreStatus CoreEvaluate(const Board* board, const char* snake_id, double* out_sc
     int length = core_snake_length(snake);
     double score = 0.0;
 
-    score += 500.0;
-    score += (double)snake->health * 0.7;
-    score += (double)length * 18.0;
-    score += (double)reachable * 4.0;
-    score += (double)safe_count * 35.0;
-    score += core_center_score(board, head) * 2.0;
+    score += weights->base;
+    score += (double)snake->health * weights->health;
+    score += (double)length * weights->length;
+    score += (double)reachable * weights->reachable_space;
+    score += (double)safe_count * weights->safe_moves;
+    score += core_center_score(board, head) * weights->center;
 
     int food_distance = core_nearest_food_distance(board, head);
     if (food_distance != INT_MAX) {
-        double food_weight = snake->health < 35 ? 120.0 : 55.0;
+        double food_weight = (double)snake->health < weights->low_health_threshold ?
+            weights->low_health_food :
+            weights->food;
         score += food_weight / (double)(food_distance + 1);
     }
 
     if (core_coord_in_array(board->hazards, board->hazard_count, head)) {
-        score -= (double)(board->hazard_damage + 25);
+        score -= (double)board->hazard_damage * weights->hazard_damage + weights->hazard;
     }
 
     for (int i = 0; i < board->snake_count; i++) {
@@ -1750,14 +1757,51 @@ CoreStatus CoreEvaluate(const Board* board, const char* snake_id, double* out_sc
         Coord other_head = SnakeHead(other);
         int other_length = core_snake_length(other);
         int distance = core_manhattan(head, other_head);
-        score += (double)(length - other_length) * 5.0;
+        score += (double)(length - other_length) * weights->length_advantage;
         if (distance == 1 && other_length >= length) {
-            score -= 120.0;
+            score -= weights->adjacent_equal_or_longer_penalty;
         } else if (distance == 1 && other_length < length) {
-            score += 45.0;
+            score += weights->adjacent_shorter_bonus;
+        }
+
+        if (weights->opponent_reachable_space != 0.0 || weights->territory_delta != 0.0) {
+            int other_reachable = 0;
+            status = CoreReachableSpace(board, other_head, other->id, &other_reachable);
+            if (status != CORE_OK) {
+                return status;
+            }
+
+            score -= (double)other_reachable * weights->opponent_reachable_space;
+            score += (double)(reachable - other_reachable) * weights->territory_delta;
+        }
+
+        if (weights->opponent_safe_moves != 0.0) {
+            MoveDirection other_safe_moves[4];
+            int other_safe_count = BoardSafeMoves(board, other->id, other_safe_moves);
+            score -= (double)other_safe_count * weights->opponent_safe_moves;
+        }
+
+        if (weights->opponent_low_health_food_denial != 0.0 &&
+            (double)other->health < weights->low_health_threshold) {
+            int own_food_distance = food_distance;
+            int other_food_distance = core_nearest_food_distance(board, other_head);
+            if (own_food_distance != INT_MAX && other_food_distance != INT_MAX) {
+                int food_race_advantage = other_food_distance - own_food_distance;
+                if (food_race_advantage > 0) {
+                    double hunger_pressure = weights->low_health_threshold - (double)other->health;
+                    score += hunger_pressure *
+                        (double)food_race_advantage *
+                        weights->opponent_low_health_food_denial;
+                }
+            }
         }
     }
 
     *out_score = score;
     return CORE_OK;
+}
+
+CoreStatus CoreEvaluate(const Board* board, const char* snake_id, double* out_score) {
+    CoreEvaluationWeights weights = CoreEvaluationWeightsDefault();
+    return CoreEvaluateWithWeights(board, snake_id, &weights, out_score);
 }
