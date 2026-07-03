@@ -62,6 +62,8 @@ typedef struct {
 typedef struct {
     double p;
     double confidence;
+    double first_strategy[4];
+    double second_strategy[4];
 } PositionEvalValue;
 
 typedef struct {
@@ -81,6 +83,34 @@ static int board_command_moves(const Board* board, const char* snake_id, MoveDir
     out_moves[2] = MOVE_LEFT;
     out_moves[3] = MOVE_RIGHT;
     return 4;
+}
+
+static void clear_strategy(double strategy[4]) {
+    for (int i = 0; i < 4; i++) {
+        strategy[i] = 0.0;
+    }
+}
+
+static PositionEvalValue position_eval_value(double probability, double confidence) {
+    PositionEvalValue value;
+    memset(&value, 0, sizeof(value));
+    value.p = probability;
+    value.confidence = confidence;
+    return value;
+}
+
+static void copy_strategy_by_moves(
+    const MoveDirection moves[4],
+    const double local_strategy[4],
+    int move_count,
+    double out_strategy[4]
+) {
+    clear_strategy(out_strategy);
+    for (int i = 0; i < move_count; i++) {
+        if (moves[i] >= MOVE_UP && moves[i] <= MOVE_RIGHT) {
+            out_strategy[moves[i]] = clamp01(local_strategy[i]);
+        }
+    }
 }
 
 #ifdef CORE_POSITION_EVAL_TESTING
@@ -151,6 +181,247 @@ static bool is_close(double a, double b) {
     return fabs(a - b) <= 1e-12;
 }
 
+static int popcount4(int mask) {
+    int count = 0;
+    for (int i = 0; i < 4; i++) {
+        if ((mask & (1 << i)) != 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int mask_to_indices(int mask, int indices[4]) {
+    int count = 0;
+    for (int i = 0; i < 4; i++) {
+        if ((mask & (1 << i)) != 0) {
+            indices[count++] = i;
+        }
+    }
+    return count;
+}
+
+static bool solve_linear_system(int n, double augmented[5][6], double out[5]) {
+    for (int col = 0; col < n; col++) {
+        int pivot = col;
+        double pivot_abs = fabs(augmented[col][col]);
+        for (int row = col + 1; row < n; row++) {
+            double value_abs = fabs(augmented[row][col]);
+            if (value_abs > pivot_abs) {
+                pivot = row;
+                pivot_abs = value_abs;
+            }
+        }
+        if (pivot_abs < 1e-10) {
+            return false;
+        }
+        if (pivot != col) {
+            for (int k = col; k <= n; k++) {
+                double tmp = augmented[col][k];
+                augmented[col][k] = augmented[pivot][k];
+                augmented[pivot][k] = tmp;
+            }
+        }
+
+        double divisor = augmented[col][col];
+        for (int k = col; k <= n; k++) {
+            augmented[col][k] /= divisor;
+        }
+        for (int row = 0; row < n; row++) {
+            if (row == col) {
+                continue;
+            }
+            double factor = augmented[row][col];
+            for (int k = col; k <= n; k++) {
+                augmented[row][k] -= factor * augmented[col][k];
+            }
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        out[i] = augmented[i][n];
+    }
+    return true;
+}
+
+static bool solve_row_strategy_lp(
+    double values[4][4],
+    int rows,
+    int cols,
+    double row_strategy[4],
+    double* value
+) {
+    bool found = false;
+    double best_value = -DBL_MAX;
+    double best_strategy[4] = {0.0};
+
+    for (int row_mask = 1; row_mask < (1 << rows); row_mask++) {
+        int support_size = popcount4(row_mask);
+        if (support_size > cols) {
+            continue;
+        }
+        for (int col_mask = 1; col_mask < (1 << cols); col_mask++) {
+            if (popcount4(col_mask) != support_size) {
+                continue;
+            }
+
+            int row_indices[4] = {0};
+            int col_indices[4] = {0};
+            mask_to_indices(row_mask, row_indices);
+            mask_to_indices(col_mask, col_indices);
+
+            int unknowns = support_size + 1;
+            double augmented[5][6] = {{0.0}};
+            double solution[5] = {0.0};
+            for (int i = 0; i < support_size; i++) {
+                augmented[0][i] = 1.0;
+            }
+            augmented[0][unknowns] = 1.0;
+            for (int eq = 0; eq < support_size; eq++) {
+                int col = col_indices[eq];
+                for (int i = 0; i < support_size; i++) {
+                    augmented[eq + 1][i] = values[row_indices[i]][col];
+                }
+                augmented[eq + 1][support_size] = -1.0;
+            }
+
+            if (!solve_linear_system(unknowns, augmented, solution)) {
+                continue;
+            }
+
+            double candidate_strategy[4] = {0.0};
+            bool valid = true;
+            for (int i = 0; i < support_size; i++) {
+                if (solution[i] < -1e-9) {
+                    valid = false;
+                    break;
+                }
+                candidate_strategy[row_indices[i]] = solution[i] < 0.0 ? 0.0 : solution[i];
+            }
+            if (!valid) {
+                continue;
+            }
+
+            double candidate_value = solution[support_size];
+            for (int col = 0; col < cols; col++) {
+                double payoff = 0.0;
+                for (int row = 0; row < rows; row++) {
+                    payoff += candidate_strategy[row] * values[row][col];
+                }
+                if (payoff + 1e-9 < candidate_value) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) {
+                continue;
+            }
+
+            if (!found || candidate_value > best_value) {
+                found = true;
+                best_value = candidate_value;
+                memcpy(best_strategy, candidate_strategy, sizeof(best_strategy));
+            }
+        }
+    }
+
+    if (!found) {
+        return false;
+    }
+    memcpy(row_strategy, best_strategy, sizeof(best_strategy));
+    *value = best_value;
+    return true;
+}
+
+static bool solve_col_strategy_lp(
+    double values[4][4],
+    int rows,
+    int cols,
+    double col_strategy[4],
+    double* value
+) {
+    bool found = false;
+    double best_value = DBL_MAX;
+    double best_strategy[4] = {0.0};
+
+    for (int col_mask = 1; col_mask < (1 << cols); col_mask++) {
+        int support_size = popcount4(col_mask);
+        if (support_size > rows) {
+            continue;
+        }
+        for (int row_mask = 1; row_mask < (1 << rows); row_mask++) {
+            if (popcount4(row_mask) != support_size) {
+                continue;
+            }
+
+            int row_indices[4] = {0};
+            int col_indices[4] = {0};
+            mask_to_indices(row_mask, row_indices);
+            mask_to_indices(col_mask, col_indices);
+
+            int unknowns = support_size + 1;
+            double augmented[5][6] = {{0.0}};
+            double solution[5] = {0.0};
+            for (int j = 0; j < support_size; j++) {
+                augmented[0][j] = 1.0;
+            }
+            augmented[0][unknowns] = 1.0;
+            for (int eq = 0; eq < support_size; eq++) {
+                int row = row_indices[eq];
+                for (int j = 0; j < support_size; j++) {
+                    augmented[eq + 1][j] = values[row][col_indices[j]];
+                }
+                augmented[eq + 1][support_size] = -1.0;
+            }
+
+            if (!solve_linear_system(unknowns, augmented, solution)) {
+                continue;
+            }
+
+            double candidate_strategy[4] = {0.0};
+            bool valid = true;
+            for (int j = 0; j < support_size; j++) {
+                if (solution[j] < -1e-9) {
+                    valid = false;
+                    break;
+                }
+                candidate_strategy[col_indices[j]] = solution[j] < 0.0 ? 0.0 : solution[j];
+            }
+            if (!valid) {
+                continue;
+            }
+
+            double candidate_value = solution[support_size];
+            for (int row = 0; row < rows; row++) {
+                double payoff = 0.0;
+                for (int col = 0; col < cols; col++) {
+                    payoff += candidate_strategy[col] * values[row][col];
+                }
+                if (payoff - 1e-9 > candidate_value) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) {
+                continue;
+            }
+
+            if (!found || candidate_value < best_value) {
+                found = true;
+                best_value = candidate_value;
+                memcpy(best_strategy, candidate_strategy, sizeof(best_strategy));
+            }
+        }
+    }
+
+    if (!found) {
+        return false;
+    }
+    memcpy(col_strategy, best_strategy, sizeof(best_strategy));
+    *value = best_value;
+    return true;
+}
+
 static double pure_matrix_value_with_confidence(
     double values[4][4],
     double confidences[4][4],
@@ -215,41 +486,18 @@ static double pure_matrix_value_with_confidence(
     return best_row_value;
 }
 
-static bool solve_2x2_mixed(
-    double values[4][4],
-    double row_strategy[4],
-    double col_strategy[4],
-    double* value
-) {
-    for (int i = 0; i < 4; i++) {
-        row_strategy[i] = 0.0;
-        col_strategy[i] = 0.0;
+static bool matrix_all_values_close(double values[4][4], int rows, int cols) {
+    if (rows <= 0 || cols <= 0) {
+        return true;
     }
-
-    double a = values[0][0];
-    double b = values[0][1];
-    double c = values[1][0];
-    double d = values[1][1];
-
-    double denominator = a - b - c + d;
-    if (fabs(denominator) < 1e-12) {
-        return false;
+    double first = values[0][0];
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            if (!is_close(values[i][j], first)) {
+                return false;
+            }
+        }
     }
-
-    double row_p = (d - c) / denominator;
-    double col_q = (d - b) / denominator;
-    if (row_p < 0.0 || row_p > 1.0 || col_q < 0.0 || col_q > 1.0) {
-        return false;
-    }
-    if (value == NULL) {
-        return false;
-    }
-
-    row_strategy[0] = row_p;
-    row_strategy[1] = 1.0 - row_p;
-    col_strategy[0] = col_q;
-    col_strategy[1] = 1.0 - col_q;
-    *value = (a * d - b * c) / denominator;
     return true;
 }
 
@@ -262,20 +510,39 @@ static double solve_zero_sum_matrix_with_confidence(
     double col_strategy[4],
     double* out_confidence
 ) {
-    double mixed_value = 0.0;
-    if (rows == 2 && cols == 2) {
-        if (solve_2x2_mixed(values, row_strategy, col_strategy, &mixed_value)) {
-            if (out_confidence != NULL) {
-                double confidence = 0.0;
-                for (int i = 0; i < rows; i++) {
-                    for (int j = 0; j < cols; j++) {
-                        confidence += row_strategy[i] * col_strategy[j] * confidences[i][j];
-                    }
+    if (matrix_all_values_close(values, rows, cols)) {
+        return pure_matrix_value_with_confidence(
+            values,
+            confidences,
+            rows,
+            cols,
+            row_strategy,
+            col_strategy,
+            out_confidence
+        );
+    }
+
+    double row_value = 0.0;
+    double col_value = 0.0;
+    if (
+        rows > 0 &&
+        cols > 0 &&
+        rows <= 4 &&
+        cols <= 4 &&
+        solve_row_strategy_lp(values, rows, cols, row_strategy, &row_value) &&
+        solve_col_strategy_lp(values, rows, cols, col_strategy, &col_value)
+    ) {
+        (void)col_value;
+        if (out_confidence != NULL) {
+            double confidence = 0.0;
+            for (int i = 0; i < rows; i++) {
+                for (int j = 0; j < cols; j++) {
+                    confidence += row_strategy[i] * col_strategy[j] * confidences[i][j];
                 }
-                *out_confidence = confidence;
             }
-            return mixed_value;
+            *out_confidence = confidence;
         }
+        return row_value;
     }
     return pure_matrix_value_with_confidence(
         values,
@@ -312,7 +579,7 @@ static CoreStatus evaluate_heuristic_leaf(
         context->result->timeout_leaves++;
     }
     context->result->heuristic_leaves++;
-    *out_value = (PositionEvalValue){probability, 0.0};
+    *out_value = position_eval_value(probability, 0.0);
     return CORE_OK;
 }
 
@@ -406,17 +673,17 @@ static CoreStatus evaluate_node_pure_minimax(
 
     if (first_alive && !second_alive) {
         context->result->terminal_leaves++;
-        *out_value = (PositionEvalValue){1.0, 1.0};
+        *out_value = position_eval_value(1.0, 1.0);
         return CORE_OK;
     }
     if (!first_alive && second_alive) {
         context->result->terminal_leaves++;
-        *out_value = (PositionEvalValue){0.0, 1.0};
+        *out_value = position_eval_value(0.0, 1.0);
         return CORE_OK;
     }
     if (!first_alive && !second_alive) {
         context->result->terminal_leaves++;
-        *out_value = (PositionEvalValue){0.5, 1.0};
+        *out_value = position_eval_value(0.5, 1.0);
         return CORE_OK;
     }
 
@@ -531,7 +798,9 @@ static CoreStatus evaluate_node_pure_minimax(
         }
     }
 
-    *out_value = (PositionEvalValue){clamp01(value), clamp01(confidence)};
+    *out_value = position_eval_value(clamp01(value), clamp01(confidence));
+    copy_strategy_by_moves(first_moves, row_strategy, first_count, out_value->first_strategy);
+    copy_strategy_by_moves(second_moves, col_strategy, second_count, out_value->second_strategy);
     return CORE_OK;
 }
 
@@ -552,17 +821,17 @@ static CoreStatus evaluate_node_matrix(
 
     if (first_alive && !second_alive) {
         context->result->terminal_leaves++;
-        *out_value = (PositionEvalValue){1.0, 1.0};
+        *out_value = position_eval_value(1.0, 1.0);
         return CORE_OK;
     }
     if (!first_alive && second_alive) {
         context->result->terminal_leaves++;
-        *out_value = (PositionEvalValue){0.0, 1.0};
+        *out_value = position_eval_value(0.0, 1.0);
         return CORE_OK;
     }
     if (!first_alive && !second_alive) {
         context->result->terminal_leaves++;
-        *out_value = (PositionEvalValue){0.5, 1.0};
+        *out_value = position_eval_value(0.5, 1.0);
         return CORE_OK;
     }
 
@@ -671,7 +940,9 @@ static CoreStatus evaluate_node_matrix(
         &confidence
     );
 
-    *out_value = (PositionEvalValue){clamp01(value), clamp01(confidence)};
+    *out_value = position_eval_value(clamp01(value), clamp01(confidence));
+    copy_strategy_by_moves(first_moves, row_strategy, first_count, out_value->first_strategy);
+    copy_strategy_by_moves(second_moves, col_strategy, second_count, out_value->second_strategy);
     return CORE_OK;
 }
 
@@ -711,6 +982,12 @@ typedef struct {
     double probability;
     double confidence;
 } CorePositionEvalTestTimeoutBackupResult;
+
+typedef struct {
+    double probability;
+    double row_strategy[4];
+    double col_strategy[4];
+} CorePositionEvalTestStrategyResult;
 
 void CorePositionEvalTestForceTimeout(bool enabled) {
     position_eval_test_force_timeout = enabled;
@@ -836,6 +1113,31 @@ CorePositionEvalTestTimeoutBackupResult CorePositionEvalTestFillTimeoutMatrix2x2
     );
     return (CorePositionEvalTestTimeoutBackupResult){probability, confidence};
 }
+
+CorePositionEvalTestStrategyResult CorePositionEvalTestSolveMatrix4x4Strategies(
+    const double values_in[16]
+) {
+    double values[4][4] = {{0.0}};
+    double confidences[4][4] = {{0.0}};
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            values[i][j] = values_in[i * 4 + j];
+        }
+    }
+
+    CorePositionEvalTestStrategyResult result;
+    memset(&result, 0, sizeof(result));
+    result.probability = solve_zero_sum_matrix_with_confidence(
+        values,
+        confidences,
+        4,
+        4,
+        result.row_strategy,
+        result.col_strategy,
+        NULL
+    );
+    return result;
+}
 #endif
 
 CorePositionEvalConfig CorePositionEvalConfigDefault(int time_budget_ms) {
@@ -893,6 +1195,10 @@ CoreStatus CorePositionEvaluateDuel(
     clock_gettime(CLOCK_MONOTONIC, &end);
     out_result->first_win_probability = clamp01(value.p);
     out_result->confidence = clamp01(value.confidence);
+    for (int i = 0; i < 4; i++) {
+        out_result->first_move_probabilities[i] = clamp01(value.first_strategy[i]);
+        out_result->second_move_probabilities[i] = clamp01(value.second_strategy[i]);
+    }
     out_result->elapsed_ms = position_elapsed_ms(start, end);
     return CORE_OK;
 }

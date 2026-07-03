@@ -11,6 +11,8 @@ The primary result fields are:
   from the current board.
 - `confidence`: the amount of the backed-up estimate that came from fully
   terminal-solved branches.
+- `first_move_probabilities` and `second_move_probabilities`: root policy
+  probabilities indexed by `MoveDirection` (`up`, `down`, `left`, `right`).
 
 Terminal leaves have confidence `1.0`. Heuristic leaves created by depth limit
 or timeout have confidence `0.0`. Internal nodes combine child confidence with
@@ -31,10 +33,9 @@ in the matrix. It does not pre-filter with `BoardSafeMoves`: unsafe, suicidal,
 and head-to-head-risky commands stay in the matrix, and `BoardCloneAndApply`
 resolves the resulting deaths for each move pair.
 
-The first implementation attempts exact mixed 2x2 matrix games when the mixed
-strategy is well-defined. Degenerate 2x2 matrices and all larger legal-move
-matrices fall back to pure maximin backup. Exact 3x3 and 4x4 support is the next
-mathematical improvement.
+The matrix solver attempts exact mixed strategies for matrices up to 4x4 using
+small support enumeration. Degenerate cases that cannot be solved cleanly fall
+back to pure maximin backup.
 
 `CORE_POSITION_DECISION_PURE_MINIMAX` is a comparison mode. It uses conservative
 pure maximin backup and is mainly useful when comparing this evaluator against
@@ -82,3 +83,5 @@ instead of discarding the whole node.
 - `expanded_children`: child boards evaluated after a legal move pair.
 - `timed_out`: whether any part of the search hit the configured time budget.
 - `elapsed_ms`: wall-clock time spent by the evaluator.
+- `first_move_probabilities` / `second_move_probabilities`: root policy for
+  move analysis and replay agreement metrics.

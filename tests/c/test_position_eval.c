@@ -173,6 +173,12 @@ typedef struct {
     double confidence;
 } CorePositionEvalTestTimeoutBackupResult;
 
+typedef struct {
+    double probability;
+    double row_strategy[4];
+    double col_strategy[4];
+} CorePositionEvalTestStrategyResult;
+
 void CorePositionEvalTestForceTimeout(bool enabled);
 void CorePositionEvalTestForceTimeoutAfterChecks(int checks);
 
@@ -202,6 +208,9 @@ CorePositionEvalTestTimeoutBackupResult CorePositionEvalTestFillTimeoutMatrix2x2
     bool e_bd,
     double fallback_probability
 );
+CorePositionEvalTestStrategyResult CorePositionEvalTestSolveMatrix4x4Strategies(
+    const double values_in[16]
+);
 #endif
 
 static double expected_heuristic_probability(
@@ -216,6 +225,10 @@ static double expected_heuristic_probability(
     assert(CoreEvaluateWithWeights(board, second_snake_id, weights, &second_score) == CORE_OK);
 
     return stable_sigmoid((first_score - second_score) / 250.0);
+}
+
+static double strategy_sum(const double strategy[4]) {
+    return strategy[0] + strategy[1] + strategy[2] + strategy[3];
 }
 
 static void test_default_config(void) {
@@ -342,6 +355,8 @@ static void test_default_matrix_mode_expands_children(void) {
     assert(result.expanded_children > 0);
     assert(result.heuristic_leaves > 1);
     assert(result.confidence == 0.0);
+    assert(fabs(strategy_sum(result.first_move_probabilities) - 1.0) < 0.000001);
+    assert(fabs(strategy_sum(result.second_move_probabilities) - 1.0) < 0.000001);
     BoardFree(board);
 }
 
@@ -361,6 +376,8 @@ static void test_matrix_mode_expands_all_command_pairs(void) {
     assert(result.nodes == 17);
     assert(result.expanded_children == 16);
     assert(result.terminal_leaves > 0);
+    assert(fabs(strategy_sum(result.first_move_probabilities) - 1.0) < 0.000001);
+    assert(fabs(strategy_sum(result.second_move_probabilities) - 1.0) < 0.000001);
     BoardFree(board);
 }
 
@@ -506,6 +523,26 @@ static void test_matrix_solver_picks_dominant_row(void) {
     assert(fabs(value - 0.7) < 0.000001);
 }
 
+static void test_matrix_solver_returns_mixed_4x4_strategy(void) {
+    const double values[16] = {
+        1.0, 0.0, 0.6, 0.6,
+        0.0, 1.0, 0.6, 0.6,
+        0.4, 0.4, 0.4, 0.4,
+        0.3, 0.3, 0.3, 0.3,
+    };
+    CorePositionEvalTestStrategyResult result = CorePositionEvalTestSolveMatrix4x4Strategies(values);
+
+    assert(fabs(result.probability - 0.5) < 0.000001);
+    assert(fabs(result.row_strategy[0] - 0.5) < 0.000001);
+    assert(fabs(result.row_strategy[1] - 0.5) < 0.000001);
+    assert(result.row_strategy[2] < 0.000001);
+    assert(result.row_strategy[3] < 0.000001);
+    assert(fabs(result.col_strategy[0] - 0.5) < 0.000001);
+    assert(fabs(result.col_strategy[1] - 0.5) < 0.000001);
+    assert(result.col_strategy[2] < 0.000001);
+    assert(result.col_strategy[3] < 0.000001);
+}
+
 static void test_matrix_confidence_prefers_higher_confidence_tie(void) {
     double confidence = CorePositionEvalTestSolveMatrix2x2WithConfidence(
         0.5,
@@ -627,6 +664,7 @@ int main(void) {
     test_heuristic_error_does_not_increment_heuristic_leaves();
     test_matrix_solver_matches_matching_pennies();
     test_matrix_solver_picks_dominant_row();
+    test_matrix_solver_returns_mixed_4x4_strategy();
     test_matrix_confidence_prefers_higher_confidence_tie();
     test_matrix_confidence_tie_is_order_insensitive();
     test_timeout_backup_preserves_evaluated_cells();

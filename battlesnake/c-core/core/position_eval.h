@@ -22,6 +22,8 @@ typedef struct {
 typedef struct {
     double first_win_probability;
     double confidence;
+    double first_move_probabilities[4];  /* indexed by MoveDirection */
+    double second_move_probabilities[4]; /* indexed by MoveDirection */
     uint64_t nodes;
     uint64_t terminal_leaves;
     uint64_t heuristic_leaves;
