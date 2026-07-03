@@ -128,6 +128,21 @@ static Board* make_open_duel_board(void) {
     return board;
 }
 
+static Board* make_forced_terminal_child_board(void) {
+    Board* board = BoardCreate(3, 3, "duel", 0);
+    assert(board != NULL);
+
+    Coord first_body[] = {{1, 1}, {1, 0}, {2, 0}, {2, 1}};
+    Coord second_body[] = {{0, 1}, {0, 2}, {1, 2}};
+    Snake first = make_snake("first", first_body, 4, 90);
+    Snake second = make_snake("second", second_body, 3, 90);
+    assert(BoardAddSnake(board, &first));
+    assert(BoardAddSnake(board, &second));
+    SnakeFree(&first);
+    SnakeFree(&second);
+    return board;
+}
+
 static Board* make_large_open_duel_board(void) {
     Board* board = BoardCreate(23, 23, "duel", 0);
     assert(board != NULL);
@@ -353,6 +368,26 @@ static void test_tiny_budget_times_out(void) {
     assert(status == CORE_OK);
     assert(result.timed_out == true);
     assert(result.timeout_leaves > 0);
+    assert(result.first_win_probability >= 0.0);
+    assert(result.first_win_probability <= 1.0);
+    assert(result.confidence >= 0.0);
+    assert(result.confidence <= 1.0);
+    assert(result.heuristic_leaves > 0);
+    BoardFree(board);
+}
+
+static void test_forced_terminal_child_reaches_terminal_leaf(void) {
+    Board* board = make_forced_terminal_child_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 2;
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_OK);
+    assert(result.confidence >= 0.0);
+    assert(result.confidence <= 1.0);
+    assert(result.terminal_leaves > 0);
     BoardFree(board);
 }
 
@@ -552,6 +587,7 @@ int main(void) {
     test_default_matrix_mode_expands_children();
     test_unknown_decision_mode_errors();
     test_tiny_budget_times_out();
+    test_forced_terminal_child_reaches_terminal_leaf();
     test_extreme_weights_stays_finite_and_near_boundary();
     test_non_finite_weight_is_sanitized_to_probability_fallback();
     test_heuristic_error_does_not_increment_heuristic_leaves();
