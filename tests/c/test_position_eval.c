@@ -154,6 +154,10 @@ static double stable_sigmoid(double scaled) {
     return z / (1.0 + z);
 }
 
+#ifdef CORE_POSITION_EVAL_TESTING
+double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d);
+#endif
+
 static double expected_heuristic_probability(
     const Board* board,
     const char* first_snake_id,
@@ -394,6 +398,16 @@ static void test_heuristic_error_does_not_increment_heuristic_leaves(void) {
     BoardFree(board);
 }
 
+static void test_matrix_solver_matches_matching_pennies(void) {
+    double value = CorePositionEvalTestSolveMatrix2x2(1.0, 0.0, 0.0, 1.0);
+    assert(fabs(value - 0.5) < 0.000001);
+}
+
+static void test_matrix_solver_picks_dominant_row(void) {
+    double value = CorePositionEvalTestSolveMatrix2x2(0.8, 0.7, 0.3, 0.2);
+    assert(fabs(value - 0.7) < 0.000001);
+}
+
 static void test_terminal_second_alive_is_loss(void) {
     Board* board = make_terminal_second_alive_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
@@ -424,6 +438,8 @@ int main(void) {
     test_extreme_weights_stays_finite_and_near_boundary();
     test_non_finite_weight_is_sanitized_to_probability_fallback();
     test_heuristic_error_does_not_increment_heuristic_leaves();
+    test_matrix_solver_matches_matching_pennies();
+    test_matrix_solver_picks_dominant_row();
     puts("position_eval C tests passed");
     return 0;
 }
