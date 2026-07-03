@@ -70,6 +70,19 @@ typedef struct {
     CorePositionEvalResult* result;
 } PositionEvalContext;
 
+static int board_command_moves(const Board* board, const char* snake_id, MoveDirection out_moves[4]) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        return 0;
+    }
+
+    out_moves[0] = MOVE_UP;
+    out_moves[1] = MOVE_DOWN;
+    out_moves[2] = MOVE_LEFT;
+    out_moves[3] = MOVE_RIGHT;
+    return 4;
+}
+
 #ifdef CORE_POSITION_EVAL_TESTING
 static bool position_eval_test_force_timeout = false;
 static int position_eval_test_force_timeout_after_checks = -1;
@@ -430,8 +443,8 @@ static CoreStatus evaluate_node_pure_minimax(
 
     MoveDirection first_moves[4];
     MoveDirection second_moves[4];
-    int first_count = BoardSafeMoves(board, first_snake_id, first_moves);
-    int second_count = BoardSafeMoves(board, second_snake_id, second_moves);
+    int first_count = board_command_moves(board, first_snake_id, first_moves);
+    int second_count = board_command_moves(board, second_snake_id, second_moves);
     if (first_count <= 0) {
         first_count = 1;
         first_moves[0] = MOVE_INVALID;
@@ -576,8 +589,8 @@ static CoreStatus evaluate_node_matrix(
 
     MoveDirection first_moves[4];
     MoveDirection second_moves[4];
-    int first_count = BoardSafeMoves(board, first_snake_id, first_moves);
-    int second_count = BoardSafeMoves(board, second_snake_id, second_moves);
+    int first_count = board_command_moves(board, first_snake_id, first_moves);
+    int second_count = board_command_moves(board, second_snake_id, second_moves);
     if (first_count <= 0) {
         first_count = 1;
         first_moves[0] = MOVE_INVALID;

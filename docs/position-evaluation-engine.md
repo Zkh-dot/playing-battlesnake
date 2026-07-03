@@ -22,9 +22,14 @@ and means "how resolved this estimate is under the configured search budget".
 The default mode is `CORE_POSITION_DECISION_MATRIX`. It treats each Battlesnake
 turn as a simultaneous zero-sum move matrix:
 
-- rows are legal moves for `first_snake_id`;
-- columns are legal moves for `second_snake_id`;
+- rows are command directions for `first_snake_id`;
+- columns are command directions for `second_snake_id`;
 - each cell is the child `P(first snake wins)`.
+
+For an alive snake, the engine includes all four Battlesnake command directions
+in the matrix. It does not pre-filter with `BoardSafeMoves`: unsafe, suicidal,
+and head-to-head-risky commands stay in the matrix, and `BoardCloneAndApply`
+resolves the resulting deaths for each move pair.
 
 The first implementation attempts exact mixed 2x2 matrix games when the mixed
 strategy is well-defined. Degenerate 2x2 matrices and all larger legal-move

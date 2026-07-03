@@ -143,6 +143,21 @@ static Board* make_forced_terminal_child_board(void) {
     return board;
 }
 
+static Board* make_head_to_head_risk_board(void) {
+    Board* board = BoardCreate(5, 5, "duel", 0);
+    assert(board != NULL);
+
+    Coord first_body[] = {{1, 2}, {1, 1}, {1, 0}};
+    Coord second_body[] = {{3, 2}, {3, 1}, {3, 0}};
+    Snake first = make_snake("first", first_body, 3, 90);
+    Snake second = make_snake("second", second_body, 3, 90);
+    assert(BoardAddSnake(board, &first));
+    assert(BoardAddSnake(board, &second));
+    SnakeFree(&first);
+    SnakeFree(&second);
+    return board;
+}
+
 static double stable_sigmoid(double scaled) {
     if (scaled >= 0.0) {
         return 1.0 / (1.0 + exp(-scaled));
@@ -327,6 +342,25 @@ static void test_default_matrix_mode_expands_children(void) {
     assert(result.expanded_children > 0);
     assert(result.heuristic_leaves > 1);
     assert(result.confidence == 0.0);
+    BoardFree(board);
+}
+
+static void test_matrix_mode_expands_all_command_pairs(void) {
+    Board* board = make_head_to_head_risk_board();
+    MoveDirection safe_moves[4];
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 1;
+    CorePositionEvalResult result;
+
+    assert(BoardSafeMoves(board, "first", safe_moves) < 4);
+    assert(BoardSafeMoves(board, "second", safe_moves) < 4);
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_OK);
+    assert(result.nodes == 17);
+    assert(result.expanded_children == 16);
+    assert(result.terminal_leaves > 0);
     BoardFree(board);
 }
 
@@ -584,6 +618,7 @@ int main(void) {
     test_depth_zero_uses_heuristic_probability();
     test_depth_one_expands_children();
     test_default_matrix_mode_expands_children();
+    test_matrix_mode_expands_all_command_pairs();
     test_unknown_decision_mode_errors();
     test_forced_timeout_reports_partial_confidence();
     test_forced_terminal_child_reaches_terminal_leaf();

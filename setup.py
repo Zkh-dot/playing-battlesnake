@@ -24,6 +24,7 @@ ext_modules = [
         "battlesnake.battlesnake_native",
         sources=SOURCE_FILES,
         include_dirs=["battlesnake/c-core"],
+        libraries=["m"],
         language="c",
         extra_compile_args=["-std=c2x", "-D_POSIX_C_SOURCE=200809L"],
     )
