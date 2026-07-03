@@ -21,13 +21,44 @@ CoreStatus CorePositionEvaluateDuel(
     CorePositionEvalConfig config,
     CorePositionEvalResult* out_result
 ) {
-    if (out_result == NULL) {
+    if (board == NULL || first_snake_id == NULL || second_snake_id == NULL || out_result == NULL) {
         return CORE_ERROR;
     }
+
     memset(out_result, 0, sizeof(*out_result));
-    (void)board;
-    (void)first_snake_id;
-    (void)second_snake_id;
+
+    out_result->nodes = 1;
     (void)config;
-    return CORE_NOT_IMPLEMENTED;
+
+    const Snake* first_snake = BoardFindSnakeConst(board, first_snake_id);
+    const Snake* second_snake = BoardFindSnakeConst(board, second_snake_id);
+
+    bool first_alive = first_snake != NULL && first_snake->body_len > 0;
+    bool second_alive = second_snake != NULL && second_snake->body_len > 0;
+
+    if (first_alive && !second_alive) {
+        out_result->first_win_probability = 1.0;
+        out_result->confidence = 1.0;
+        out_result->terminal_leaves = 1;
+        return CORE_OK;
+    }
+
+    if (!first_alive && second_alive) {
+        out_result->first_win_probability = 0.0;
+        out_result->confidence = 1.0;
+        out_result->terminal_leaves = 1;
+        return CORE_OK;
+    }
+
+    if (!first_alive && !second_alive) {
+        out_result->first_win_probability = 0.5;
+        out_result->confidence = 1.0;
+        out_result->terminal_leaves = 1;
+        return CORE_OK;
+    }
+
+    out_result->first_win_probability = 0.5;
+    out_result->confidence = 0.0;
+    out_result->heuristic_leaves = 1;
+    return CORE_OK;
 }
