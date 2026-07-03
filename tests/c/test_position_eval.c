@@ -75,6 +75,23 @@ static Board* make_non_terminal_board(void) {
     return board;
 }
 
+static Board* make_length_advantage_board(void) {
+    Board* board = BoardCreate(7, 7, "duel", 0);
+    assert(board != NULL);
+
+    Coord first_body[] = {{3, 3}, {3, 2}, {3, 1}, {3, 0}};
+    Coord second_body[] = {{1, 5}, {1, 4}};
+    Snake first = make_snake("first", first_body, 4, 90);
+    Snake second = make_snake("second", second_body, 2, 90);
+
+    assert(BoardAddSnake(board, &first));
+    assert(BoardAddSnake(board, &second));
+
+    SnakeFree(&first);
+    SnakeFree(&second);
+    return board;
+}
+
 static Board* make_open_duel_board(void) {
     Board* board = BoardCreate(7, 7, "duel", 0);
     assert(board != NULL);
@@ -93,6 +110,29 @@ static Board* make_open_duel_board(void) {
     SnakeFree(&first);
     SnakeFree(&second);
     return board;
+}
+
+static double stable_sigmoid(double scaled) {
+    if (scaled >= 0.0) {
+        return 1.0 / (1.0 + exp(-scaled));
+    }
+
+    double z = exp(scaled);
+    return z / (1.0 + z);
+}
+
+static double expected_heuristic_probability(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    const CoreEvaluationWeights* weights
+) {
+    double first_score = 0.0;
+    double second_score = 0.0;
+    assert(CoreEvaluateWithWeights(board, first_snake_id, weights, &first_score) == CORE_OK);
+    assert(CoreEvaluateWithWeights(board, second_snake_id, weights, &second_score) == CORE_OK);
+
+    return stable_sigmoid((first_score - second_score) / 250.0);
 }
 
 static void test_default_config(void) {
@@ -174,11 +214,57 @@ static void test_depth_zero_uses_heuristic_probability(void) {
     CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
 
     assert(status == CORE_OK);
-    assert(result.first_win_probability > 0.05);
-    assert(result.first_win_probability < 0.95);
+    double expected = expected_heuristic_probability(
+        board,
+        "first",
+        "second",
+        &config.weights
+    );
+    assert(fabs(result.first_win_probability - expected) < 1e-12);
     assert(result.confidence == 0.0);
     assert(result.terminal_leaves == 0);
     assert(result.heuristic_leaves == 1);
+    BoardFree(board);
+}
+
+static void test_extreme_weights_stays_finite_and_near_boundary(void) {
+    Board* board = make_length_advantage_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.weights.base = 0.0;
+    config.weights.health = 0.0;
+    config.weights.length = 1e9;
+    config.weights.reachable_space = 0.0;
+    config.weights.safe_moves = 0.0;
+    config.weights.center = 0.0;
+    config.weights.food = 0.0;
+    config.weights.low_health_food = 0.0;
+    config.weights.low_health_threshold = 0.0;
+    config.weights.hazard_damage = 0.0;
+    config.weights.hazard = 0.0;
+    config.weights.length_advantage = 0.0;
+    config.weights.adjacent_equal_or_longer_penalty = 0.0;
+    config.weights.adjacent_shorter_bonus = 0.0;
+    config.weights.opponent_reachable_space = 0.0;
+    config.weights.territory_delta = 0.0;
+    config.weights.opponent_safe_moves = 0.0;
+    config.weights.opponent_low_health_food_denial = 0.0;
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_OK);
+    assert(isfinite(result.first_win_probability));
+    assert(result.first_win_probability >= 0.0);
+    assert(result.first_win_probability <= 1.0);
+    assert(result.first_win_probability > 0.999999);
+
+    double expected = expected_heuristic_probability(
+        board,
+        "first",
+        "second",
+        &config.weights
+    );
+    assert(fabs(result.first_win_probability - expected) < 1e-12);
     BoardFree(board);
 }
 
@@ -205,6 +291,7 @@ int main(void) {
     test_non_terminal_both_alive_is_heuristic();
     test_terminal_second_alive_is_loss();
     test_depth_zero_uses_heuristic_probability();
+    test_extreme_weights_stays_finite_and_near_boundary();
     puts("position_eval C tests passed");
     return 0;
 }

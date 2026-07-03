@@ -8,6 +8,9 @@
 #include <string.h>
 
 static double clamp01(double value) {
+    if (!isfinite(value)) {
+        return 0.5;
+    }
     if (value < 0.0) {
         return 0.0;
     }
@@ -15,6 +18,15 @@ static double clamp01(double value) {
         return 1.0;
     }
     return value;
+}
+
+static double stable_sigmoid(double scaled) {
+    if (scaled >= 0.0) {
+        return 1.0 / (1.0 + exp(-scaled));
+    }
+
+    double z = exp(scaled);
+    return z / (1.0 + z);
 }
 
 static CoreStatus heuristic_probability(
@@ -28,12 +40,15 @@ static CoreStatus heuristic_probability(
     double second_score = 0.0;
     CoreStatus first_status = CoreEvaluateWithWeights(board, first_snake_id, weights, &first_score);
     CoreStatus second_status = CoreEvaluateWithWeights(board, second_snake_id, weights, &second_score);
-    if (first_status != CORE_OK || second_status != CORE_OK) {
-        return CORE_ERROR;
+    if (first_status != CORE_OK) {
+        return first_status;
+    }
+    if (second_status != CORE_OK) {
+        return second_status;
     }
 
     double diff = first_score - second_score;
-    double probability = 1.0 / (1.0 + exp(-diff / 250.0));
+    double probability = stable_sigmoid(diff / 250.0);
     *out_probability = clamp01(probability);
     return CORE_OK;
 }
@@ -96,11 +111,11 @@ CoreStatus CorePositionEvaluateDuel(
         &config.weights,
         &out_result->first_win_probability
     );
-    out_result->confidence = 0.0;
-    out_result->heuristic_leaves = 1;
     if (status != CORE_OK) {
         return status;
     }
 
+    out_result->confidence = 0.0;
+    out_result->heuristic_leaves = 1;
     return CORE_OK;
 }
