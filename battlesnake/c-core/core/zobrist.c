@@ -1,7 +1,7 @@
 #include "zobrist.h"
 
+#include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 static uint64_t mix64(uint64_t value) {
     value += 0x9e3779b97f4a7c15ULL;
@@ -13,10 +13,10 @@ static uint64_t mix64(uint64_t value) {
 static uint64_t string_hash(const char* value) {
     uint64_t hash = 14695981039346656037ULL;
     if (value == NULL) {
-        value = "";
+        return hash;
     }
-    for (size_t i = 0; i < strlen(value); i++) {
-        hash ^= (uint64_t)(unsigned char)value[i];
+    for (const unsigned char* cursor = (const unsigned char*)value; *cursor != '\0'; cursor++) {
+        hash ^= (uint64_t)(*cursor);
         hash *= 1099511628211ULL;
     }
     return hash;
@@ -52,18 +52,12 @@ uint64_t CoreZobristHashBoard(const Board* board) {
     }
 
     for (int i = 0; i < board->food_count; i++) {
-        hash ^= coord_key(2, i, board->food[i], 0);
+        hash ^= coord_key(2, 0, board->food[i], 0);
     }
 
     for (int i = 0; i < board->hazard_count; i++) {
-        hash ^= coord_key(3, i, board->hazards[i], (uint64_t)(uint32_t)board->hazard_damage);
+        hash ^= coord_key(3, 0, board->hazards[i], (uint64_t)(uint32_t)board->hazard_damage);
     }
 
-    return hash;
-}
-
-uint64_t CoreZobristHashMove(uint64_t hash, int snake_index, Coord old_head, Coord new_head, MoveDirection move) {
-    hash ^= coord_key(4, snake_index, old_head, (uint64_t)(uint32_t)move);
-    hash ^= coord_key(4, snake_index, new_head, (uint64_t)(uint32_t)move);
     return hash;
 }
