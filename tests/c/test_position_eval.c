@@ -75,6 +75,26 @@ static Board* make_non_terminal_board(void) {
     return board;
 }
 
+static Board* make_open_duel_board(void) {
+    Board* board = BoardCreate(7, 7, "duel", 0);
+    assert(board != NULL);
+
+    Coord first_body[] = {{1, 3}, {1, 2}, {1, 1}};
+    Coord second_body[] = {{5, 3}, {5, 2}, {5, 1}};
+    Snake first = make_snake("first", first_body, 3, 90);
+    Snake second = make_snake("second", second_body, 3, 90);
+
+    assert(BoardAddSnake(board, &first));
+    assert(BoardAddSnake(board, &second));
+    assert(BoardAddFood(board, (Coord){3, 3}));
+    assert(BoardAddFood(board, (Coord){2, 5}));
+    assert(BoardAddFood(board, (Coord){4, 5}));
+
+    SnakeFree(&first);
+    SnakeFree(&second);
+    return board;
+}
+
 static void test_default_config(void) {
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(7000);
 
@@ -137,7 +157,25 @@ static void test_non_terminal_both_alive_is_heuristic(void) {
     CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
 
     assert(status == CORE_OK);
-    assert(result.first_win_probability == 0.5);
+    assert(result.first_win_probability >= 0.0);
+    assert(result.first_win_probability <= 1.0);
+    assert(result.confidence == 0.0);
+    assert(result.terminal_leaves == 0);
+    assert(result.heuristic_leaves == 1);
+    BoardFree(board);
+}
+
+static void test_depth_zero_uses_heuristic_probability(void) {
+    Board* board = make_open_duel_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 0;
+    CorePositionEvalResult result;
+
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+
+    assert(status == CORE_OK);
+    assert(result.first_win_probability > 0.05);
+    assert(result.first_win_probability < 0.95);
     assert(result.confidence == 0.0);
     assert(result.terminal_leaves == 0);
     assert(result.heuristic_leaves == 1);
@@ -166,6 +204,7 @@ int main(void) {
     test_terminal_draw_when_both_dead();
     test_non_terminal_both_alive_is_heuristic();
     test_terminal_second_alive_is_loss();
+    test_depth_zero_uses_heuristic_probability();
     puts("position_eval C tests passed");
     return 0;
 }

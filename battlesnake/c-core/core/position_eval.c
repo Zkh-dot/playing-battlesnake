@@ -4,7 +4,39 @@
 
 #include "position_eval.h"
 
+#include <math.h>
 #include <string.h>
+
+static double clamp01(double value) {
+    if (value < 0.0) {
+        return 0.0;
+    }
+    if (value > 1.0) {
+        return 1.0;
+    }
+    return value;
+}
+
+static CoreStatus heuristic_probability(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    const CoreEvaluationWeights* weights,
+    double* out_probability
+) {
+    double first_score = 0.0;
+    double second_score = 0.0;
+    CoreStatus first_status = CoreEvaluateWithWeights(board, first_snake_id, weights, &first_score);
+    CoreStatus second_status = CoreEvaluateWithWeights(board, second_snake_id, weights, &second_score);
+    if (first_status != CORE_OK || second_status != CORE_OK) {
+        return CORE_ERROR;
+    }
+
+    double diff = first_score - second_score;
+    double probability = 1.0 / (1.0 + exp(-diff / 250.0));
+    *out_probability = clamp01(probability);
+    return CORE_OK;
+}
 
 CorePositionEvalConfig CorePositionEvalConfigDefault(int time_budget_ms) {
     CorePositionEvalConfig config = {0};
@@ -57,8 +89,18 @@ CoreStatus CorePositionEvaluateDuel(
         return CORE_OK;
     }
 
-    out_result->first_win_probability = 0.5;
+    CoreStatus status = heuristic_probability(
+        board,
+        first_snake_id,
+        second_snake_id,
+        &config.weights,
+        &out_result->first_win_probability
+    );
     out_result->confidence = 0.0;
     out_result->heuristic_leaves = 1;
+    if (status != CORE_OK) {
+        return status;
+    }
+
     return CORE_OK;
 }
