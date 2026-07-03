@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import time
 from pathlib import Path
@@ -10,10 +11,14 @@ from typing import Any
 from battlesnake.battlesnake_native import minimax_diagnostics
 from benchmarks.scenarios import SCENARIOS, build_board
 
+MAX_FIXED_DEPTH = 32
+
 
 def percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
+    if pct == 0.50:
+        return float(statistics.median(values))
 
     sorted_values = sorted(values)
     index = int(round((len(sorted_values) - 1) * pct))
@@ -52,9 +57,9 @@ def summarize(
         "fixed_depth": fixed_depth,
         "runs": runs,
         "warmup": warmup,
-        "move": statistics.mode([str(row["move"]) for row in rows]) if rows else "",
-        "completed_depth": percentile(_numeric(rows, "completed_depth"), 0.50),
-        "max_depth_started": percentile(_numeric(rows, "max_depth_started"), 0.50),
+        "move": rows[-1]["move"] if rows else "",
+        "completed_depth": int(statistics.median(int(row["completed_depth"]) for row in rows)) if rows else 0,
+        "max_depth_started": max(int(row["max_depth_started"]) for row in rows) if rows else 0,
         "timed_out_count": sum(1 for row in rows if row["timed_out"]),
         "elapsed_ms_min": min(elapsed_ms) if elapsed_ms else 0.0,
         "elapsed_ms_p50": percentile(elapsed_ms, 0.50),
@@ -107,7 +112,34 @@ def run_case(
 
 
 def _parse_ints(value: str) -> list[int]:
-    return [int(part.strip()) for part in value.split(",") if part.strip()]
+    values = [int(part.strip()) for part in value.split(",") if part.strip()]
+    if not values:
+        raise argparse.ArgumentTypeError("must contain at least one integer")
+    if len(values) != len(set(values)):
+        raise argparse.ArgumentTypeError("must not contain duplicate integers")
+    return values
+
+
+def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> tuple[list[int], list[int]]:
+    if args.runs < 1:
+        parser.error("--runs must be at least 1")
+    if args.warmup < 0:
+        parser.error("--warmup must be non-negative")
+
+    try:
+        budgets = _parse_ints(args.budgets)
+        fixed_depths = _parse_ints(args.fixed_depths)
+    except ValueError as error:
+        parser.error(str(error))
+    except argparse.ArgumentTypeError as error:
+        parser.error(str(error))
+
+    if any(value < 1 for value in budgets):
+        parser.error("--budgets values must be positive")
+    if any(value < 0 or value > MAX_FIXED_DEPTH for value in fixed_depths):
+        parser.error(f"--fixed-depths values must be between 0 and {MAX_FIXED_DEPTH}")
+
+    return budgets, fixed_depths
 
 
 def main() -> int:
@@ -119,12 +151,13 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=Path("benchmarks/results/minimax-bench.jsonl"))
     args = parser.parse_args()
 
-    budgets = sorted(_parse_ints(args.budgets))
-    fixed_depths = sorted(_parse_ints(args.fixed_depths))
+    budgets, fixed_depths = _validate_args(parser, args)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    with args.out.open("w", encoding="utf-8") as out:
-        for scenario in sorted(SCENARIOS, key=lambda item: item.name):
+    started = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    tmp_path = args.out.with_name(f".{args.out.name}.tmp.{os.getpid()}")
+    with tmp_path.open("w", encoding="utf-8") as out:
+        for scenario in SCENARIOS:
             for budget_ms in budgets:
                 for fixed_depth in fixed_depths:
                     row = run_case(
@@ -134,12 +167,13 @@ def main() -> int:
                         args.runs,
                         args.warmup,
                     )
-                    row["started_at"] = time.time()
+                    row["started_at"] = started
                     line = json.dumps(row, sort_keys=True)
                     out.write(line + "\n")
                     out.flush()
                     print(line, flush=True)
 
+    tmp_path.replace(args.out)
     return 0
 
 

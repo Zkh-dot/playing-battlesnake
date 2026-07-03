@@ -17,7 +17,11 @@ def load(path: Path) -> dict[Key, dict[str, Any]]:
                 continue
             row = json.loads(line)
             key = (str(row["scenario"]), int(row["budget_ms"]), int(row["fixed_depth"]))
+            if key in rows:
+                raise ValueError(f"duplicate benchmark row in {path}: {key}")
             rows[key] = row
+    if not rows:
+        raise ValueError(f"benchmark file is empty: {path}")
     return rows
 
 
@@ -28,8 +32,12 @@ def main() -> int:
     parser.add_argument("--max-p50-regression", type=float, default=1.08)
     args = parser.parse_args()
 
-    baseline = load(args.baseline)
-    candidate = load(args.candidate)
+    try:
+        baseline = load(args.baseline)
+        candidate = load(args.candidate)
+    except ValueError as error:
+        print(error)
+        return 1
     failed = False
 
     for key in sorted(baseline):
@@ -42,9 +50,9 @@ def main() -> int:
 
         before_ms = float(baseline_row["elapsed_ms_p50"])
         after_ms = float(candidate_row["elapsed_ms_p50"])
-        ratio = after_ms / before_ms if before_ms else 0.0
-        before_depth = float(baseline_row["completed_depth"])
-        after_depth = float(candidate_row["completed_depth"])
+        ratio = after_ms / max(before_ms, 0.001)
+        before_depth = int(baseline_row["completed_depth"])
+        after_depth = int(candidate_row["completed_depth"])
 
         print(
             "scenario={scenario} budget_ms={budget_ms} fixed_depth={fixed_depth} "
@@ -62,6 +70,18 @@ def main() -> int:
         )
 
         if ratio > args.max_p50_regression and after_depth <= before_depth:
+            failed = True
+        if key[2] > 0 and after_depth == before_depth and candidate_row.get("move") != baseline_row.get("move"):
+            print(
+                "fixed-depth move changed: scenario={scenario} budget_ms={budget_ms} "
+                "fixed_depth={fixed_depth} {before}->{after}".format(
+                    scenario=key[0],
+                    budget_ms=key[1],
+                    fixed_depth=key[2],
+                    before=baseline_row.get("move"),
+                    after=candidate_row.get("move"),
+                )
+            )
             failed = True
 
     return 1 if failed else 0
