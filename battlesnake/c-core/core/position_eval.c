@@ -138,48 +138,6 @@ static bool is_close(double a, double b) {
     return fabs(a - b) <= 1e-12;
 }
 
-static double pure_matrix_value(
-    double values[4][4],
-    int rows,
-    int cols,
-    double row_strategy[4],
-    double col_strategy[4]
-) {
-    for (int i = 0; i < 4; i++) {
-        row_strategy[i] = 0.0;
-        col_strategy[i] = 0.0;
-    }
-    if (rows <= 0 || cols <= 0) {
-        return 0.5;
-    }
-
-    double best_row_value = -DBL_MAX;
-    int best_row = 0;
-    for (int i = 0; i < rows; i++) {
-        double row_worst = DBL_MAX;
-        for (int j = 0; j < cols; j++) {
-            if (values[i][j] < row_worst) {
-                row_worst = values[i][j];
-            }
-        }
-        if (row_worst > best_row_value) {
-            best_row_value = row_worst;
-            best_row = i;
-        }
-    }
-
-    int worst_col = 0;
-    for (int j = 1; j < cols; j++) {
-        if (values[best_row][j] < values[best_row][worst_col]) {
-            worst_col = j;
-        }
-    }
-
-    row_strategy[best_row] = 1.0;
-    col_strategy[worst_col] = 1.0;
-    return best_row_value;
-}
-
 static double pure_matrix_value_with_confidence(
     double values[4][4],
     double confidences[4][4],
@@ -280,22 +238,6 @@ static bool solve_2x2_mixed(
     col_strategy[1] = 1.0 - col_q;
     *value = (a * d - b * c) / denominator;
     return true;
-}
-
-static double solve_zero_sum_matrix(
-    double values[4][4],
-    int rows,
-    int cols,
-    double row_strategy[4],
-    double col_strategy[4]
-) {
-    double mixed_value = 0.0;
-    if (rows == 2 && cols == 2) {
-        if (solve_2x2_mixed(values, row_strategy, col_strategy, &mixed_value)) {
-            return mixed_value;
-        }
-    }
-    return pure_matrix_value(values, rows, cols, row_strategy, col_strategy);
 }
 
 static double solve_zero_sum_matrix_with_confidence(
@@ -773,9 +715,19 @@ double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d
     matrix[0][1] = b;
     matrix[1][0] = c;
     matrix[1][1] = d;
+    double confidence_matrix[4][4] = {{0}};
     double row_strategy[4] = {0};
     double col_strategy[4] = {0};
-    return solve_zero_sum_matrix(matrix, 2, 2, row_strategy, col_strategy);
+    double confidence = 0.0;
+    return solve_zero_sum_matrix_with_confidence(
+        matrix,
+        confidence_matrix,
+        2,
+        2,
+        row_strategy,
+        col_strategy,
+        &confidence
+    );
 }
 
 double CorePositionEvalTestSolveMatrix2x2WithConfidence(
