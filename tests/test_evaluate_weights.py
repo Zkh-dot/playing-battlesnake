@@ -104,3 +104,28 @@ class EvaluateWeightsTests(unittest.TestCase):
         self.assertEqual(metrics.timeouts, 1)
         self.assertAlmostEqual(metrics.accuracy, 1 / 3)
         self.assertAlmostEqual(metrics.score, (1 / 3) - 0.10 * (1 / 3) - 0.02 * (1 / 3))
+
+from tools.tuning.search_weights import (
+    DEFAULT_SEARCH_SPACE,
+    merge_candidate_weights,
+    suggest_random_candidate,
+)
+
+
+class SearchWeightsTests(unittest.TestCase):
+    def test_search_space_covers_opponent_pressure_keys(self) -> None:
+        self.assertIn("opponent_reachable_space", DEFAULT_SEARCH_SPACE)
+        self.assertIn("territory_delta", DEFAULT_SEARCH_SPACE)
+        self.assertIn("opponent_safe_moves", DEFAULT_SEARCH_SPACE)
+        self.assertIn("opponent_low_health_food_denial", DEFAULT_SEARCH_SPACE)
+
+    def test_random_candidate_is_within_bounds_and_merge_preserves_defaults(self) -> None:
+        candidate = suggest_random_candidate(seed=123)
+        for key, value in candidate.items():
+            lower, upper = DEFAULT_SEARCH_SPACE[key]
+            self.assertGreaterEqual(value, lower)
+            self.assertLessEqual(value, upper)
+
+        merged = merge_candidate_weights({"base": 500.0, "opponent_reachable_space": 0.0}, candidate)
+        self.assertEqual(merged["base"], 500.0)
+        self.assertEqual(merged["opponent_reachable_space"], candidate["opponent_reachable_space"])
