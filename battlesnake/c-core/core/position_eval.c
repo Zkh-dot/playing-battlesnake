@@ -70,6 +70,15 @@ typedef struct {
     CorePositionEvalResult* result;
 } PositionEvalContext;
 
+static CoreStatus position_fill_timeout_matrix(
+    int rows,
+    int cols,
+    bool evaluated[4][4],
+    double probability_matrix[4][4],
+    double confidence_matrix[4][4],
+    double fallback_probability
+);
+
 static CoreStatus evaluate_node(
     const Board* board,
     const char* first_snake_id,
@@ -346,13 +355,25 @@ static CoreStatus fill_timeout_matrix(
     double confidence_matrix[4][4],
     PositionEvalContext* context
 ) {
-    double probability = 0.5;
+    double fallback_probability = 0.5;
     CoreStatus status = heuristic_probability(
         board,
         first_snake_id,
         second_snake_id,
         &context->config.weights,
-        &probability
+        &fallback_probability
+    );
+    if (status != CORE_OK) {
+        return status;
+    }
+
+    status = position_fill_timeout_matrix(
+        rows,
+        cols,
+        evaluated,
+        probability_matrix,
+        confidence_matrix,
+        fallback_probability
     );
     if (status != CORE_OK) {
         return status;
@@ -362,10 +383,34 @@ static CoreStatus fill_timeout_matrix(
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
             if (!evaluated[i][j]) {
-                probability_matrix[i][j] = probability;
-                confidence_matrix[i][j] = 0.0;
                 context->result->timeout_leaves++;
                 context->result->heuristic_leaves++;
+            }
+        }
+    }
+    return CORE_OK;
+}
+
+static CoreStatus position_fill_timeout_matrix(
+    int rows,
+    int cols,
+    bool evaluated[4][4],
+    double probability_matrix[4][4],
+    double confidence_matrix[4][4],
+    double fallback_probability
+) {
+    if (rows <= 0 || cols <= 0 || rows > 4 || cols > 4) {
+        return CORE_ERROR;
+    }
+    if (fallback_probability < 0.0 || fallback_probability > 1.0) {
+        return CORE_ERROR;
+    }
+
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            if (!evaluated[i][j]) {
+                probability_matrix[i][j] = fallback_probability;
+                confidence_matrix[i][j] = 0.0;
             }
         }
     }
@@ -690,6 +735,11 @@ static CoreStatus evaluate_node(
 }
 
 #ifdef CORE_POSITION_EVAL_TESTING
+typedef struct {
+    double probability;
+    double confidence;
+} CorePositionEvalTestTimeoutBackupResult;
+
 double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d) {
     double matrix[4][4] = {{0}};
     matrix[0][0] = a;
@@ -734,6 +784,65 @@ double CorePositionEvalTestSolveMatrix2x2WithConfidence(
         &confidence
     );
     return confidence;
+}
+
+CorePositionEvalTestTimeoutBackupResult CorePositionEvalTestFillTimeoutMatrix2x2(
+    double a,
+    double b,
+    double c,
+    double d,
+    double c_ab,
+    double c_ac,
+    double c_bc,
+    double c_bd,
+    bool e_ab,
+    bool e_ac,
+    bool e_bc,
+    bool e_bd,
+    double fallback_probability
+) {
+    bool evaluated[4][4] = {false};
+    double probability_matrix[4][4] = {{0.0}};
+    double confidence_matrix[4][4] = {{0.0}};
+
+    probability_matrix[0][0] = a;
+    probability_matrix[0][1] = b;
+    probability_matrix[1][0] = c;
+    probability_matrix[1][1] = d;
+    confidence_matrix[0][0] = c_ab;
+    confidence_matrix[0][1] = c_ac;
+    confidence_matrix[1][0] = c_bc;
+    confidence_matrix[1][1] = c_bd;
+    evaluated[0][0] = e_ab;
+    evaluated[0][1] = e_ac;
+    evaluated[1][0] = e_bc;
+    evaluated[1][1] = e_bd;
+
+    CoreStatus status = position_fill_timeout_matrix(
+        2,
+        2,
+        evaluated,
+        probability_matrix,
+        confidence_matrix,
+        fallback_probability
+    );
+    if (status != CORE_OK) {
+        return (CorePositionEvalTestTimeoutBackupResult){0.5, 0.0};
+    }
+
+    double row_strategy[4] = {0.0};
+    double col_strategy[4] = {0.0};
+    double confidence = 0.0;
+    double probability = solve_zero_sum_matrix_with_confidence(
+        probability_matrix,
+        confidence_matrix,
+        2,
+        2,
+        row_strategy,
+        col_strategy,
+        &confidence
+    );
+    return (CorePositionEvalTestTimeoutBackupResult){probability, confidence};
 }
 #endif
 

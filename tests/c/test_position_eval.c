@@ -155,6 +155,11 @@ static double stable_sigmoid(double scaled) {
 }
 
 #ifdef CORE_POSITION_EVAL_TESTING
+typedef struct {
+    double probability;
+    double confidence;
+} CorePositionEvalTestTimeoutBackupResult;
+
 double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d);
 double CorePositionEvalTestSolveMatrix2x2WithConfidence(
     double a,
@@ -165,6 +170,21 @@ double CorePositionEvalTestSolveMatrix2x2WithConfidence(
     double c_ac,
     double c_bc,
     double c_bd
+);
+CorePositionEvalTestTimeoutBackupResult CorePositionEvalTestFillTimeoutMatrix2x2(
+    double a,
+    double b,
+    double c,
+    double d,
+    double c_ab,
+    double c_ac,
+    double c_bc,
+    double c_bd,
+    bool e_ab,
+    bool e_ac,
+    bool e_bc,
+    bool e_bd,
+    double fallback_probability
 );
 #endif
 
@@ -468,6 +488,43 @@ static void test_matrix_confidence_tie_is_order_insensitive(void) {
     assert(fabs(col_swapped - 0.9) < 0.000001);
 }
 
+static void test_timeout_backup_preserves_evaluated_cells(void) {
+    CorePositionEvalTestTimeoutBackupResult fallback = CorePositionEvalTestFillTimeoutMatrix2x2(
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        false,
+        false,
+        false,
+        false,
+        0.2
+    );
+    CorePositionEvalTestTimeoutBackupResult preserved = CorePositionEvalTestFillTimeoutMatrix2x2(
+        0.9,
+        0.2,
+        0.0,
+        1.0,
+        0.95,
+        0.0,
+        0.0,
+        0.0,
+        true,
+        false,
+        false,
+        true,
+        0.2
+    );
+
+    assert(preserved.probability > fallback.probability);
+    assert(preserved.confidence > fallback.confidence);
+    assert(preserved.probability > 0.2);
+}
+
 static void test_terminal_second_alive_is_loss(void) {
     Board* board = make_terminal_second_alive_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
@@ -502,6 +559,7 @@ int main(void) {
     test_matrix_solver_picks_dominant_row();
     test_matrix_confidence_prefers_higher_confidence_tie();
     test_matrix_confidence_tie_is_order_insensitive();
+    test_timeout_backup_preserves_evaluated_cells();
     puts("position_eval C tests passed");
     return 0;
 }
