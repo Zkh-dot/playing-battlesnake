@@ -22,6 +22,7 @@ typedef struct {
 
 typedef struct {
     Board board;
+    int food_capacity;
     CoreUndoBoardFrame* undo_stack;
     int undo_count;
     int undo_capacity;

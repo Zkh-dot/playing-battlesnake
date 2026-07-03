@@ -226,6 +226,70 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertLess(in_place_result["clone_calls"], clone_result["clone_calls"])
         self.assertLess(in_place_result["board_allocations"], clone_result["board_allocations"])
 
+    def test_make_unmake_fixed_depth_zero_flag_boundary_matches_clone_path(self) -> None:
+        board = Board(
+            width=7,
+            height=7,
+            snakes={
+                "me": Snake("me", "me", 90, [Coord(3, 3), Coord(3, 2), Coord(3, 1)], length=3),
+            },
+            food=[Coord(5, 5)],
+            ruleset_name="standard",
+            hazard_damage=0,
+        )
+        clone_result = minimax_diagnostics(
+            board,
+            "me",
+            time_budget_ms=5,
+            fixed_depth=0,
+            enable_make_unmake=False,
+        )
+        in_place_result = minimax_diagnostics(
+            board,
+            "me",
+            time_budget_ms=5,
+            fixed_depth=0,
+            enable_make_unmake=True,
+        )
+
+        self.assertEqual(in_place_result["move"], clone_result["move"])
+        self.assertEqual(in_place_result["completed_depth"], clone_result["completed_depth"])
+        self.assertEqual(clone_result["clone_calls"], 0)
+        self.assertEqual(clone_result["board_allocations"], 0)
+        self.assertEqual(in_place_result["clone_calls"], 0)
+        self.assertEqual(in_place_result["board_allocations"], 0)
+
+    def test_make_unmake_handles_single_snake_board(self) -> None:
+        board = Board(
+            width=7,
+            height=7,
+            snakes={
+                "me": Snake("me", "me", 90, [Coord(3, 3), Coord(3, 2), Coord(3, 1)], length=3),
+            },
+            food=[Coord(5, 5)],
+            ruleset_name="standard",
+            hazard_damage=0,
+        )
+        clone_result = minimax_diagnostics(
+            board,
+            "me",
+            time_budget_ms=1000,
+            fixed_depth=4,
+            enable_make_unmake=False,
+        )
+        in_place_result = minimax_diagnostics(
+            board,
+            "me",
+            time_budget_ms=1000,
+            fixed_depth=4,
+            enable_make_unmake=True,
+        )
+
+        self.assertEqual(in_place_result["move"], clone_result["move"])
+        self.assertEqual(in_place_result["completed_depth"], clone_result["completed_depth"])
+        self.assertEqual(in_place_result["clone_calls"], 0)
+        self.assertEqual(in_place_result["board_allocations"], 0)
+
     def test_invalid_fixed_depth_is_rejected(self) -> None:
         scenario = get_scenario("duel_open_7x7")
         board = build_board(scenario)

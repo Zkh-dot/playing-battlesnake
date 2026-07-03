@@ -1,5 +1,6 @@
 #include "search_state.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -280,7 +281,11 @@ bool CoreSearchStateInit(CoreSearchState* state, const Board* board) {
         return false;
     }
     memset(state, 0, sizeof(*state));
-    return copy_board_owned(&state->board, board);
+    if (!copy_board_owned(&state->board, board)) {
+        return false;
+    }
+    state->food_capacity = state->board.food_count;
+    return true;
 }
 
 void CoreSearchStateFree(CoreSearchState* state) {
@@ -364,11 +369,16 @@ bool CoreSearchStateUnmake(CoreSearchState* state) {
         return false;
     }
     Board* board = &state->board;
+    CoreUndoBoardFrame* frame = &state->undo_stack[state->undo_count - 1];
+    assert(frame->food_count <= state->food_capacity);
+    if (frame->food_count > state->food_capacity) {
+        return false;
+    }
+
     for (int i = 0; i < board->snake_count; i++) {
         clear_snake(&board->snakes[i]);
     }
 
-    CoreUndoBoardFrame* frame = &state->undo_stack[state->undo_count - 1];
     for (int i = 0; i < frame->snake_count; i++) {
         board->snakes[i].id = frame->snakes[i].id;
         board->snakes[i].name = frame->snakes[i].name;

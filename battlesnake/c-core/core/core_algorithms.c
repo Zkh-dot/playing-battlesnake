@@ -1354,6 +1354,8 @@ CoreStatus CoreMinimaxMoveWithStats(
             CoreTtFree(&context.tt);
             return CORE_ERROR;
         }
+        /* The search state lives in this stack frame for the whole iterative
+         * deepening loop; context.state must not outlive this function. */
         context.state = &state;
     }
     int completed_depth = 0;
