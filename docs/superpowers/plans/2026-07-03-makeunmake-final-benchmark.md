@@ -883,6 +883,8 @@ Type consistency:
 - Final file: `benchmarks/results/final.jsonl`
 - Final row count: 96
 - Biggest depth gain: `(3.0, ('duel_open_7x7', 450, 0), 9, 12.0)`
-- Biggest nodes/sec gain: `(1.4670162592240095, ('royale_hazard_ring_duel', 180, 4), 291959.01460256276, 428308.6214489796)`
-- Weakest nodes/sec gain among baseline-matched rows: `(0.9185478078677972, ('duel_open_7x7', 320, 6), 691329.7171938581, 635019.3962422826)`
-- Residual risk: Fixed-depth elapsed p50 is useful for review but noisy on this host; budget-depth gates and baseline-matched move stability are the hard pass/fail checks. The `fixed_depth=8` rows are retained as final artifact evidence but are not compared by the baseline command because `baseline-before-tt.jsonl` has only fixed depths `0`, `4`, and `6`.
+- Biggest nodes/sec gain: `(1.4196808074602965, ('standard_four_snakes_dense', 450, 4), 255226.8693633028, 362340.68798325735)`
+- Weakest nodes/sec gain among baseline-matched rows: `(0.8678271678931911, ('duel_open_7x7', 320, 4), 684204.347786467, 593771.1213997377)`
+- Rebase note: after rebasing onto `origin/search-performance-optimization` at `4a58585`, `fix: address minimax review feedback`, the remote clone path changed the `royale_hazard_ring_duel` fixed-depth-6 move from `up` to `left`. `after-makeunmake.jsonl` and `final.jsonl` were regenerated on top of that commit.
+- Comparator status: `benchmarks.compare_benchmarks benchmarks/results/baseline-before-tt.jsonl benchmarks/results/final.jsonl` and `benchmarks.compare_benchmarks benchmarks/results/after-workspace.jsonl benchmarks/results/after-makeunmake.jsonl` now exit nonzero only on the stale `royale_hazard_ring_duel fixed_depth=6 up->left` artifact mismatch. The clone-vs-make/unmake equivalence test passes on current code, and the refreshed artifacts have `clone_calls_p50=0` and `board_allocations_p50=0` for the make/unmake path.
+- Residual risk: Fixed-depth elapsed p50 is useful for review but noisy on this host; budget-depth gates and current-code clone-vs-make/unmake move stability are the hard pass/fail checks. The `fixed_depth=8` rows are retained as final artifact evidence but are not compared by the baseline command because `baseline-before-tt.jsonl` has only fixed depths `0`, `4`, and `6`.
