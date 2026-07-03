@@ -143,15 +143,14 @@ static Board* make_forced_terminal_child_board(void) {
     return board;
 }
 
-static Board* make_large_open_duel_board(void) {
-    Board* board = BoardCreate(23, 23, "duel", 0);
+static Board* make_timeout_pressure_board(void) {
+    Board* board = BoardCreate(31, 31, "duel", 0);
     assert(board != NULL);
 
-    Coord first_body[] = {{10, 10}, {10, 9}, {10, 8}, {10, 7}};
-    Coord second_body[] = {{12, 10}, {12, 9}, {12, 8}, {12, 7}};
-    Snake first = make_snake("first", first_body, 4, 90);
-    Snake second = make_snake("second", second_body, 4, 90);
-
+    Coord first_body[] = {{15, 15}};
+    Coord second_body[] = {{15, 20}};
+    Snake first = make_snake("first", first_body, 1, 90);
+    Snake second = make_snake("second", second_body, 1, 90);
     assert(BoardAddSnake(board, &first));
     assert(BoardAddSnake(board, &second));
 
@@ -357,10 +356,11 @@ static void test_unknown_decision_mode_errors(void) {
     BoardFree(board);
 }
 
-static void test_tiny_budget_times_out(void) {
-    Board* board = make_large_open_duel_board();
+static void test_tiny_budget_times_out_stress_smoke(void) {
+    Board* board = make_timeout_pressure_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1);
-    config.max_depth = 20;
+    // Stress timeout path: open 31x31 board, deep recursion, 1ms wall-clock budget.
+    config.max_depth = 30;
     CorePositionEvalResult result;
 
     CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
@@ -381,12 +381,21 @@ static void test_forced_terminal_child_reaches_terminal_leaf(void) {
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
     config.max_depth = 2;
     CorePositionEvalResult result;
+    const Snake* first = BoardFindSnakeConst(board, "first");
+    const Snake* second = BoardFindSnakeConst(board, "second");
+
+    assert(first != NULL);
+    assert(first->body_len > 0);
+    assert(second != NULL);
+    assert(second->body_len > 0);
 
     CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
 
     assert(status == CORE_OK);
     assert(result.confidence >= 0.0);
     assert(result.confidence <= 1.0);
+    assert(result.nodes > 1);
+    assert(result.expanded_children > 0);
     assert(result.terminal_leaves > 0);
     BoardFree(board);
 }
@@ -586,7 +595,7 @@ int main(void) {
     test_depth_one_expands_children();
     test_default_matrix_mode_expands_children();
     test_unknown_decision_mode_errors();
-    test_tiny_budget_times_out();
+    test_tiny_budget_times_out_stress_smoke();
     test_forced_terminal_child_reaches_terminal_leaf();
     test_extreme_weights_stays_finite_and_near_boundary();
     test_non_finite_weight_is_sanitized_to_probability_fallback();
