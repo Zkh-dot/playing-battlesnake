@@ -70,6 +70,10 @@ typedef struct {
     CorePositionEvalResult* result;
 } PositionEvalContext;
 
+#ifdef CORE_POSITION_EVAL_TESTING
+static bool position_eval_test_force_timeout = false;
+#endif
+
 static CoreStatus position_fill_timeout_matrix(
     int rows,
     int cols,
@@ -105,6 +109,11 @@ static PositionEvalTimer position_timer_start(int time_budget_ms) {
 }
 
 static bool position_timed_out(const PositionEvalTimer* timer) {
+#ifdef CORE_POSITION_EVAL_TESTING
+    if (position_eval_test_force_timeout) {
+        return true;
+    }
+#endif
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return now.tv_sec > timer->deadline.tv_sec ||
@@ -739,6 +748,10 @@ typedef struct {
     double probability;
     double confidence;
 } CorePositionEvalTestTimeoutBackupResult;
+
+void CorePositionEvalTestForceTimeout(bool enabled) {
+    position_eval_test_force_timeout = enabled;
+}
 
 double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d) {
     double matrix[4][4] = {{0}};

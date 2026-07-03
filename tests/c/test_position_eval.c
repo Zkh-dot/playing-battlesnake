@@ -174,6 +174,8 @@ typedef struct {
     double confidence;
 } CorePositionEvalTestTimeoutBackupResult;
 
+void CorePositionEvalTestForceTimeout(bool enabled);
+
 double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d);
 double CorePositionEvalTestSolveMatrix2x2WithConfidence(
     double a,
@@ -356,14 +358,15 @@ static void test_unknown_decision_mode_errors(void) {
     BoardFree(board);
 }
 
-static void test_tiny_budget_times_out_stress_smoke(void) {
+static void test_forced_timeout_reports_partial_confidence(void) {
     Board* board = make_timeout_pressure_board();
-    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1);
-    // Stress timeout path: open 31x31 board, deep recursion, 1ms wall-clock budget.
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
     config.max_depth = 30;
     CorePositionEvalResult result;
 
+    CorePositionEvalTestForceTimeout(true);
     CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+    CorePositionEvalTestForceTimeout(false);
 
     assert(status == CORE_OK);
     assert(result.timed_out == true);
@@ -595,7 +598,7 @@ int main(void) {
     test_depth_one_expands_children();
     test_default_matrix_mode_expands_children();
     test_unknown_decision_mode_errors();
-    test_tiny_budget_times_out_stress_smoke();
+    test_forced_timeout_reports_partial_confidence();
     test_forced_terminal_child_reaches_terminal_leaf();
     test_extreme_weights_stays_finite_and_near_boundary();
     test_non_finite_weight_is_sanitized_to_probability_fallback();
