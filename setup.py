@@ -9,6 +9,7 @@ SOURCE_FILES = [
     "battlesnake/c-core/core/core_algorithms.c",
     "battlesnake/c-core/core/search_stats.c",
     "battlesnake/c-core/core/search_workspace.c",
+    "battlesnake/c-core/core/search_state.c",
     "battlesnake/c-core/core/zobrist.c",
     "battlesnake/c-core/core/transposition_table.c",
     "battlesnake/c-core/py-datatypes/py_datatypes.c",
