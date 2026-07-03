@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from battlesnake.battlesnake_native import minimax_diagnostics, minimax_move
+from battlesnake.battlesnake_native import Board, Coord, Snake, minimax_diagnostics, minimax_move
 from benchmarks.scenarios import build_board, get_scenario
 
 
@@ -156,6 +156,29 @@ class SearchDiagnosticsTests(unittest.TestCase):
 
         self.assertGreater(result["nodes"], 0)
         self.assertLessEqual(result["board_allocations"], result["nodes"])
+
+    def test_trapped_opponent_is_treated_as_dead_branch_not_search_error(self) -> None:
+        board = Board(
+            width=4,
+            height=4,
+            snakes={
+                "me": Snake("me", "me", 90, [Coord(3, 3), Coord(3, 2), Coord(2, 2)], length=3),
+                "trapped": Snake(
+                    "trapped",
+                    "trapped",
+                    90,
+                    [Coord(0, 0), Coord(1, 0), Coord(1, 1), Coord(0, 1)],
+                    length=4,
+                ),
+            },
+            ruleset_name="constrictor",
+            hazard_damage=0,
+        )
+
+        result = minimax_diagnostics(board, "me", time_budget_ms=1000, fixed_depth=2)
+
+        self.assertEqual(result["completed_depth"], 2)
+        self.assertIn(result["move"], {"up", "down", "left", "right"})
 
     def test_invalid_fixed_depth_is_rejected(self) -> None:
         scenario = get_scenario("duel_open_7x7")

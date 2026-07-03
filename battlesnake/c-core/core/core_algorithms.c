@@ -763,7 +763,7 @@ static CoreSearchTimer core_search_timer_start(int time_budget_ms) {
     clock_gettime(CLOCK_MONOTONIC, &deadline);
     deadline.tv_sec += time_budget_ms / 1000;
     deadline.tv_nsec += (long)(time_budget_ms % 1000) * 1000000L;
-    if (deadline.tv_nsec >= 1000000000L) {
+    while (deadline.tv_nsec >= 1000000000L) {
         deadline.tv_sec++;
         deadline.tv_nsec -= 1000000000L;
     }
@@ -870,7 +870,7 @@ static void core_order_moves(
         return;
     }
     MoveDirection effective_preferred = core_valid_move_direction(tt_best) ? tt_best : previous_iteration_best;
-    if (context->config.fixed_depth <= 0 || ply == 0) {
+    if (ply == 0) {
         core_move_to_front(moves, move_count, effective_preferred);
         return;
     }
@@ -889,6 +889,81 @@ static void core_order_moves(
 static bool core_minimax_is_terminal(const Board* board, const char* snake_id) {
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     return snake == NULL || snake->body_len == 0 || board->snake_count <= 1;
+}
+
+static int core_reachable_after_move(
+    const Board* board,
+    const char* snake_id,
+    MoveDirection move
+) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0 || !core_valid_move_direction(move)) {
+        return 0;
+    }
+
+    int reachable = 0;
+    (void)CoreReachableSpace(board, MoveStep(SnakeHead(snake), move), snake_id, &reachable);
+    return reachable;
+}
+
+static int core_cached_reachable_after_move(
+    const Board* board,
+    const char* snake_id,
+    const MoveDirection* original_moves,
+    int move_count,
+    int* reachable_spaces,
+    MoveDirection move
+) {
+    int index = core_find_move_index(original_moves, move_count, move);
+    if (index == INT_MAX) {
+        return 0;
+    }
+    if (reachable_spaces[index] < 0) {
+        reachable_spaces[index] = core_reachable_after_move(board, snake_id, move);
+    }
+    return reachable_spaces[index];
+}
+
+static bool core_equal_score_move_is_better(
+    const Board* board,
+    const char* snake_id,
+    const MoveDirection* original_moves,
+    int move_count,
+    int* reachable_spaces,
+    MoveDirection candidate,
+    MoveDirection current_best,
+    MoveDirection preferred
+) {
+    bool preferred_valid = core_valid_move_direction(preferred);
+    if (preferred_valid && candidate == preferred && current_best != preferred) {
+        return true;
+    }
+    if (preferred_valid && current_best == preferred && candidate != preferred) {
+        return false;
+    }
+
+    int candidate_space = core_cached_reachable_after_move(
+        board,
+        snake_id,
+        original_moves,
+        move_count,
+        reachable_spaces,
+        candidate
+    );
+    int current_best_space = core_cached_reachable_after_move(
+        board,
+        snake_id,
+        original_moves,
+        move_count,
+        reachable_spaces,
+        current_best
+    );
+    if (candidate_space != current_best_space) {
+        return candidate_space > current_best_space;
+    }
+
+    return core_preferred_order_rank(original_moves, move_count, candidate, preferred) <
+        core_preferred_order_rank(original_moves, move_count, current_best, preferred);
 }
 
 static CoreStatus core_minimax_search(
@@ -1004,7 +1079,11 @@ static CoreStatus core_minimax_search(
             if (stats != NULL) {
                 stats->safe_move_calls++;
             }
-            option_counts[i] = core_safe_moves_or_all(board, board->snakes[i].id, options[i]);
+            option_counts[i] = BoardSafeMoves(board, board->snakes[i].id, options[i]);
+            if (option_counts[i] <= 0) {
+                option_counts[i] = 1;
+                options[i][0] = MOVE_INVALID;
+            }
         }
     }
 
@@ -1026,9 +1105,12 @@ static CoreStatus core_minimax_search(
         return status;
     }
 
+    int original_reachable_spaces[4];
     for (int i = 0; i < own_move_count; i++) {
         original_own_moves[i] = own_moves[i];
+        original_reachable_spaces[i] = -1;
     }
+    /* Preserve pre-sort order and lazily cache safety tie-break scores. */
     MoveDirection effective_preferred = core_valid_move_direction(tt_best_move) ? tt_best_move : preferred_move;
     MoveDirection tie_preferred = ply == 0 ? preferred_move : effective_preferred;
     core_order_moves(context, ply, own_moves, own_move_count, tt_best_move, preferred_move);
@@ -1130,8 +1212,16 @@ static CoreStatus core_minimax_search(
             worst_reply > best_score ||
             (
                 worst_reply == best_score &&
-                core_preferred_order_rank(original_own_moves, own_move_count, own_move, tie_preferred) <
-                    core_preferred_order_rank(original_own_moves, own_move_count, best_move, tie_preferred)
+                core_equal_score_move_is_better(
+                    board,
+                    snake_id,
+                    original_own_moves,
+                    own_move_count,
+                    original_reachable_spaces,
+                    own_move,
+                    best_move,
+                    tie_preferred
+                )
             )
         ) {
             best_score = worst_reply;
