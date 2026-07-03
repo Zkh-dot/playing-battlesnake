@@ -13,6 +13,13 @@ class StrategyDuel(Strategy):
 
     time_budget_ms = 400
 
+    def __init__(self, weights: dict[str, float] | None = None, time_budget_ms: int | None = None) -> None:
+        """Create a duel strategy with optional evaluation-weight overrides."""
+
+        self.weights = weights
+        if time_budget_ms is not None:
+            self.time_budget_ms = time_budget_ms
+
     def decide(self, board: Board, snake_id: str) -> Move:
         """Choose a move for a 1v1 Battlesnake game.
 
@@ -31,7 +38,7 @@ class StrategyDuel(Strategy):
             return self._fallback_move(board, snake_id)
 
         try:
-            return minimax_move(board, snake_id, self.time_budget_ms)
+            return minimax_move(board, snake_id, self.time_budget_ms, self.weights)
         except (RuntimeError, ValueError):
             return self._fallback_move(board, snake_id)
 

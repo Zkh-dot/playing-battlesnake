@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 static Board* board_from_pyobject(PyObject* object) {
     if (!PyObject_TypeCheck(object, &PyBoardType)) {
@@ -77,6 +78,110 @@ static int dict_set_string(PyObject* dict, const char* key, const char* value) {
     int result = PyDict_SetItemString(dict, key, object);
     Py_DECREF(object);
     return result;
+}
+
+static int parse_optional_weight(
+    PyObject* weights_obj,
+    const char* key,
+    double* value
+) {
+    PyObject* object = PyDict_GetItemString(weights_obj, key);
+    if (object == NULL) {
+        return 0;
+    }
+
+    double parsed = PyFloat_AsDouble(object);
+    if (PyErr_Occurred()) {
+        PyErr_Format(PyExc_TypeError, "weights[%s] must be a number", key);
+        return -1;
+    }
+    *value = parsed;
+    return 0;
+}
+
+static bool is_known_evaluation_weight(const char* key) {
+    return strcmp(key, "terminal_win") == 0 ||
+        strcmp(key, "terminal_loss") == 0 ||
+        strcmp(key, "base") == 0 ||
+        strcmp(key, "health") == 0 ||
+        strcmp(key, "length") == 0 ||
+        strcmp(key, "reachable_space") == 0 ||
+        strcmp(key, "safe_moves") == 0 ||
+        strcmp(key, "center") == 0 ||
+        strcmp(key, "food") == 0 ||
+        strcmp(key, "low_health_food") == 0 ||
+        strcmp(key, "low_health_threshold") == 0 ||
+        strcmp(key, "hazard_damage") == 0 ||
+        strcmp(key, "hazard") == 0 ||
+        strcmp(key, "length_advantage") == 0 ||
+        strcmp(key, "adjacent_equal_or_longer_penalty") == 0 ||
+        strcmp(key, "adjacent_shorter_bonus") == 0 ||
+        strcmp(key, "opponent_reachable_space") == 0 ||
+        strcmp(key, "territory_delta") == 0 ||
+        strcmp(key, "opponent_safe_moves") == 0 ||
+        strcmp(key, "opponent_low_health_food_denial") == 0;
+}
+
+static int parse_evaluation_weights(PyObject* weights_obj, CoreEvaluationWeights* weights) {
+    *weights = CoreEvaluationWeightsDefault();
+    if (weights_obj == NULL || weights_obj == Py_None) {
+        return 0;
+    }
+    if (!PyDict_Check(weights_obj)) {
+        PyErr_SetString(PyExc_TypeError, "weights must be a dict");
+        return -1;
+    }
+
+    PyObject* key = NULL;
+    PyObject* value = NULL;
+    Py_ssize_t pos = 0;
+    while (PyDict_Next(weights_obj, &pos, &key, &value)) {
+        if (!PyUnicode_Check(key)) {
+            PyErr_SetString(PyExc_TypeError, "weights keys must be strings");
+            return -1;
+        }
+        const char* key_str = PyUnicode_AsUTF8(key);
+        if (key_str == NULL) {
+            return -1;
+        }
+        if (!is_known_evaluation_weight(key_str)) {
+            PyErr_Format(PyExc_KeyError, "unknown evaluation weight: %s", key_str);
+            return -1;
+        }
+    }
+
+    if (parse_optional_weight(weights_obj, "terminal_win", &weights->terminal_win) < 0 ||
+        parse_optional_weight(weights_obj, "terminal_loss", &weights->terminal_loss) < 0 ||
+        parse_optional_weight(weights_obj, "base", &weights->base) < 0 ||
+        parse_optional_weight(weights_obj, "health", &weights->health) < 0 ||
+        parse_optional_weight(weights_obj, "length", &weights->length) < 0 ||
+        parse_optional_weight(weights_obj, "reachable_space", &weights->reachable_space) < 0 ||
+        parse_optional_weight(weights_obj, "safe_moves", &weights->safe_moves) < 0 ||
+        parse_optional_weight(weights_obj, "center", &weights->center) < 0 ||
+        parse_optional_weight(weights_obj, "food", &weights->food) < 0 ||
+        parse_optional_weight(weights_obj, "low_health_food", &weights->low_health_food) < 0 ||
+        parse_optional_weight(weights_obj, "low_health_threshold", &weights->low_health_threshold) < 0 ||
+        parse_optional_weight(weights_obj, "hazard_damage", &weights->hazard_damage) < 0 ||
+        parse_optional_weight(weights_obj, "hazard", &weights->hazard) < 0 ||
+        parse_optional_weight(weights_obj, "length_advantage", &weights->length_advantage) < 0 ||
+        parse_optional_weight(
+            weights_obj,
+            "adjacent_equal_or_longer_penalty",
+            &weights->adjacent_equal_or_longer_penalty
+        ) < 0 ||
+        parse_optional_weight(weights_obj, "adjacent_shorter_bonus", &weights->adjacent_shorter_bonus) < 0 ||
+        parse_optional_weight(weights_obj, "opponent_reachable_space", &weights->opponent_reachable_space) < 0 ||
+        parse_optional_weight(weights_obj, "territory_delta", &weights->territory_delta) < 0 ||
+        parse_optional_weight(weights_obj, "opponent_safe_moves", &weights->opponent_safe_moves) < 0 ||
+        parse_optional_weight(
+            weights_obj,
+            "opponent_low_health_food_denial",
+            &weights->opponent_low_health_food_denial
+        ) < 0) {
+        return -1;
+    }
+
+    return 0;
 }
 
 static PyObject* coord_array_to_set_and_free(Coord* coords, int count) {
@@ -226,11 +331,21 @@ static PyObject* py_voronoi_territory(PyObject* self, PyObject* args) {
 
 static PyObject* py_minimax_move(PyObject* self, PyObject* args, PyObject* kwds) {
     (void)self;
-    static char* kwlist[] = {"board", "snake_id", "time_budget_ms", NULL};
+    static char* kwlist[] = {"board", "snake_id", "time_budget_ms", "weights", NULL};
     PyObject* board_obj = NULL;
+    PyObject* weights_obj = NULL;
     const char* snake_id = NULL;
     int time_budget_ms = 400;
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Os|i", kwlist, &board_obj, &snake_id, &time_budget_ms)) {
+    if (!PyArg_ParseTupleAndKeywords(
+            args,
+            kwds,
+            "Os|iO",
+            kwlist,
+            &board_obj,
+            &snake_id,
+            &time_budget_ms,
+            &weights_obj
+        )) {
         return NULL;
     }
 
@@ -240,7 +355,13 @@ static PyObject* py_minimax_move(PyObject* self, PyObject* args, PyObject* kwds)
     }
 
     MoveDirection out_move = MOVE_INVALID;
-    CoreStatus status = CoreMinimaxMove(board, snake_id, time_budget_ms, &out_move);
+    CoreSearchConfig config = CoreSearchConfigDefault(time_budget_ms);
+    if (parse_evaluation_weights(weights_obj, &config.weights) < 0) {
+        return NULL;
+    }
+
+    CoreSearchStats stats;
+    CoreStatus status = CoreMinimaxMoveWithStats(board, snake_id, config, &out_move, &stats);
     if (status != CORE_OK) {
         return raise_for_status(status);
     }
@@ -257,9 +378,11 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         "enable_tt",
         "enable_move_ordering",
         "enable_make_unmake",
+        "weights",
         NULL,
     };
     PyObject* board_obj = NULL;
+    PyObject* weights_obj = NULL;
     const char* snake_id = NULL;
     int time_budget_ms = 400;
     int fixed_depth = 0;
@@ -269,7 +392,7 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     if (!PyArg_ParseTupleAndKeywords(
             args,
             kwds,
-            "Os|iiiii",
+            "Os|iiiiiO",
             kwlist,
             &board_obj,
             &snake_id,
@@ -277,7 +400,8 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
             &fixed_depth,
             &enable_tt,
             &enable_move_ordering,
-            &enable_make_unmake
+            &enable_make_unmake,
+            &weights_obj
         )) {
         return NULL;
     }
@@ -296,6 +420,9 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     config.enable_tt = enable_tt != 0;
     config.enable_move_ordering = enable_move_ordering != 0;
     config.enable_make_unmake = enable_make_unmake != 0;
+    if (parse_evaluation_weights(weights_obj, &config.weights) < 0) {
+        return NULL;
+    }
 
     MoveDirection out_move = MOVE_INVALID;
     CoreSearchStats stats;
@@ -407,11 +534,13 @@ static PyObject* py_predict_hazards(PyObject* self, PyObject* args, PyObject* kw
     return coord_array_to_set_and_free(out_hazards, out_hazard_count);
 }
 
-static PyObject* py_evaluate(PyObject* self, PyObject* args) {
+static PyObject* py_evaluate(PyObject* self, PyObject* args, PyObject* kwds) {
     (void)self;
+    static char* kwlist[] = {"board", "snake_id", "weights", NULL};
     PyObject* board_obj = NULL;
+    PyObject* weights_obj = NULL;
     const char* snake_id = NULL;
-    if (!PyArg_ParseTuple(args, "Os", &board_obj, &snake_id)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Os|O", kwlist, &board_obj, &snake_id, &weights_obj)) {
         return NULL;
     }
 
@@ -421,7 +550,12 @@ static PyObject* py_evaluate(PyObject* self, PyObject* args) {
     }
 
     double out_score = 0.0;
-    CoreStatus status = CoreEvaluate(board, snake_id, &out_score);
+    CoreEvaluationWeights weights;
+    if (parse_evaluation_weights(weights_obj, &weights) < 0) {
+        return NULL;
+    }
+
+    CoreStatus status = CoreEvaluateWithWeights(board, snake_id, &weights, &out_score);
     if (status != CORE_OK) {
         return raise_for_status(status);
     }
@@ -452,7 +586,7 @@ PyMethodDef PyCoreMethods[] = {
     {"choke_points", py_choke_points, METH_VARARGS, "Detect articulation-point choke cells."},
     {"edge_trap_move", py_edge_trap_move, METH_VARARGS, "Choose an optional edge-trapping move."},
     {"predict_hazards", (PyCFunction)py_predict_hazards, METH_VARARGS | METH_KEYWORDS, "Predict Royale hazard cells."},
-    {"evaluate", py_evaluate, METH_VARARGS, "Evaluate board utility for one snake."},
+    {"evaluate", (PyCFunction)py_evaluate, METH_VARARGS | METH_KEYWORDS, "Evaluate board utility for one snake."},
     {"board_hash", py_board_hash, METH_VARARGS, "Return deterministic 64-bit Zobrist hash for a board."},
     {NULL, NULL, 0, NULL}
 };

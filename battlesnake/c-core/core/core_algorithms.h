@@ -75,4 +75,11 @@ CoreStatus CorePredictHazards(
     int* out_hazard_count
 );
 
+CoreStatus CoreEvaluateWithWeights(
+    const Board* board,
+    const char* snake_id,
+    const CoreEvaluationWeights* weights,
+    double* out_score
+);
+
 CoreStatus CoreEvaluate(const Board* board, const char* snake_id, double* out_score);

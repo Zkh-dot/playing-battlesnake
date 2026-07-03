@@ -7,25 +7,39 @@ from battlesnake.game import Board
 
 
 WEIGHTS: dict[str, float] = {
-    "health": 1.0,
-    "length": 1.5,
-    "space": 2.0,
-    "food": 1.0,
-    "hazard": -2.0,
-    "center": 0.25,
+    "terminal_win": 1000000.0,
+    "terminal_loss": -1000000.0,
+    "base": 500.0,
+    "health": 0.7,
+    "length": 18.0,
+    "reachable_space": 4.0,
+    "safe_moves": 35.0,
+    "center": 2.0,
+    "food": 55.0,
+    "low_health_food": 120.0,
+    "low_health_threshold": 35.0,
+    "hazard_damage": 1.0,
+    "hazard": 25.0,
+    "length_advantage": 5.0,
+    "adjacent_equal_or_longer_penalty": 120.0,
+    "adjacent_shorter_bonus": 45.0,
+    "opponent_reachable_space": 0.0,
+    "territory_delta": 0.0,
+    "opponent_safe_moves": 0.0,
+    "opponent_low_health_food_denial": 0.0,
 }
 
 
-def evaluate(board: Board, snake_id: str) -> float:
+def evaluate(board: Board, snake_id: str, weights: dict[str, float] | None = None) -> float:
     """Return a weighted board score from snake_id's perspective.
 
     Args:
         board: Current board snapshot.
         snake_id: Snake to evaluate for.
+        weights: Optional evaluation-weight overrides.
 
     Returns:
         Floating-point utility score where larger is better for snake_id.
     """
 
-    # TODO: implement weighted evaluation in c-core/core/core_algorithms.c.
-    return native_evaluate(board, snake_id)
+    return native_evaluate(board, snake_id, weights)

@@ -32,12 +32,38 @@ typedef struct {
 } CoreSearchStats;
 
 typedef struct {
+    double terminal_win;
+    double terminal_loss;
+    double base;
+    double health;
+    double length;
+    double reachable_space;
+    double safe_moves;
+    double center;
+    double food;
+    double low_health_food;
+    double low_health_threshold;
+    double hazard_damage;
+    double hazard;
+    double length_advantage;
+    double adjacent_equal_or_longer_penalty;
+    double adjacent_shorter_bonus;
+    double opponent_reachable_space;
+    double territory_delta;
+    double opponent_safe_moves;
+    double opponent_low_health_food_denial;
+} CoreEvaluationWeights;
+
+typedef struct {
     int time_budget_ms;
     int fixed_depth;
     bool enable_tt;
     bool enable_move_ordering;
     bool enable_make_unmake;
+    CoreEvaluationWeights weights;
 } CoreSearchConfig;
+
+CoreEvaluationWeights CoreEvaluationWeightsDefault(void);
 
 CoreSearchConfig CoreSearchConfigDefault(int time_budget_ms);
 
