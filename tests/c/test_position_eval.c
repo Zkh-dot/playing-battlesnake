@@ -432,6 +432,42 @@ static void test_matrix_confidence_prefers_higher_confidence_tie(void) {
     assert(fabs(confidence - 0.9) < 0.000001);
 }
 
+static void test_matrix_confidence_tie_is_order_insensitive(void) {
+    double base = CorePositionEvalTestSolveMatrix2x2WithConfidence(
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.1,
+        0.9,
+        0.8,
+        0.7
+    );
+    double row_swapped = CorePositionEvalTestSolveMatrix2x2WithConfidence(
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.8,
+        0.7,
+        0.1,
+        0.9
+    );
+    double col_swapped = CorePositionEvalTestSolveMatrix2x2WithConfidence(
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.9,
+        0.1,
+        0.7,
+        0.8
+    );
+    assert(fabs(base - 0.9) < 0.000001);
+    assert(fabs(row_swapped - 0.9) < 0.000001);
+    assert(fabs(col_swapped - 0.9) < 0.000001);
+}
+
 static void test_terminal_second_alive_is_loss(void) {
     Board* board = make_terminal_second_alive_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
@@ -465,6 +501,7 @@ int main(void) {
     test_matrix_solver_matches_matching_pennies();
     test_matrix_solver_picks_dominant_row();
     test_matrix_confidence_prefers_higher_confidence_tie();
+    test_matrix_confidence_tie_is_order_insensitive();
     puts("position_eval C tests passed");
     return 0;
 }

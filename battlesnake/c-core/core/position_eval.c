@@ -335,6 +335,43 @@ static CoreStatus evaluate_heuristic_leaf(
     return CORE_OK;
 }
 
+static CoreStatus fill_timeout_matrix(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    int rows,
+    int cols,
+    bool evaluated[4][4],
+    double probability_matrix[4][4],
+    double confidence_matrix[4][4],
+    PositionEvalContext* context
+) {
+    double probability = 0.5;
+    CoreStatus status = heuristic_probability(
+        board,
+        first_snake_id,
+        second_snake_id,
+        &context->config.weights,
+        &probability
+    );
+    if (status != CORE_OK) {
+        return status;
+    }
+
+    context->result->timed_out = true;
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            if (!evaluated[i][j]) {
+                probability_matrix[i][j] = probability;
+                confidence_matrix[i][j] = 0.0;
+                context->result->timeout_leaves++;
+                context->result->heuristic_leaves++;
+            }
+        }
+    }
+    return CORE_OK;
+}
+
 static CoreStatus evaluate_node_pure_minimax(
     const Board* board,
     const char* first_snake_id,
@@ -402,22 +439,32 @@ static CoreStatus evaluate_node_pure_minimax(
 
     double probability_matrix[4][4] = {{0.0}};
     double confidence_matrix[4][4] = {{0.0}};
+    bool evaluated[4][4] = {{false}};
     double row_strategy[4] = {0.0};
     double col_strategy[4] = {0.0};
     const char* ids[2] = {first_snake_id, second_snake_id};
     MoveDirection moves[2];
+    bool timed_out = false;
 
     for (int i = 0; i < first_count; i++) {
         for (int j = 0; j < second_count; j++) {
             if (position_timed_out(&context->timer)) {
-                return evaluate_heuristic_leaf(
+                CoreStatus status = fill_timeout_matrix(
                     board,
                     first_snake_id,
                     second_snake_id,
-                    context,
-                    true,
-                    out_value
+                    first_count,
+                    second_count,
+                    evaluated,
+                    probability_matrix,
+                    confidence_matrix,
+                    context
                 );
+                if (status != CORE_OK) {
+                    return status;
+                }
+                timed_out = true;
+                break;
             }
 
             moves[0] = first_moves[i];
@@ -444,6 +491,10 @@ static CoreStatus evaluate_node_pure_minimax(
             context->result->expanded_children++;
             probability_matrix[i][j] = child_value.p;
             confidence_matrix[i][j] = child_value.confidence;
+            evaluated[i][j] = true;
+        }
+        if (timed_out) {
+            break;
         }
     }
 
@@ -534,22 +585,32 @@ static CoreStatus evaluate_node_matrix(
 
     double probability_matrix[4][4] = {{0.0}};
     double confidence_matrix[4][4] = {{0.0}};
+    bool evaluated[4][4] = {{false}};
     double row_strategy[4] = {0.0};
     double col_strategy[4] = {0.0};
     const char* ids[2] = {first_snake_id, second_snake_id};
     MoveDirection moves[2];
+    bool timed_out = false;
 
     for (int i = 0; i < first_count; i++) {
         for (int j = 0; j < second_count; j++) {
             if (position_timed_out(&context->timer)) {
-                return evaluate_heuristic_leaf(
+                CoreStatus status = fill_timeout_matrix(
                     board,
                     first_snake_id,
                     second_snake_id,
-                    context,
-                    true,
-                    out_value
+                    first_count,
+                    second_count,
+                    evaluated,
+                    probability_matrix,
+                    confidence_matrix,
+                    context
                 );
+                if (status != CORE_OK) {
+                    return status;
+                }
+                timed_out = true;
+                break;
             }
 
             moves[0] = first_moves[i];
@@ -576,6 +637,10 @@ static CoreStatus evaluate_node_matrix(
             context->result->expanded_children++;
             probability_matrix[i][j] = child_value.p;
             confidence_matrix[i][j] = child_value.confidence;
+            evaluated[i][j] = true;
+        }
+        if (timed_out) {
+            break;
         }
     }
     double confidence = 0.0;
