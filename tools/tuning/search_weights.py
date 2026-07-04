@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -79,11 +80,9 @@ def _run_optuna_search(
     time_budget_ms: int,
     storage: str,
     study_name: str,
-    output: Path,
 ) -> dict[str, float]:
     import optuna
 
-    output.parent.mkdir(parents=True, exist_ok=True)
     study = optuna.create_study(
         direction="maximize",
         storage=storage,
@@ -114,12 +113,6 @@ def _run_optuna_search(
         for key in DEFAULT_SEARCH_SPACE
     }
     best_weights = merge_candidate_weights(default_weights, best_candidate)
-    output.write_text(json.dumps({
-        "best_value": study.best_value,
-        "best_candidate": best_candidate,
-        "best_weights": best_weights,
-        "best_trial": study.best_trial.number,
-    }, indent=2, sort_keys=True) + "\n")
     return best_weights
 
 
@@ -140,7 +133,18 @@ def main() -> int:
 
     default_weights = load_weights(args.default_weights)
     samples = load_samples(args.exports, args.split, args.limit)
-    if args.random_fallback:
+    use_random_search = args.random_fallback
+    if not use_random_search:
+        try:
+            import optuna  # noqa: F401
+        except ImportError:
+            use_random_search = True
+            print(
+                "optuna is not installed; falling back to deterministic random search",
+                file=sys.stderr,
+            )
+
+    if use_random_search:
         best_weights = _run_random_search(
             default_weights=default_weights,
             samples=samples,
@@ -158,7 +162,6 @@ def main() -> int:
             time_budget_ms=args.time_budget_ms,
             storage=args.storage,
             study_name=args.study_name,
-            output=args.output,
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(best_weights, indent=2, sort_keys=True) + "\n")

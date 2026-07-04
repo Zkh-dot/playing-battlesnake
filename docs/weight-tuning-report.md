@@ -36,6 +36,10 @@ Compute-node match comparison:
 - after errors: 0
 - average turns: 107.15
 
+Interpretation:
+
+- The 20-match result is directional, not conclusive. Excluding the draw, tuned weights won 11 of 19 decided games (57.9%), so sampling noise is still high. Use 100+ generated matches or replay-grounded games before treating this as a stable strength estimate.
+
 | match | scenario | after side | winner | turns |
 | ---: | --- | ---: | --- | ---: |
 | 0 | generated_standard_duel_0 | 0 | after | 104 |

@@ -115,7 +115,7 @@ def iter_replay_samples(paths: Iterable[Path]) -> Iterator[ReplaySample]:
     for path in paths:
         export = json.loads(path.read_text())
         game = export["game"]
-        game_id = str(export.get("game_id") or game["ID"])
+        game_id = str(export.get("game_id") or game.get("ID", "unknown"))
         split = deterministic_split(game_id)
         frames = export.get("frames", [])
         for index in range(len(frames) - 1):

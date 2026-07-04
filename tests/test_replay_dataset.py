@@ -92,6 +92,20 @@ class ReplayDatasetTests(unittest.TestCase):
         self.assertEqual(second.snake_id, "s2")
         self.assertEqual(second.target_move, "down")
 
+    def test_iter_replay_samples_handles_missing_game_id_fields(self) -> None:
+        export = synthetic_export()
+        export.pop("game_id")
+        export["game"].pop("ID")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing-game-id.json"
+            path.write_text(json.dumps(export))
+
+            samples = list(iter_replay_samples([path]))
+
+        self.assertEqual(len(samples), 2)
+        self.assertEqual(samples[0].game_id, "unknown")
+
     def test_deterministic_split_is_stable_by_game_id(self) -> None:
         split_a = deterministic_split("game-a")
         split_a_again = deterministic_split("game-a")

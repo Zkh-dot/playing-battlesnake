@@ -19,6 +19,11 @@ score = exact_match_rate - 0.10 * error_rate - 0.02 * timeout_rate
 
 Use `fixed_depth=3` for real runs. Use lower depth and `--limit` only for smoke tests.
 
+`tools.tuning.search_weights` uses Optuna TPE when `optuna` is installed. On a
+clean local environment without Optuna, it automatically falls back to the
+stdlib deterministic random search and still writes the requested best-weights
+JSON.
+
 ## Local Smoke Test
 
 ```bash

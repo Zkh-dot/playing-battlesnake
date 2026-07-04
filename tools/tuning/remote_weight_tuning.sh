@@ -15,6 +15,7 @@ mkdir -p artifacts/weight_tuning
 rsync -az --delete \
   --exclude '.git/' \
   --exclude '__pycache__/' \
+  --include 'battlesnake/battlesnake_native*.so' \
   --exclude '*.so' \
   --exclude 'build/' \
   --exclude '.venv/' \

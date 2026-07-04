@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import io
+import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -107,6 +111,7 @@ class EvaluateWeightsTests(unittest.TestCase):
 
 from tools.tuning.search_weights import (
     DEFAULT_SEARCH_SPACE,
+    main as search_weights_main,
     merge_candidate_weights,
     suggest_random_candidate,
 )
@@ -129,3 +134,39 @@ class SearchWeightsTests(unittest.TestCase):
         merged = merge_candidate_weights({"base": 500.0, "opponent_reachable_space": 0.0}, candidate)
         self.assertEqual(merged["base"], 500.0)
         self.assertEqual(merged["opponent_reachable_space"], candidate["opponent_reachable_space"])
+
+    def test_main_falls_back_to_random_search_when_optuna_is_missing(self) -> None:
+        def blocked_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "optuna":
+                raise ImportError("missing optuna")
+            return original_import(name, *args, **kwargs)
+
+        original_import = __import__
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "best_weights.json"
+            argv = [
+                "search_weights",
+                "--exports",
+                "exports",
+                "--output",
+                str(output),
+                "--trials",
+                "1",
+            ]
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(sys, "stderr", io.StringIO()),
+                patch.object(sys, "stdout", io.StringIO()),
+                patch("builtins.__import__", side_effect=blocked_import),
+                patch("tools.tuning.search_weights.load_weights", return_value={"base": 1.0}),
+                patch("tools.tuning.search_weights.load_samples", return_value=[object()]),
+                patch(
+                    "tools.tuning.search_weights._run_random_search",
+                    return_value={"base": 1.0, "opponent_reachable_space": 2.0},
+                ) as random_search,
+                patch("tools.tuning.search_weights._run_optuna_search") as optuna_search,
+            ):
+                self.assertEqual(search_weights_main(), 0)
+
+        random_search.assert_called_once()
+        optuna_search.assert_not_called()
