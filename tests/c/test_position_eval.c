@@ -502,14 +502,30 @@ static void test_non_finite_weight_is_sanitized_to_probability_fallback(void) {
 static void test_heuristic_error_does_not_increment_heuristic_leaves(void) {
     Board* board = make_invalid_dimension_board();
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
-    CorePositionEvalResult result;
+    CorePositionEvalResult result = {
+        .first_win_probability = 123.0,
+        .confidence = 123.0,
+        .nodes = 123,
+        .terminal_leaves = 123,
+        .heuristic_leaves = 123,
+        .timeout_leaves = 123,
+        .expanded_children = 123,
+        .timed_out = true,
+        .elapsed_ms = 123.0,
+    };
 
     CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
 
     assert(status == CORE_ERROR);
-    assert(result.nodes == 1);
+    assert(result.first_win_probability == 0.0);
+    assert(result.confidence == 0.0);
+    assert(result.nodes == 0);
     assert(result.terminal_leaves == 0);
     assert(result.heuristic_leaves == 0);
+    assert(result.timeout_leaves == 0);
+    assert(result.expanded_children == 0);
+    assert(result.timed_out == false);
+    assert(result.elapsed_ms == 0.0);
     BoardFree(board);
 }
 
@@ -594,21 +610,6 @@ static void test_matrix_confidence_tie_is_order_insensitive(void) {
 }
 
 static void test_timeout_backup_preserves_evaluated_cells(void) {
-    CorePositionEvalTestTimeoutBackupResult fallback = CorePositionEvalTestFillTimeoutMatrix2x2(
-        0.2,
-        0.2,
-        0.2,
-        0.2,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        false,
-        false,
-        false,
-        false,
-        0.2
-    );
     CorePositionEvalTestTimeoutBackupResult preserved = CorePositionEvalTestFillTimeoutMatrix2x2(
         0.9,
         0.2,
@@ -625,9 +626,8 @@ static void test_timeout_backup_preserves_evaluated_cells(void) {
         0.2
     );
 
-    assert(preserved.probability > fallback.probability);
-    assert(preserved.confidence > fallback.confidence);
-    assert(preserved.probability > 0.2);
+    assert(fabs(preserved.probability - 0.5733333333333334) < 0.000001);
+    assert(fabs(preserved.confidence - 0.2702222222222222) < 0.000001);
 }
 
 static void test_terminal_second_alive_is_loss(void) {

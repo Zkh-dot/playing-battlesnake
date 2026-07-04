@@ -113,6 +113,29 @@ static void copy_strategy_by_moves(
     }
 }
 
+static bool evaluate_no_command_terminal(
+    int first_count,
+    int second_count,
+    PositionEvalContext* context,
+    PositionEvalValue* out_value
+) {
+    if (first_count > 0 && second_count > 0) {
+        return false;
+    }
+
+    context->result->terminal_leaves++;
+    if (first_count <= 0 && second_count <= 0) {
+        *out_value = position_eval_value(0.5, 1.0);
+        return true;
+    }
+    if (first_count <= 0) {
+        *out_value = position_eval_value(0.0, 1.0);
+        return true;
+    }
+    *out_value = position_eval_value(1.0, 1.0);
+    return true;
+}
+
 #ifdef CORE_POSITION_EVAL_TESTING
 static bool position_eval_test_force_timeout = false;
 static int position_eval_test_force_timeout_after_checks = -1;
@@ -296,7 +319,7 @@ static bool solve_row_strategy_lp(
                     valid = false;
                     break;
                 }
-                candidate_strategy[row_indices[i]] = solution[i] < 0.0 ? 0.0 : solution[i];
+                candidate_strategy[row_indices[i]] = fmax(solution[i], 0.0);
             }
             if (!valid) {
                 continue;
@@ -385,7 +408,7 @@ static bool solve_col_strategy_lp(
                     valid = false;
                     break;
                 }
-                candidate_strategy[col_indices[j]] = solution[j] < 0.0 ? 0.0 : solution[j];
+                candidate_strategy[col_indices[j]] = fmax(solution[j], 0.0);
             }
             if (!valid) {
                 continue;
@@ -524,15 +547,20 @@ static double solve_zero_sum_matrix_with_confidence(
 
     double row_value = 0.0;
     double col_value = 0.0;
+    /*
+     * The support solvers can reject singular degenerate matrices or supports
+     * whose exact solution falls outside [0, 1]. In those cases the pure
+     * maximin fallback below is the intended conservative behavior.
+     */
     if (
         rows > 0 &&
         cols > 0 &&
         rows <= 4 &&
         cols <= 4 &&
         solve_row_strategy_lp(values, rows, cols, row_strategy, &row_value) &&
-        solve_col_strategy_lp(values, rows, cols, col_strategy, &col_value)
+        solve_col_strategy_lp(values, rows, cols, col_strategy, &col_value) &&
+        fabs(row_value - col_value) <= 1e-6
     ) {
-        (void)col_value;
         if (out_confidence != NULL) {
             double confidence = 0.0;
             for (int i = 0; i < rows; i++) {
@@ -712,13 +740,8 @@ static CoreStatus evaluate_node_pure_minimax(
     MoveDirection second_moves[4];
     int first_count = board_command_moves(board, first_snake_id, first_moves);
     int second_count = board_command_moves(board, second_snake_id, second_moves);
-    if (first_count <= 0) {
-        first_count = 1;
-        first_moves[0] = MOVE_INVALID;
-    }
-    if (second_count <= 0) {
-        second_count = 1;
-        second_moves[0] = MOVE_INVALID;
+    if (evaluate_no_command_terminal(first_count, second_count, context, out_value)) {
+        return CORE_OK;
     }
 
     double probability_matrix[4][4] = {{0.0}};
@@ -759,7 +782,7 @@ static CoreStatus evaluate_node_pure_minimax(
             }
 
             PositionEvalValue child_value;
-            CoreStatus status = evaluate_node_pure_minimax(
+            CoreStatus status = evaluate_node(
                 child,
                 first_snake_id,
                 second_snake_id,
@@ -860,13 +883,8 @@ static CoreStatus evaluate_node_matrix(
     MoveDirection second_moves[4];
     int first_count = board_command_moves(board, first_snake_id, first_moves);
     int second_count = board_command_moves(board, second_snake_id, second_moves);
-    if (first_count <= 0) {
-        first_count = 1;
-        first_moves[0] = MOVE_INVALID;
-    }
-    if (second_count <= 0) {
-        second_count = 1;
-        second_moves[0] = MOVE_INVALID;
+    if (evaluate_no_command_terminal(first_count, second_count, context, out_value)) {
+        return CORE_OK;
     }
 
     double probability_matrix[4][4] = {{0.0}};
@@ -1158,6 +1176,7 @@ CoreStatus CorePositionEvaluateDuel(
     if (board == NULL || first_snake_id == NULL || second_snake_id == NULL || out_result == NULL) {
         return CORE_ERROR;
     }
+    memset(out_result, 0, sizeof(*out_result));
     if (config.max_depth < 0) {
         return CORE_ERROR;
     }
@@ -1168,7 +1187,6 @@ CoreStatus CorePositionEvaluateDuel(
         return CORE_ERROR;
     }
 
-    memset(out_result, 0, sizeof(*out_result));
     struct timespec start;
     struct timespec end;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1189,6 +1207,7 @@ CoreStatus CorePositionEvaluateDuel(
         &value
     );
     if (status != CORE_OK) {
+        memset(out_result, 0, sizeof(*out_result));
         return status;
     }
 

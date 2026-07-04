@@ -41,6 +41,19 @@ back to pure maximin backup.
 pure maximin backup and is mainly useful when comparing this evaluator against
 the existing move search.
 
+## Current Limitations
+
+The evaluator intentionally expands all four command directions for each live
+snake instead of filtering with `BoardSafeMoves`. This preserves simultaneous
+move semantics: a command that is unsafe against one opponent response may still
+be useful against another. Fully trapped positions can therefore spend work on
+children that immediately become terminal leaves.
+
+The evaluator also does not reuse the existing `transposition_table.c`
+infrastructure yet. At depth 2 and above, identical board states may be reached
+through different move-pair orders and evaluated more than once. This is a
+performance limitation, not a correctness limitation.
+
 ## Heuristic Leaves
 
 When the engine reaches `max_depth` or exhausts `time_budget_ms`, it evaluates
