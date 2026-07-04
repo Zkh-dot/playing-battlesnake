@@ -109,3 +109,9 @@ allowing deeper attempts to stop quickly when the budget is exhausted.
 - `elapsed_ms`: wall-clock time spent by the evaluator.
 - `first_move_probabilities` / `second_move_probabilities`: root policy for
   move analysis and replay agreement metrics.
+
+## Root-cell OpenMP mode
+
+The position evaluation engine is serial by default. Root-cell parallelism can be enabled for C binaries with `-DCORE_POSITION_EVAL_OPENMP -fopenmp`, or for the Python extension with `BATTLESNAKE_ENABLE_OPENMP=1 python3 setup.py build_ext --inplace --force`.
+
+Only the root matrix cells are parallelized. Iterative deepening across depths remains serial, and matrix solving remains serial after all root cells finish. On timeout-heavy runs, diagnostic counters can differ by thread count because already-started root cells may finish after another cell observes the shared deadline; completed root policy semantics still use the last fully completed depth.
