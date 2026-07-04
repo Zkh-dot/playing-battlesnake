@@ -1,3 +1,5 @@
+import os
+
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
@@ -19,6 +21,14 @@ SOURCE_FILES = [
 ]
 
 
+enable_openmp = os.environ.get("BATTLESNAKE_ENABLE_OPENMP") == "1"
+extra_compile_args = ["-std=c2x", "-D_POSIX_C_SOURCE=200809L"]
+extra_link_args = []
+if enable_openmp:
+    extra_compile_args.extend(["-DCORE_POSITION_EVAL_OPENMP", "-fopenmp"])
+    extra_link_args.append("-fopenmp")
+
+
 ext_modules = [
     Extension(
         "battlesnake.battlesnake_native",
@@ -26,7 +36,8 @@ ext_modules = [
         include_dirs=["battlesnake/c-core"],
         libraries=["m"],
         language="c",
-        extra_compile_args=["-std=c2x", "-D_POSIX_C_SOURCE=200809L"],
+        extra_compile_args=extra_compile_args,
+        extra_link_args=extra_link_args,
     )
 ]
 
