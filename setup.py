@@ -1,3 +1,10 @@
+"""Build metadata for the Python extension.
+
+The native HTTP server is built by tools/build_native_server.sh from the same
+C core files plus battlesnake/c-core/server/*.c. Keep SOURCE_FILES limited to
+the CPython extension sources so `pip install .` continues to work.
+"""
+
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
