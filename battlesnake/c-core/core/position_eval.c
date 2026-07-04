@@ -9,6 +9,10 @@
 #include <time.h>
 #include <string.h>
 
+#ifdef CORE_POSITION_EVAL_OPENMP
+#include <omp.h>
+#endif
+
 static double clamp01(double value) {
     if (!isfinite(value)) {
         return 0.5;
@@ -1122,6 +1126,19 @@ static CoreStatus evaluate_root_cell(
     return CORE_OK;
 }
 
+static bool root_parallel_enabled(void) {
+#ifndef CORE_POSITION_EVAL_OPENMP
+    return false;
+#else
+#ifdef CORE_POSITION_EVAL_TESTING
+    if (position_eval_test_force_timeout || position_eval_test_force_timeout_after_checks >= 0) {
+        return false;
+    }
+#endif
+    return true;
+#endif
+}
+
 static CoreStatus evaluate_root_once(
     const Board* board,
     const char* first_snake_id,
@@ -1173,20 +1190,41 @@ static CoreStatus evaluate_root_once(
     PositionRootCellResult cell_results[4][4];
     memset(cell_results, 0, sizeof(cell_results));
 
-    for (int i = 0; i < first_count; i++) {
-        for (int j = 0; j < second_count; j++) {
-            CoreStatus cell_status = evaluate_root_cell(
-                board,
-                first_snake_id,
-                second_snake_id,
-                first_moves[i],
-                second_moves[j],
-                root_depth,
-                context,
-                &cell_results[i][j]
-            );
-            if (cell_status != CORE_OK) {
-                return cell_status;
+    if (root_parallel_enabled()) {
+#ifdef CORE_POSITION_EVAL_OPENMP
+        #pragma omp parallel for collapse(2) schedule(dynamic, 1) default(none) \
+            shared(cell_results, board, first_snake_id, second_snake_id, first_moves, second_moves, first_count, second_count, root_depth, context)
+        for (int i = 0; i < first_count; i++) {
+            for (int j = 0; j < second_count; j++) {
+                (void)evaluate_root_cell(
+                    board,
+                    first_snake_id,
+                    second_snake_id,
+                    first_moves[i],
+                    second_moves[j],
+                    root_depth,
+                    context,
+                    &cell_results[i][j]
+                );
+            }
+        }
+#endif
+    } else {
+        for (int i = 0; i < first_count; i++) {
+            for (int j = 0; j < second_count; j++) {
+                CoreStatus cell_status = evaluate_root_cell(
+                    board,
+                    first_snake_id,
+                    second_snake_id,
+                    first_moves[i],
+                    second_moves[j],
+                    root_depth,
+                    context,
+                    &cell_results[i][j]
+                );
+                if (cell_status != CORE_OK) {
+                    return cell_status;
+                }
             }
         }
     }
