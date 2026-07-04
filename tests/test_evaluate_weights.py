@@ -1,13 +1,21 @@
 from __future__ import annotations
 
-import json
 import io
+import json
 import sys
 import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
+from tools.tuning.evaluate_weights import EvaluationMetrics, evaluate_samples
+from tools.tuning.search_weights import (
+    DEFAULT_SEARCH_SPACE,
+    main as search_weights_main,
+    merge_candidate_weights,
+    suggest_random_candidate,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WEIGHTS_PATH = REPO_ROOT / "configs" / "evaluation_weights" / "default.json"
@@ -57,14 +65,6 @@ class WeightConfigTests(unittest.TestCase):
         self.assertEqual(set(tuned_weights), set(default_weights))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-from dataclasses import dataclass
-
-from tools.tuning.evaluate_weights import EvaluationMetrics, evaluate_samples
-
-
 @dataclass(frozen=True)
 class FakeSample:
     split: str
@@ -108,14 +108,6 @@ class EvaluateWeightsTests(unittest.TestCase):
         self.assertEqual(metrics.timeouts, 1)
         self.assertAlmostEqual(metrics.accuracy, 1 / 3)
         self.assertAlmostEqual(metrics.score, (1 / 3) - 0.10 * (1 / 3) - 0.02 * (1 / 3))
-
-from tools.tuning.search_weights import (
-    DEFAULT_SEARCH_SPACE,
-    main as search_weights_main,
-    merge_candidate_weights,
-    suggest_random_candidate,
-)
-
 
 class SearchWeightsTests(unittest.TestCase):
     def test_search_space_covers_opponent_pressure_keys(self) -> None:
@@ -169,4 +161,9 @@ class SearchWeightsTests(unittest.TestCase):
                 self.assertEqual(search_weights_main(), 0)
 
         random_search.assert_called_once()
+        self.assertEqual(random_search.call_args.kwargs["output"].name, "best_weights-trials.jsonl")
         optuna_search.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

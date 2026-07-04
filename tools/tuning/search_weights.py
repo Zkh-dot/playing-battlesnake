@@ -80,6 +80,8 @@ def _run_optuna_search(
     time_budget_ms: int,
     storage: str,
     study_name: str,
+    plateau_patience: int,
+    plateau_min_delta: float,
 ) -> dict[str, float]:
     import optuna
 
@@ -105,9 +107,55 @@ def _run_optuna_search(
         )
         trial.set_user_attr("metrics", metrics.to_dict())
         trial.set_user_attr("candidate", candidate)
+        print(
+            json.dumps(
+                {
+                    "trial": trial.number,
+                    "score": metrics.score,
+                    "accuracy": metrics.accuracy,
+                    "errors": metrics.errors,
+                    "timeouts": metrics.timeouts,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
         return metrics.score
 
-    study.optimize(objective, n_trials=trials)
+    best_seen = {"value": float("-inf"), "stale": 0}
+    try:
+        best_seen["value"] = float(study.best_value)
+    except ValueError:
+        pass
+
+    def stop_on_plateau(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
+        if plateau_patience <= 0 or trial.value is None:
+            return
+        value = float(trial.value)
+        if value > best_seen["value"] + plateau_min_delta:
+            best_seen["value"] = value
+            best_seen["stale"] = 0
+            return
+        best_seen["stale"] += 1
+        if best_seen["stale"] >= plateau_patience:
+            print(
+                json.dumps(
+                    {
+                        "event": "plateau_stop",
+                        "best_score": best_seen["value"],
+                        "patience": plateau_patience,
+                        "trial": trial.number,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            study.stop()
+
+    if plateau_patience > 0:
+        study.optimize(objective, n_trials=trials, callbacks=[stop_on_plateau])
+    else:
+        study.optimize(objective, n_trials=trials)
     best_candidate = {
         key: float(study.best_trial.params[key])
         for key in DEFAULT_SEARCH_SPACE
@@ -128,6 +176,8 @@ def main() -> int:
     parser.add_argument("--storage", default="sqlite:///artifacts/weight_tuning/optuna.db")
     parser.add_argument("--study-name", default="opponent-pressure-v1")
     parser.add_argument("--output", type=Path, default=Path("artifacts/weight_tuning/best_weights.json"))
+    parser.add_argument("--plateau-patience", type=int, default=50)
+    parser.add_argument("--plateau-min-delta", type=float, default=0.0)
     parser.add_argument("--random-fallback", action="store_true")
     args = parser.parse_args()
 
@@ -151,7 +201,7 @@ def main() -> int:
             trials=args.trials,
             fixed_depth=args.fixed_depth,
             time_budget_ms=args.time_budget_ms,
-            output=args.output.with_suffix(".jsonl"),
+            output=args.output.with_name(f"{args.output.stem}-trials.jsonl"),
         )
     else:
         best_weights = _run_optuna_search(
@@ -162,6 +212,8 @@ def main() -> int:
             time_budget_ms=args.time_budget_ms,
             storage=args.storage,
             study_name=args.study_name,
+            plateau_patience=args.plateau_patience,
+            plateau_min_delta=args.plateau_min_delta,
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(best_weights, indent=2, sort_keys=True) + "\n")

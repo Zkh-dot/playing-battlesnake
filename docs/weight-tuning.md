@@ -24,6 +24,13 @@ clean local environment without Optuna, it automatically falls back to the
 stdlib deterministic random search and still writes the requested best-weights
 JSON.
 
+The search CLI writes final weights to `--output`. Random-search trials are
+logged next to that file as `<output-stem>-trials.jsonl`. Optuna runs emit one
+JSON progress row per trial to stdout, so the remote runner captures progress in
+`artifacts/weight_tuning/search.log`. Optuna search stops early after
+`--plateau-patience` non-improving trials; set `--plateau-patience 0` to force
+all requested trials.
+
 ## Local Smoke Test
 
 ```bash

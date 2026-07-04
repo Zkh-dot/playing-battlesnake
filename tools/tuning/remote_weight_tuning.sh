@@ -10,6 +10,22 @@ TIME_BUDGET_MS="${TIME_BUDGET_MS:-5000}"
 LIMIT="${LIMIT:-}"
 REMOTE_PYTHON="${REMOTE_DIR}/.venv/bin/python"
 
+require_positive_int() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "${name} must be a positive integer" >&2
+    exit 2
+  fi
+}
+
+require_positive_int TRIALS "${TRIALS}"
+require_positive_int FIXED_DEPTH "${FIXED_DEPTH}"
+require_positive_int TIME_BUDGET_MS "${TIME_BUDGET_MS}"
+if [[ -n "${LIMIT}" ]]; then
+  require_positive_int LIMIT "${LIMIT}"
+fi
+
 mkdir -p artifacts/weight_tuning
 
 rsync -az --delete \

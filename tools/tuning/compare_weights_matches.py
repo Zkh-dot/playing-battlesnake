@@ -138,11 +138,11 @@ def _winner(board: Board) -> Winner | None:
     after_alive = "after" in board.snakes
     if before_alive and after_alive:
         return None
-    if after_alive:
-        return "after"
+    if not before_alive and not after_alive:
+        return "draw"
     if before_alive:
         return "before"
-    return "draw"
+    return "after"
 
 
 def play_match(
@@ -186,13 +186,14 @@ def play_match(
         after_errors += int(after_error)
         board = board.clone_and_apply({"before": before_move, "after": after_move})
         turns = turn + 1
+        result = _winner(board)
+        if result is not None:
+            break
     else:
         result = "draw"
 
     before_alive, before_length, before_health = _snake_status(board, "before")
     after_alive, after_length, after_health = _snake_status(board, "after")
-    if result is None:
-        result = _winner(board) or "draw"
 
     return MatchResult(
         match=match_index,
