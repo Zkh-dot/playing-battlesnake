@@ -7,6 +7,7 @@ SOURCE_FILES = [
     "battlesnake/c-core/datatypes/snake.c",
     "battlesnake/c-core/datatypes/board.c",
     "battlesnake/c-core/core/core_algorithms.c",
+    "battlesnake/c-core/core/position_eval.c",
     "battlesnake/c-core/core/search_stats.c",
     "battlesnake/c-core/core/search_workspace.c",
     "battlesnake/c-core/core/search_state.c",
@@ -23,6 +24,7 @@ ext_modules = [
         "battlesnake.battlesnake_native",
         sources=SOURCE_FILES,
         include_dirs=["battlesnake/c-core"],
+        libraries=["m"],
         language="c",
         extra_compile_args=["-std=c2x", "-D_POSIX_C_SOURCE=200809L"],
     )
