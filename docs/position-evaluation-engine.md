@@ -73,17 +73,24 @@ to `0.5`.
 
 ## Timeout Semantics
 
-The evaluator resolves terminal leaves and depth-limit leaves before checking
-the deadline for expansion. It then checks the deadline before expanding a node
-and before each child. If the budget expires inside a simultaneous move matrix,
-already evaluated cells are preserved and only missing cells are filled.
+The top-level evaluator uses iterative deepening over root depths. For
+`max_depth > 0`, it first evaluates a full root move matrix at depth 1, then
+tries depth 2, depth 3, and so on until `max_depth` or the time budget stops it.
 
-Missing cells use one heuristic probability computed from the current parent
-board, not per-move child-board heuristic evaluation. Those fallback cells have
-confidence `0.0` and count as both heuristic and timeout leaves.
+Root policy is only published from the deepest fully completed root matrix. If
+the engine times out while computing depth `N`, all root values and root policy
+from that incomplete depth are discarded, and the result falls back to the last
+complete depth `< N`.
 
-This keeps the result usable under tight budgets: partial exact work is retained
-instead of discarding the whole node.
+If the engine cannot complete depth 1, it returns the depth 0 heuristic value
+for the current board. In that case root move policy arrays remain all zero
+because no complete root matrix exists.
+
+Inside non-root recursive nodes, timeout still fills only the missing matrix
+cells with a heuristic fallback and preserves already-evaluated cells, exactly as
+before. Any such fallback inside a depth attempt marks that whole root depth as
+incomplete, so it keeps already completed shallower root depths useful while
+allowing deeper attempts to stop quickly when the budget is exhausted.
 
 ## Diagnostics
 
@@ -94,6 +101,10 @@ instead of discarding the whole node.
 - `heuristic_leaves`: leaves evaluated by the heuristic fallback.
 - `timeout_leaves`: heuristic leaves caused by timeout.
 - `expanded_children`: child boards evaluated after a legal move pair.
+- `completed_depth`: deepest root depth whose full root matrix completed without
+  timeout.
+- `max_depth_started`: deepest root depth attempt that started before the
+  evaluator stopped.
 - `timed_out`: whether any part of the search hit the configured time budget.
 - `elapsed_ms`: wall-clock time spent by the evaluator.
 - `first_move_probabilities` / `second_move_probabilities`: root policy for

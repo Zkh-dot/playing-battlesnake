@@ -149,7 +149,7 @@ int main(void) {
         return 2;
     }
 
-    puts("case_id\tstatus\tp\tconfidence\tfirst_up\tfirst_down\tfirst_left\tfirst_right\tsecond_up\tsecond_down\tsecond_left\tsecond_right\tnodes\tterminal_leaves\theuristic_leaves\ttimeout_leaves\texpanded_children\ttimed_out\telapsed_ms");
+    puts("case_id\tstatus\tp\tconfidence\tfirst_up\tfirst_down\tfirst_left\tfirst_right\tsecond_up\tsecond_down\tsecond_left\tsecond_right\tnodes\tterminal_leaves\theuristic_leaves\ttimeout_leaves\texpanded_children\tcompleted_depth\tmax_depth_started\ttimed_out\telapsed_ms");
     for (int i = 0; i < case_count; i++) {
         char case_id[256];
         char first_id[256];
@@ -189,7 +189,7 @@ int main(void) {
         }
 
         printf(
-            "%s\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%llu\t%llu\t%llu\t%llu\t%llu\t%d\t%.17g\n",
+            "%s\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%llu\t%llu\t%llu\t%llu\t%llu\t%d\t%d\t%d\t%.17g\n",
             case_id,
             (int)status,
             result.first_win_probability,
@@ -207,6 +207,8 @@ int main(void) {
             (unsigned long long)result.heuristic_leaves,
             (unsigned long long)result.timeout_leaves,
             (unsigned long long)result.expanded_children,
+            result.completed_depth,
+            result.max_depth_started,
             result.timed_out ? 1 : 0,
             result.elapsed_ms
         );

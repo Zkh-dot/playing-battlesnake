@@ -29,6 +29,8 @@ typedef struct {
     uint64_t heuristic_leaves;
     uint64_t timeout_leaves;
     uint64_t expanded_children;
+    int completed_depth;
+    int max_depth_started;
     bool timed_out;
     double elapsed_ms;
 } CorePositionEvalResult;

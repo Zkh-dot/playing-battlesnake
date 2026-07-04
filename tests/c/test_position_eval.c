@@ -181,6 +181,7 @@ typedef struct {
 
 void CorePositionEvalTestForceTimeout(bool enabled);
 void CorePositionEvalTestForceTimeoutAfterChecks(int checks);
+void CorePositionEvalTestForceTimeoutAtRootDepth(int depth);
 
 double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d);
 double CorePositionEvalTestSolveMatrix2x2WithConfidence(
@@ -229,6 +230,12 @@ static double expected_heuristic_probability(
 
 static double strategy_sum(const double strategy[4]) {
     return strategy[0] + strategy[1] + strategy[2] + strategy[3];
+}
+
+static void assert_strategy_equal(const double left[4], const double right[4]) {
+    for (int i = 0; i < 4; i++) {
+        assert(fabs(left[i] - right[i]) < 1e-12);
+    }
 }
 
 static void test_default_config(void) {
@@ -339,6 +346,8 @@ static void test_depth_one_expands_children(void) {
     assert(result.first_win_probability >= 0.0);
     assert(result.first_win_probability <= 1.0);
     assert(result.confidence == 0.0);
+    assert(result.completed_depth == 1);
+    assert(result.max_depth_started == 1);
     BoardFree(board);
 }
 
@@ -357,6 +366,8 @@ static void test_default_matrix_mode_expands_children(void) {
     assert(result.confidence == 0.0);
     assert(fabs(strategy_sum(result.first_move_probabilities) - 1.0) < 0.000001);
     assert(fabs(strategy_sum(result.second_move_probabilities) - 1.0) < 0.000001);
+    assert(result.completed_depth == 1);
+    assert(result.max_depth_started == 1);
     BoardFree(board);
 }
 
@@ -407,12 +418,16 @@ static void test_forced_timeout_reports_partial_confidence(void) {
     assert(status == CORE_OK);
     assert(result.timed_out == true);
     assert(result.timeout_leaves > 0);
+    /* Depth 1 could not finish, so the result falls back to depth 0. */
+    assert(result.completed_depth == 0);
+    assert(result.max_depth_started == 1);
     assert(result.nodes > 1);
     assert(result.expanded_children > 0);
     assert(result.first_win_probability >= 0.0);
     assert(result.first_win_probability <= 1.0);
-    assert(result.confidence >= 0.0);
-    assert(result.confidence <= 1.0);
+    assert(result.confidence == 0.0);
+    assert(strategy_sum(result.first_move_probabilities) == 0.0);
+    assert(strategy_sum(result.second_move_probabilities) == 0.0);
     assert(result.heuristic_leaves > 0);
     BoardFree(board);
 }
@@ -526,6 +541,76 @@ static void test_heuristic_error_does_not_increment_heuristic_leaves(void) {
     assert(result.expanded_children == 0);
     assert(result.timed_out == false);
     assert(result.elapsed_ms == 0.0);
+    BoardFree(board);
+}
+
+static void test_iterative_deepening_keeps_last_complete_root_policy(void) {
+    Board* board = make_open_duel_board();
+
+    CorePositionEvalConfig baseline_config = CorePositionEvalConfigDefault(1000);
+    baseline_config.max_depth = 1;
+    CorePositionEvalResult baseline;
+    CoreStatus baseline_status = CorePositionEvaluateDuel(
+        board,
+        "first",
+        "second",
+        baseline_config,
+        &baseline
+    );
+    assert(baseline_status == CORE_OK);
+    assert(baseline.completed_depth == 1);
+    assert(baseline.max_depth_started == 1);
+    assert(fabs(strategy_sum(baseline.first_move_probabilities) - 1.0) < 0.000001);
+    assert(fabs(strategy_sum(baseline.second_move_probabilities) - 1.0) < 0.000001);
+
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 3;
+    CorePositionEvalResult result;
+
+    CorePositionEvalTestForceTimeoutAtRootDepth(2);
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+    CorePositionEvalTestForceTimeoutAtRootDepth(-1);
+
+    assert(status == CORE_OK);
+    assert(result.timed_out == true);
+    assert(result.completed_depth == 1);
+    assert(result.max_depth_started == 2);
+    assert(fabs(result.first_win_probability - baseline.first_win_probability) < 1e-12);
+    assert(fabs(result.confidence - baseline.confidence) < 1e-12);
+    assert_strategy_equal(result.first_move_probabilities, baseline.first_move_probabilities);
+    assert_strategy_equal(result.second_move_probabilities, baseline.second_move_probabilities);
+    assert(result.timeout_leaves > 0);
+    assert(result.expanded_children >= baseline.expanded_children);
+    BoardFree(board);
+}
+
+static void test_root_timeout_before_depth_one_returns_depth_zero_heuristic(void) {
+    Board* board = make_open_duel_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 2;
+    CorePositionEvalResult result;
+
+    CorePositionEvalTestForceTimeoutAtRootDepth(1);
+    CoreStatus status = CorePositionEvaluateDuel(board, "first", "second", config, &result);
+    CorePositionEvalTestForceTimeoutAtRootDepth(-1);
+
+    assert(status == CORE_OK);
+    assert(result.timed_out == true);
+    assert(result.completed_depth == 0);
+    assert(result.max_depth_started == 1);
+    assert(result.timeout_leaves > 0);
+    assert(result.heuristic_leaves > 0);
+
+    double expected = expected_heuristic_probability(
+        board,
+        "first",
+        "second",
+        &config.weights
+    );
+    assert(fabs(result.first_win_probability - expected) < 1e-12);
+    assert(result.confidence == 0.0);
+    assert(strategy_sum(result.first_move_probabilities) == 0.0);
+    assert(strategy_sum(result.second_move_probabilities) == 0.0);
     BoardFree(board);
 }
 
@@ -662,6 +747,8 @@ int main(void) {
     test_extreme_weights_stays_finite_and_near_boundary();
     test_non_finite_weight_is_sanitized_to_probability_fallback();
     test_heuristic_error_does_not_increment_heuristic_leaves();
+    test_iterative_deepening_keeps_last_complete_root_policy();
+    test_root_timeout_before_depth_one_returns_depth_zero_heuristic();
     test_matrix_solver_matches_matching_pennies();
     test_matrix_solver_picks_dominant_row();
     test_matrix_solver_returns_mixed_4x4_strategy();

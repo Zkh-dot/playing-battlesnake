@@ -263,6 +263,8 @@ def summarize(
                     "state_correct": "" if state_correct is None else int(state_correct),
                     "confidence": confidence,
                     "nodes": row["nodes"],
+                    "completed_depth": int(row.get("completed_depth", 0)),
+                    "max_depth_started": int(row.get("max_depth_started", 0)),
                     "timed_out": row["timed_out"],
                     "snake0_up": float(row["first_up"]),
                     "snake0_down": float(row["first_down"]),
@@ -299,6 +301,8 @@ def summarize(
                         "top1_hit": int(actual_probability >= best - 1e-12),
                         "regret": best - actual_probability,
                         "nodes": row["nodes"],
+                        "completed_depth": int(row.get("completed_depth", 0)),
+                        "max_depth_started": int(row.get("max_depth_started", 0)),
                         "timed_out": row["timed_out"],
                     }
                 )
@@ -316,6 +320,8 @@ def summarize(
         regrets = [float(row["regret"]) for row in moves]
         winner_probs = [float(row["winner_probability"]) for row in known_roots if row["winner_probability"] != ""]
         confidences = [float(row["confidence"]) for row in roots]
+        completed_depths = [int(row["completed_depth"]) for row in roots]
+        max_depths_started = [int(row["max_depth_started"]) for row in roots]
         late_cutoff = int(max((row["turn"] for row in roots), default=0) * 0.8)
         late_probs = [float(row["winner_probability"]) for row in known_roots if row["winner_probability"] != "" and int(row["turn"]) >= late_cutoff]
         summaries.append(
@@ -329,6 +335,8 @@ def summarize(
                 "avg_winner_probability": sum(winner_probs) / len(winner_probs) if winner_probs else 0.0,
                 "late_avg_winner_probability": sum(late_probs) / len(late_probs) if late_probs else 0.0,
                 "avg_confidence": sum(confidences) / len(confidences) if confidences else 0.0,
+                "avg_completed_depth": sum(completed_depths) / len(completed_depths) if completed_depths else 0.0,
+                "max_depth_started": max(max_depths_started) if max_depths_started else 0,
                 "top1_correct": top1_correct,
                 "support_correct": support_correct,
                 "move_total": len(moves),
