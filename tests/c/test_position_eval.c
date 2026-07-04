@@ -238,6 +238,20 @@ static void assert_strategy_equal(const double left[4], const double right[4]) {
     }
 }
 
+static void assert_results_policy_equal(
+    const CorePositionEvalResult* left,
+    const CorePositionEvalResult* right
+) {
+    assert(left->timed_out == false);
+    assert(right->timed_out == false);
+    assert(left->completed_depth == right->completed_depth);
+    assert(left->max_depth_started == right->max_depth_started);
+    assert(fabs(left->first_win_probability - right->first_win_probability) < 1e-12);
+    assert(fabs(left->confidence - right->confidence) < 1e-12);
+    assert_strategy_equal(left->first_move_probabilities, right->first_move_probabilities);
+    assert_strategy_equal(left->second_move_probabilities, right->second_move_probabilities);
+}
+
 static void test_default_config(void) {
     CorePositionEvalConfig config = CorePositionEvalConfigDefault(7000);
 
@@ -730,6 +744,22 @@ static void test_terminal_second_alive_is_loss(void) {
     BoardFree(board);
 }
 
+static void test_root_policy_is_repeatable_without_timeout(void) {
+    Board* board = make_open_duel_board();
+    CorePositionEvalConfig config = CorePositionEvalConfigDefault(1000);
+    config.max_depth = 2;
+
+    CorePositionEvalResult first;
+    CorePositionEvalResult second;
+    CoreStatus first_status = CorePositionEvaluateDuel(board, "first", "second", config, &first);
+    CoreStatus second_status = CorePositionEvaluateDuel(board, "first", "second", config, &second);
+
+    assert(first_status == CORE_OK);
+    assert(second_status == CORE_OK);
+    assert_results_policy_equal(&first, &second);
+    BoardFree(board);
+}
+
 int main(void) {
     test_default_config();
     test_terminal_first_alive_is_win();
@@ -749,6 +779,7 @@ int main(void) {
     test_heuristic_error_does_not_increment_heuristic_leaves();
     test_iterative_deepening_keeps_last_complete_root_policy();
     test_root_timeout_before_depth_one_returns_depth_zero_heuristic();
+    test_root_policy_is_repeatable_without_timeout();
     test_matrix_solver_matches_matching_pennies();
     test_matrix_solver_picks_dominant_row();
     test_matrix_solver_returns_mixed_4x4_strategy();
