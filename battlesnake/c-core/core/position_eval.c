@@ -77,6 +77,24 @@ typedef enum {
     POSITION_ROOT_INCOMPLETE = 1,
 } PositionRootAttemptStatus;
 
+typedef struct {
+    CoreStatus status;
+    PositionEvalValue value;
+    CorePositionEvalResult stats;
+} PositionRootCellResult;
+
+static void merge_position_eval_stats(
+    CorePositionEvalResult* dst,
+    const CorePositionEvalResult* src
+) {
+    dst->nodes += src->nodes;
+    dst->terminal_leaves += src->terminal_leaves;
+    dst->heuristic_leaves += src->heuristic_leaves;
+    dst->timeout_leaves += src->timeout_leaves;
+    dst->expanded_children += src->expanded_children;
+    dst->timed_out = dst->timed_out || src->timed_out;
+}
+
 static int board_command_moves(const Board* board, const char* snake_id, MoveDirection out_moves[4]) {
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     if (snake == NULL || snake->body_len == 0) {
@@ -1042,6 +1060,68 @@ static CoreStatus evaluate_node(
     return CORE_ERROR;
 }
 
+static CoreStatus evaluate_root_cell(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    MoveDirection first_move,
+    MoveDirection second_move,
+    int root_depth,
+    const PositionEvalContext* parent_context,
+    PositionRootCellResult* out_cell
+) {
+    memset(out_cell, 0, sizeof(*out_cell));
+    out_cell->status = CORE_ERROR;
+
+    CorePositionEvalResult local_result;
+    memset(&local_result, 0, sizeof(local_result));
+
+    PositionEvalContext local_context;
+    memset(&local_context, 0, sizeof(local_context));
+    local_context.timer = parent_context->timer;
+    local_context.config = parent_context->config;
+    local_context.result = &local_result;
+
+    if (position_timed_out(&local_context.timer)) {
+        local_result.timed_out = true;
+        local_result.timeout_leaves++;
+        local_result.heuristic_leaves++;
+        out_cell->stats = local_result;
+        out_cell->value = position_eval_value(0.5, 0.0);
+        out_cell->status = CORE_OK;
+        return CORE_OK;
+    }
+
+    const char* ids[2] = {first_snake_id, second_snake_id};
+    MoveDirection moves[2] = {first_move, second_move};
+    Board* child = BoardCloneAndApply(board, ids, moves, 2);
+    if (child == NULL) {
+        return CORE_ERROR;
+    }
+
+    PositionEvalValue child_value;
+    CoreStatus status = evaluate_node(
+        child,
+        first_snake_id,
+        second_snake_id,
+        root_depth - 1,
+        &local_context,
+        &child_value
+    );
+    BoardFree(child);
+    if (status != CORE_OK) {
+        return status;
+    }
+
+    if (local_result.timeout_leaves == 0) {
+        local_result.expanded_children++;
+    }
+    out_cell->stats = local_result;
+    out_cell->value = child_value;
+    out_cell->status = CORE_OK;
+    return CORE_OK;
+}
+
 static CoreStatus evaluate_root_once(
     const Board* board,
     const char* first_snake_id,
@@ -1090,46 +1170,39 @@ static CoreStatus evaluate_root_once(
     double confidence_matrix[4][4] = {{0.0}};
     double row_strategy[4] = {0.0};
     double col_strategy[4] = {0.0};
-    const char* ids[2] = {first_snake_id, second_snake_id};
-    MoveDirection moves[2];
-    uint64_t timeout_leaves_before = context->result->timeout_leaves;
+    PositionRootCellResult cell_results[4][4];
+    memset(cell_results, 0, sizeof(cell_results));
 
     for (int i = 0; i < first_count; i++) {
         for (int j = 0; j < second_count; j++) {
-            if (position_timed_out(&context->timer)) {
-                context->result->timed_out = true;
-                context->result->timeout_leaves++;
-                context->result->heuristic_leaves++;
-                return CORE_OK;
-            }
-
-            moves[0] = first_moves[i];
-            moves[1] = second_moves[j];
-            Board* child = BoardCloneAndApply(board, ids, moves, 2);
-            if (child == NULL) {
-                return CORE_ERROR;
-            }
-
-            PositionEvalValue child_value;
-            CoreStatus status = evaluate_node(
-                child,
+            CoreStatus cell_status = evaluate_root_cell(
+                board,
                 first_snake_id,
                 second_snake_id,
-                root_depth - 1,
+                first_moves[i],
+                second_moves[j],
+                root_depth,
                 context,
-                &child_value
+                &cell_results[i][j]
             );
-            BoardFree(child);
-            if (status != CORE_OK) {
-                return status;
+            if (cell_status != CORE_OK) {
+                return cell_status;
             }
-            if (context->result->timeout_leaves != timeout_leaves_before) {
+        }
+    }
+
+    for (int i = 0; i < first_count; i++) {
+        for (int j = 0; j < second_count; j++) {
+            PositionRootCellResult* cell = &cell_results[i][j];
+            if (cell->status != CORE_OK) {
+                return CORE_ERROR;
+            }
+            merge_position_eval_stats(context->result, &cell->stats);
+            if (cell->stats.timeout_leaves > 0) {
                 return CORE_OK;
             }
-
-            context->result->expanded_children++;
-            probability_matrix[i][j] = child_value.p;
-            confidence_matrix[i][j] = child_value.confidence;
+            probability_matrix[i][j] = cell->value.p;
+            confidence_matrix[i][j] = cell->value.confidence;
         }
     }
 
