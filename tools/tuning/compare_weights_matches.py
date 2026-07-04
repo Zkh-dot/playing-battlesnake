@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
@@ -126,7 +127,11 @@ def _choose_move(
             weights=weights,
         )
         return str(diagnostics["move"]), False
-    except Exception:
+    except Exception as exc:
+        print(
+            f"move selection failed for {snake_id}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         safe_moves = board.safe_moves(snake_id)
         if safe_moves:
             return safe_moves[0], True

@@ -114,10 +114,16 @@ def _heads_by_snake(frame: dict[str, object]) -> dict[str, Point]:
 def iter_replay_samples(paths: Iterable[Path]) -> Iterator[ReplaySample]:
     for path in paths:
         export = json.loads(path.read_text())
+        if not isinstance(export, dict):
+            continue
+        if "game" not in export or "frames" not in export:
+            continue
         game = export["game"]
+        frames = export["frames"]
+        if not isinstance(game, dict) or not isinstance(frames, list):
+            continue
         game_id = str(export.get("game_id") or game.get("ID", "unknown"))
         split = deterministic_split(game_id)
-        frames = export.get("frames", [])
         for index in range(len(frames) - 1):
             frame = frames[index]
             next_frame = frames[index + 1]

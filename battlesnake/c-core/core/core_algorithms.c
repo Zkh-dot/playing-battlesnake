@@ -1785,6 +1785,11 @@ CoreStatus CoreEvaluateWithWeights(
                 Coord food = board->food[food_index];
                 int my_food_distance = core_manhattan(head, food);
                 int other_food_distance = core_manhattan(other_head, food);
+                /*
+                 * Score each food race separately so the evaluator can reward
+                 * denying contested food while penalizing positions where a
+                 * low-health opponent has cleaner access to another food item.
+                 */
                 if (my_food_distance <= other_food_distance) {
                     score += weights->opponent_low_health_food_denial / (double)(my_food_distance + 1);
                 } else {

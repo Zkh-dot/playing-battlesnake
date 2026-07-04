@@ -106,6 +106,18 @@ class ReplayDatasetTests(unittest.TestCase):
         self.assertEqual(len(samples), 2)
         self.assertEqual(samples[0].game_id, "unknown")
 
+    def test_iter_replay_samples_skips_non_export_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            non_export_path = Path(tmp) / "weights.json"
+            replay_path = Path(tmp) / "game-a.json"
+            non_export_path.write_text(json.dumps({"base": 500.0}))
+            replay_path.write_text(json.dumps(synthetic_export()))
+
+            samples = list(iter_replay_samples([non_export_path, replay_path]))
+
+        self.assertEqual(len(samples), 2)
+        self.assertEqual({sample.game_id for sample in samples}, {"game-a"})
+
     def test_deterministic_split_is_stable_by_game_id(self) -> None:
         split_a = deterministic_split("game-a")
         split_a_again = deterministic_split("game-a")
