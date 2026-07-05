@@ -128,3 +128,25 @@ Notes:
 - The workspace was synced with `rsync -a` excluding `.git`, `.venv`, `build`, `*.so`, and `exports/minimax_parallel`, so the compute node did not reuse the local native extension or local minimax export artifacts.
 - The first system-Python correctness attempt failed before search validation because `pydantic` was missing on the compute node. A remote `.venv` was created, project requirements were installed, both required native builds were repeated inside that `.venv`, and the correctness matrix then passed.
 - No locally kept parallel candidate mode remained to validate on the compute node. The reverted modes (`root_moves`, `pv_root_moves`, `root_replies`, `ply1_tasks`) and skipped `leaf_eval` were intentionally excluded from `--modes`.
+
+## Final ya.sergeiscv.ru Build Verification
+
+- Date: 2026-07-05.
+- Status: done.
+- Host: `ya.sergeiscv.ru` (`compute-vm-4-8-100-ssd-1759320606973`, 4 online CPUs, Intel Xeon Processor Icelake).
+- Remote workspace: `~/playing-battlesnake-2-minimax-final`.
+- Sync rule: `rsync -a` from the final branch excluding `.git`, `.venv`, `build`, `*.so`, and `exports/minimax_parallel`; no local or compute-node native extension was reused.
+- Environment probe: `bash codex-skills/hpc-parallel-c/scripts/hpc_env_probe.sh > /tmp/minimax-ya-hpc-env.txt && cat /tmp/minimax-ya-hpc-env.txt`.
+- Native OpenMP build command: `CFLAGS="-O3 -march=native -mtune=native -DNDEBUG" BATTLESNAKE_ENABLE_MINIMAX_OPENMP=1 python setup.py build_ext --inplace --force` inside the remote `.venv`.
+- Final benchmark mode list: `serial`.
+- Required thread checks: `4` and `8`.
+- Unit tests: `OMP_NUM_THREADS=4 python -B -m unittest discover -v` passed 29 tests; `OMP_NUM_THREADS=8 python -B -m unittest discover -v` passed 29 tests.
+- Smoke command: `python -B tools/benchmark_minimax_parallel_modes.py --modes serial --threads 4,8 --budgets 400 --fixed-depths 6 --scenarios duel_open_7x7,duel_late_game_long_bodies --runs 5 --warmup 1 --out exports/minimax_parallel/ya-final-smoke.jsonl`.
+- Smoke artifact: `exports/minimax_parallel/ya-final-smoke.jsonl` (`4` rows).
+- Environment artifact: `exports/minimax_parallel/ya-env.txt` (`49` lines).
+- Result: final host-native OpenMP build verification passed for the `serial`-only final mode list on both required thread settings.
+
+Notes:
+
+- The remote environment had GCC 12.2.0 and a working OpenMP compile probe (`max_threads=2` under the probe script's explicit `OMP_NUM_THREADS=2` setting).
+- `clang`, `mpicc`, `mpirun`, `perf`, and `nsys` were missing on `ya.sergeiscv.ru`; they were not required for this final OpenMP build, unit-test, or smoke-benchmark verification.
