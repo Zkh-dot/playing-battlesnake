@@ -35,3 +35,8 @@ python3 benchmarks/bench_http_runtime.py --runs 100 --warmup 10 --out benchmarks
 The benchmark compares the native runtime with the development FastAPI app.
 Install `requirements-dev.txt` before running FastAPI comparison benchmarks in a
 fresh environment.
+
+## Runtime Ownership
+
+Production runtime is the native C executable built by `tools/build_native_server.sh`.
+The FastAPI app remains a development comparator for benchmarks and payload behavior checks.
