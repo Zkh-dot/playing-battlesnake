@@ -240,6 +240,59 @@ Notes:
 - The first system-Python correctness attempt failed before search validation because `pydantic` was missing on the compute node. A remote `.venv` was created, project requirements were installed, both required native builds were repeated inside that `.venv`, and the correctness matrix then passed.
 - No locally kept parallel candidate mode remained to validate on the compute node. The reverted modes (`root_moves`, `pv_root_moves`, `root_replies`, `ply1_tasks`) and skipped `leaf_eval` were intentionally excluded from `--modes`.
 
+## Compute Node Candidate Rerun
+
+- Date: 2026-07-05.
+- Status: done after final review request.
+- Host: `scv@192.168.1.6` (`scv-b760mhdvm2`).
+- Clean base: current `HEAD` archive extracted into fresh remote workspaces, with candidate diffs applied only in temporary compute-node copies.
+- Candidate workspaces: `~/duel-minimax-candidate-pv-root-moves` and `~/duel-minimax-candidate-root-moves`.
+- Build command for each workspace: `CFLAGS="-O3 -march=native -mtune=native -DNDEBUG" BATTLESNAKE_ENABLE_MINIMAX_OPENMP=1 ~/playing-battlesnake-2-minimax-parallel/.venv/bin/python setup.py build_ext --inplace --force`.
+- Correctness check: `OMP_NUM_THREADS=4 ... -m unittest tests.test_search_diagnostics -v` passed `22` diagnostics tests for both candidates.
+- Coverage: fixed-depth only, because both candidate implementations only use their parallel path when `fixed_depth > 0`.
+- Matrix: `7` duel scenarios, fixed depths `6,8`, thread counts `1,2,4,8,16`, `runs=15`, `warmup=3`.
+- Artifacts copied back locally: `exports/minimax_parallel/compute-node-candidate-serial-fixed-depth.jsonl`, `compute-node-pv-root-moves-fixed-depth.jsonl`, `compute-node-root-moves-fixed-depth.jsonl`, `compute-node-pv-root-moves-summary.txt`, and `compute-node-root-moves-summary.txt`.
+
+Decision summary:
+
+```text
+pv_root_moves:  all groups decision=revert; best group threads=16 depth=8 best_speedup=1.246, median_speedup=0.815, wins=1, regressions=4.
+root_moves:     all groups decision=revert; best median groups were threads=4 depth=6 median_speedup=1.055 and threads=8 depth=6 median_speedup=1.056, but both still had regressions=2.
+root_moves:     best peak speedup was 1.473 at threads=4 depth=6; the group had wins=4 but failed the keep gate because regressions were nonzero.
+```
+
+Full checker output:
+
+```text
+mode=pv_root_moves decision=revert wins=1 regressions=5 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.059 median_speedup=0.873 best_group=1:400:6
+mode=pv_root_moves decision=revert wins=0 regressions=5 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=0.970 median_speedup=0.788 best_group=1:400:8
+mode=pv_root_moves decision=revert wins=3 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.173 median_speedup=0.930 best_group=2:400:6
+mode=pv_root_moves decision=revert wins=1 regressions=4 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.236 median_speedup=0.829 best_group=2:400:8
+mode=pv_root_moves decision=revert wins=2 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.151 median_speedup=0.931 best_group=4:400:6
+mode=pv_root_moves decision=revert wins=1 regressions=4 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.229 median_speedup=0.828 best_group=4:400:8
+mode=pv_root_moves decision=revert wins=1 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.114 median_speedup=0.928 best_group=8:400:6
+mode=pv_root_moves decision=revert wins=1 regressions=4 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.224 median_speedup=0.832 best_group=8:400:8
+mode=pv_root_moves decision=revert wins=2 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.152 median_speedup=0.907 best_group=16:400:6
+mode=pv_root_moves decision=revert wins=1 regressions=4 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.246 median_speedup=0.815 best_group=16:400:8
+mode=root_moves decision=revert wins=0 regressions=7 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=0.787 median_speedup=0.596 best_group=1:400:6
+mode=root_moves decision=revert wins=0 regressions=7 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=0.800 median_speedup=0.583 best_group=1:400:8
+mode=root_moves decision=revert wins=2 regressions=5 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.116 median_speedup=0.861 best_group=2:400:6
+mode=root_moves decision=revert wins=3 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.125 median_speedup=0.900 best_group=2:400:8
+mode=root_moves decision=revert wins=4 regressions=2 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.473 median_speedup=1.055 best_group=4:400:6
+mode=root_moves decision=revert wins=3 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.428 median_speedup=0.904 best_group=4:400:8
+mode=root_moves decision=revert wins=4 regressions=2 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.465 median_speedup=1.056 best_group=8:400:6
+mode=root_moves decision=revert wins=3 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.416 median_speedup=0.901 best_group=8:400:8
+mode=root_moves decision=revert wins=3 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.420 median_speedup=1.040 best_group=16:400:6
+mode=root_moves decision=revert wins=3 regressions=3 latency_failures=0 correctness_failures=0 missing_baselines=0 best_speedup=1.409 median_speedup=0.910 best_group=16:400:8
+```
+
+Conclusion:
+
+- `root_moves` is the only candidate that looked close on the computation node: depth `6` at `4` and `8` threads had median speedup just above `1.05` and `4` winning scenarios.
+- It still fails the current keep rule because both promising groups had `2` regressions, and depth `8` medians stayed below `1.0`.
+- `pv_root_moves` remains below threshold on median speedup for every measured group.
+- Final branch remains serial-only; this rerun adds evidence but does not change the PR implementation decision.
+
 ## Final ya.sergeiscv.ru Build Verification
 
 - Date: 2026-07-05.
