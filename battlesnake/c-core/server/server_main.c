@@ -199,6 +199,10 @@ int main(void) {
     printf("battlesnake native server listening on 0.0.0.0:%d\n", config.port);
     fflush(stdout);
 
+    /* Single-threaded accept loop: each connection is served to completion
+     * before the next is accepted. Battlesnake plays one game at a time with a
+     * per-move deadline, so this is sufficient. Concurrent games would need a
+     * worker pool here since a slow /move would otherwise block the loop. */
     while (!g_should_stop) {
         int client_fd = accept(listen_fd, NULL, NULL);
         if (client_fd < 0) {

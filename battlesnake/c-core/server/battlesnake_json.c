@@ -1196,6 +1196,13 @@ BsJsonStatus BsParseGameRequest(
         return BS_JSON_MALFORMED;
     }
 
+    /* Callers pass bodies bounded by the HTTP layer, but as a public entry point
+     * guard against a body_len large enough to overflow the `body + body_len`
+     * end pointer used throughout the parser. */
+    if ((uintptr_t)body_len > UINTPTR_MAX - (uintptr_t)body) {
+        return BS_JSON_MALFORMED;
+    }
+
     *out_request = (BsGameRequest){0};
 
     char* default_ruleset = BsArenaStrDup(arena, "standard", strlen("standard"));

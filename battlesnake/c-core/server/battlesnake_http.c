@@ -498,7 +498,11 @@ BsHttpResult BsHandleHttpRequest(
         return bs_write_response(parsed.version, 500, empty_body, response, response_capacity);
     }
 
-    char body[32];
+    /* Longest move payload is {"move":"right"} (16 bytes incl. NUL); the buffer
+     * keeps headroom and any future longer move string is caught as truncation
+     * below, yielding a 500 rather than a silently clipped response. */
+    enum { BS_MOVE_BODY_CAPACITY = 32 };
+    char body[BS_MOVE_BODY_CAPACITY];
     int body_written = snprintf(body, sizeof(body), "{\"move\":\"%s\"}", move_text);
     BsGameRequestFree(&game_request);
     if (body_written < 0 || (size_t)body_written >= sizeof(body)) {
