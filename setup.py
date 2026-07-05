@@ -21,11 +21,15 @@ SOURCE_FILES = [
 ]
 
 
-enable_openmp = os.environ.get("BATTLESNAKE_ENABLE_OPENMP") == "1"
+enable_position_eval_openmp = os.environ.get("BATTLESNAKE_ENABLE_OPENMP") == "1"
+enable_minimax_openmp = os.environ.get("BATTLESNAKE_ENABLE_MINIMAX_OPENMP") == "1"
 extra_compile_args = ["-std=c2x", "-D_POSIX_C_SOURCE=200809L"]
 extra_link_args = []
-if enable_openmp:
+if enable_position_eval_openmp:
     extra_compile_args.extend(["-DCORE_POSITION_EVAL_OPENMP", "-fopenmp"])
+if enable_minimax_openmp:
+    extra_compile_args.extend(["-DCORE_MINIMAX_OPENMP", "-fopenmp"])
+if enable_position_eval_openmp or enable_minimax_openmp:
     extra_link_args.append("-fopenmp")
 
 
