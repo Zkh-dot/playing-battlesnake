@@ -8,6 +8,8 @@
 - Fixed-depth command: `python3 -B tools/benchmark_minimax_parallel_modes.py --modes serial --threads 1 --budgets 400 --fixed-depths 6,8 --runs 15 --warmup 3 --out exports/minimax_parallel/serial-fixed-depth.jsonl`
 - Live-budget command: `python3 -B tools/benchmark_minimax_parallel_modes.py --modes serial --threads 1 --budgets 180,320,400 --fixed-depths 0 --runs 15 --warmup 3 --out exports/minimax_parallel/serial-budget.jsonl`
 - Correctness oracle: fixed-depth serial and parallel modes must match move and score within absolute tolerance `1e-6`.
+- Final harness default: `tools/benchmark_minimax_parallel_modes.py` defaults to `serial` only because all candidate implementations were reverted; rejected artifacts remain in this report for auditability.
+- Decision checker: `tools/check_minimax_parallel_report.py` enforces move, fixed-depth completion depth, and score correctness before any candidate can receive `decision=keep`.
 - Speedup formula: `speedup = serial_elapsed_ms_p50 / candidate_elapsed_ms_p50`.
 - Positive-impact threshold: keep a mode only when speedup is at least `1.05` on at least four duel scenarios, with no correctness failures and live `/move` p95 at or below `450ms`.
 

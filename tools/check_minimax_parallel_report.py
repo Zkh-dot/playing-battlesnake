@@ -57,16 +57,33 @@ def _empty_group() -> dict[str, Any]:
         "wins": set(),
         "regressions": 0,
         "latency_failures": 0,
+        "correctness_failures": 0,
         "missing_baselines": 0,
         "metrics": [],
         "metric_name": "",
     }
 
 
+def has_correctness_failure(
+    row: dict[str, Any],
+    serial: dict[str, Any],
+    score_tolerance: float,
+) -> bool:
+    if str(row["last_move"]) != str(serial["last_move"]):
+        return True
+
+    fixed_depth = int(row["fixed_depth"])
+    if fixed_depth > 0 and float(row["completed_depth_p50"]) != float(serial["completed_depth_p50"]):
+        return True
+
+    return abs(float(row["score_p50"]) - float(serial["score_p50"])) > score_tolerance
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--min-speedup", type=float, default=1.05)
+    parser.add_argument("--score-tolerance", type=float, default=1e-6)
     args = parser.parse_args()
 
     rows = load_rows(args.results)
@@ -95,6 +112,8 @@ def main() -> int:
         scenario = str(row["scenario"])
         fixed_depth = int(row["fixed_depth"])
         candidate_elapsed_p95 = float(row["elapsed_ms_p95"])
+        if has_correctness_failure(row, serial, args.score_tolerance):
+            stats["correctness_failures"] += 1
 
         if fixed_depth > 0:
             candidate_elapsed_p50 = float(row["elapsed_ms_p50"])
@@ -130,6 +149,7 @@ def main() -> int:
         wins = len(stats["wins"])
         regressions = int(stats["regressions"])
         latency_failures = int(stats["latency_failures"])
+        correctness_failures = int(stats["correctness_failures"])
         missing_baselines = int(stats["missing_baselines"])
         metrics = [float(value) for value in stats["metrics"]]
         metric_name = str(stats["metric_name"] or ("speedup" if fixed_depth > 0 else "depth_delta"))
@@ -138,13 +158,15 @@ def main() -> int:
             if wins >= 4
             and regressions == 0
             and latency_failures == 0
+            and correctness_failures == 0
             and missing_baselines == 0
             else "revert"
         )
         print(
             f"mode={mode} decision={decision} wins={wins} "
             f"regressions={regressions} latency_failures={latency_failures} "
-            f"missing_baselines={missing_baselines} best_{metric_name}={max(metrics, default=0.0):.3f} "
+            f"correctness_failures={correctness_failures} missing_baselines={missing_baselines} "
+            f"best_{metric_name}={max(metrics, default=0.0):.3f} "
             f"median_{metric_name}={_median(metrics):.3f} best_group={group_label(group)}"
         )
 

@@ -25,8 +25,9 @@ DUEL_SCENARIOS = [
     "royale_hazard_ring_duel",
 ]
 
-SUPPORTED_MODES = [
-    "serial",
+SUPPORTED_MODES = ["serial"]
+
+EXPERIMENTAL_MODES = [
     "root_moves",
     "pv_root_moves",
     "root_replies",
@@ -174,9 +175,14 @@ def _parse_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
     if any(value is None for value in args.threads + args.budgets + args.fixed_depths):
         parser.error("internal single-case arguments are incomplete")
 
-    unknown_modes = [mode for mode in args.modes if mode not in SUPPORTED_MODES]
-    if unknown_modes:
-        parser.error(f"unknown mode: {unknown_modes[0]}")
+    unsupported_modes = [mode for mode in args.modes if mode not in SUPPORTED_MODES]
+    if unsupported_modes:
+        mode = unsupported_modes[0]
+        parser.error(
+            f"unsupported mode in final branch: {mode}. "
+            "Candidate minimax parallel implementations are not present in this final branch; "
+            "rejected experiments are documented in docs/duel-minimax-parallelization-report.md."
+        )
 
     if args.runs < 1:
         parser.error("--runs must be at least 1")
