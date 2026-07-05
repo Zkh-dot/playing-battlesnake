@@ -52,6 +52,42 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertGreaterEqual(diagnostics["elapsed_ms"], 0)
         self.assertIn(diagnostics["timed_out"], {True, False})
 
+    def test_minimax_diagnostics_accepts_weight_overrides(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        diagnostics = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            time_budget_ms=1000,
+            fixed_depth=1,
+            weights={"base": 999.0},
+        )
+
+        self.assertEqual(set(diagnostics), EXPECTED_DIAGNOSTIC_KEYS)
+        self.assertIn(diagnostics["move"], {"up", "down", "left", "right"})
+
+    def test_opponent_pressure_weight_overrides_change_score(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        default = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            time_budget_ms=1000,
+            fixed_depth=1,
+        )
+        pressured = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            time_budget_ms=1000,
+            fixed_depth=1,
+            weights={
+                "opponent_reachable_space": 10.0,
+                "territory_delta": 10.0,
+                "opponent_safe_moves": 50.0,
+                "opponent_low_health_food_denial": 10.0,
+            },
+        )
+
+        self.assertNotEqual(pressured["score"], default["score"])
+
     def test_fixed_depth_diagnostics_are_deterministic_enough_for_regression_tests(self) -> None:
         scenario = get_scenario("duel_open_7x7")
         first = minimax_diagnostics(
