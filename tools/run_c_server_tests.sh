@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p build/tests
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -Ibattlesnake/c-core \
+  tests/c/test_arena.c \
+  battlesnake/c-core/server/arena.c \
+  -o build/tests/test_arena
+
+build/tests/test_arena
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -Ibattlesnake/c-core \
+  tests/c/test_battlesnake_json.c \
+  battlesnake/c-core/server/arena.c \
+  battlesnake/c-core/server/battlesnake_json.c \
+  battlesnake/c-core/datatypes/coord.c \
+  battlesnake/c-core/datatypes/snake.c \
+  battlesnake/c-core/datatypes/board.c \
+  -o build/tests/test_battlesnake_json
+
+build/tests/test_battlesnake_json
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -Ibattlesnake/c-core \
+  tests/c/test_battlesnake_strategy.c \
+  battlesnake/c-core/server/battlesnake_strategy.c \
+  battlesnake/c-core/datatypes/coord.c \
+  battlesnake/c-core/datatypes/snake.c \
+  battlesnake/c-core/datatypes/board.c \
+  battlesnake/c-core/core/core_algorithms.c \
+  battlesnake/c-core/core/position_eval.c \
+  battlesnake/c-core/core/search_stats.c \
+  battlesnake/c-core/core/search_workspace.c \
+  battlesnake/c-core/core/search_state.c \
+  battlesnake/c-core/core/zobrist.c \
+  battlesnake/c-core/core/transposition_table.c \
+  -lm \
+  -o build/tests/test_battlesnake_strategy
+
+build/tests/test_battlesnake_strategy
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -Ibattlesnake/c-core \
+  tests/c/test_battlesnake_http.c \
+  battlesnake/c-core/server/arena.c \
+  battlesnake/c-core/server/battlesnake_json.c \
+  battlesnake/c-core/server/battlesnake_strategy.c \
+  battlesnake/c-core/server/battlesnake_http.c \
+  battlesnake/c-core/datatypes/coord.c \
+  battlesnake/c-core/datatypes/snake.c \
+  battlesnake/c-core/datatypes/board.c \
+  battlesnake/c-core/core/core_algorithms.c \
+  battlesnake/c-core/core/position_eval.c \
+  battlesnake/c-core/core/search_stats.c \
+  battlesnake/c-core/core/search_workspace.c \
+  battlesnake/c-core/core/search_state.c \
+  battlesnake/c-core/core/zobrist.c \
+  battlesnake/c-core/core/transposition_table.c \
+  -lm \
+  -o build/tests/test_battlesnake_http
+
+build/tests/test_battlesnake_http

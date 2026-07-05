@@ -1,3 +1,10 @@
+"""Build metadata for the Python extension.
+
+The native HTTP server is built by tools/build_native_server.sh from the same
+C core files plus battlesnake/c-core/server/*.c. Keep SOURCE_FILES limited to
+the CPython extension sources so `pip install .` continues to work.
+"""
+
 import os
 
 from setuptools import Extension, setup
@@ -54,7 +61,7 @@ setup(
     version="0.1.0",
     packages=["battlesnake", "battlesnake.core", "battlesnake.strategies", "battlesnake.training"],
     package_data={"battlesnake": ["*.pyi", "py.typed"]},
-    install_requires=["fastapi", "uvicorn", "pydantic"],
+    install_requires=[],
     python_requires=">=3.11",
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExt},
