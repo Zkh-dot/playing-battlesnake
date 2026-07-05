@@ -1,0 +1,22 @@
+{
+  "adjacent_equal_or_longer_penalty": 120.0,
+  "adjacent_shorter_bonus": 45.0,
+  "base": 500.0,
+  "center": 2.0,
+  "food": 55.0,
+  "hazard": 25.0,
+  "hazard_damage": 1.0,
+  "health": 0.7,
+  "length": 18.0,
+  "length_advantage": 5.0,
+  "low_health_food": 120.0,
+  "low_health_threshold": 35.0,
+  "opponent_low_health_food_denial": 0.9747950851938381,
+  "opponent_reachable_space": 0.41419471771599625,
+  "opponent_safe_moves": 71.36454529204393,
+  "reachable_space": 4.0,
+  "safe_moves": 35.0,
+  "terminal_loss": -1000000.0,
+  "terminal_win": 1000000.0,
+  "territory_delta": 1.8353673505986556
+}
