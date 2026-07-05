@@ -9,6 +9,10 @@
 #include <time.h>
 #include <string.h>
 
+#ifdef CORE_POSITION_EVAL_OPENMP
+#include <omp.h>
+#endif
+
 static double clamp01(double value) {
     if (!isfinite(value)) {
         return 0.5;
@@ -71,6 +75,29 @@ typedef struct {
     CorePositionEvalConfig config;
     CorePositionEvalResult* result;
 } PositionEvalContext;
+
+typedef enum {
+    POSITION_ROOT_COMPLETE = 0,
+    POSITION_ROOT_INCOMPLETE = 1,
+} PositionRootAttemptStatus;
+
+typedef struct {
+    CoreStatus status;
+    PositionEvalValue value;
+    CorePositionEvalResult stats;
+} PositionRootCellResult;
+
+static void merge_position_eval_stats(
+    CorePositionEvalResult* dst,
+    const CorePositionEvalResult* src
+) {
+    dst->nodes += src->nodes;
+    dst->terminal_leaves += src->terminal_leaves;
+    dst->heuristic_leaves += src->heuristic_leaves;
+    dst->timeout_leaves += src->timeout_leaves;
+    dst->expanded_children += src->expanded_children;
+    dst->timed_out = dst->timed_out || src->timed_out;
+}
 
 static int board_command_moves(const Board* board, const char* snake_id, MoveDirection out_moves[4]) {
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
@@ -139,6 +166,7 @@ static bool evaluate_no_command_terminal(
 #ifdef CORE_POSITION_EVAL_TESTING
 static bool position_eval_test_force_timeout = false;
 static int position_eval_test_force_timeout_after_checks = -1;
+static int position_eval_test_force_timeout_at_root_depth = -1;
 #endif
 
 static CoreStatus position_fill_timeout_matrix(
@@ -684,6 +712,47 @@ static CoreStatus position_fill_timeout_matrix(
     return CORE_OK;
 }
 
+static double backup_root_matrix(
+    PositionEvalContext* context,
+    double probability_matrix[4][4],
+    double confidence_matrix[4][4],
+    int first_count,
+    int second_count,
+    double row_strategy[4],
+    double col_strategy[4],
+    double* out_confidence
+) {
+    if (context->config.decision_mode == CORE_POSITION_DECISION_PURE_MINIMAX) {
+        double value = pure_matrix_value_with_confidence(
+            probability_matrix,
+            confidence_matrix,
+            first_count,
+            second_count,
+            row_strategy,
+            col_strategy,
+            NULL
+        );
+        double confidence = 0.0;
+        for (int i = 0; i < first_count; i++) {
+            for (int j = 0; j < second_count; j++) {
+                confidence += row_strategy[i] * col_strategy[j] * confidence_matrix[i][j];
+            }
+        }
+        *out_confidence = confidence;
+        return value;
+    }
+
+    return solve_zero_sum_matrix_with_confidence(
+        probability_matrix,
+        confidence_matrix,
+        first_count,
+        second_count,
+        row_strategy,
+        col_strategy,
+        out_confidence
+    );
+}
+
 static CoreStatus evaluate_node_pure_minimax(
     const Board* board,
     const char* first_snake_id,
@@ -995,6 +1064,271 @@ static CoreStatus evaluate_node(
     return CORE_ERROR;
 }
 
+static CoreStatus evaluate_root_cell(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    MoveDirection first_move,
+    MoveDirection second_move,
+    int root_depth,
+    const PositionEvalContext* parent_context,
+    PositionRootCellResult* out_cell
+) {
+    memset(out_cell, 0, sizeof(*out_cell));
+    out_cell->status = CORE_ERROR;
+
+    CorePositionEvalResult local_result;
+    memset(&local_result, 0, sizeof(local_result));
+
+    PositionEvalContext local_context;
+    memset(&local_context, 0, sizeof(local_context));
+    local_context.timer = parent_context->timer;
+    local_context.config = parent_context->config;
+    local_context.result = &local_result;
+
+    if (position_timed_out(&local_context.timer)) {
+        local_result.timed_out = true;
+        local_result.timeout_leaves++;
+        local_result.heuristic_leaves++;
+        out_cell->stats = local_result;
+        out_cell->value = position_eval_value(0.5, 0.0);
+        out_cell->status = CORE_OK;
+        return CORE_OK;
+    }
+
+    const char* ids[2] = {first_snake_id, second_snake_id};
+    MoveDirection moves[2] = {first_move, second_move};
+    Board* child = BoardCloneAndApply(board, ids, moves, 2);
+    if (child == NULL) {
+        return CORE_ERROR;
+    }
+
+    PositionEvalValue child_value;
+    CoreStatus status = evaluate_node(
+        child,
+        first_snake_id,
+        second_snake_id,
+        root_depth - 1,
+        &local_context,
+        &child_value
+    );
+    BoardFree(child);
+    if (status != CORE_OK) {
+        return status;
+    }
+
+    if (local_result.timeout_leaves == 0) {
+        local_result.expanded_children++;
+    }
+    out_cell->stats = local_result;
+    out_cell->value = child_value;
+    out_cell->status = CORE_OK;
+    return CORE_OK;
+}
+
+static bool root_parallel_enabled(void) {
+#ifndef CORE_POSITION_EVAL_OPENMP
+    return false;
+#else
+#ifdef CORE_POSITION_EVAL_TESTING
+    if (position_eval_test_force_timeout || position_eval_test_force_timeout_after_checks >= 0) {
+        return false;
+    }
+#endif
+    return true;
+#endif
+}
+
+static CoreStatus evaluate_root_once(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    int root_depth,
+    PositionEvalContext* context,
+    PositionEvalValue* out_value,
+    PositionRootAttemptStatus* out_attempt_status
+) {
+    *out_attempt_status = POSITION_ROOT_INCOMPLETE;
+
+#ifdef CORE_POSITION_EVAL_TESTING
+    if (position_eval_test_force_timeout_at_root_depth == root_depth) {
+        context->result->timed_out = true;
+        context->result->timeout_leaves++;
+        context->result->heuristic_leaves++;
+        return CORE_OK;
+    }
+#endif
+
+    if (root_depth <= 0) {
+        CoreStatus status = evaluate_node(
+            board,
+            first_snake_id,
+            second_snake_id,
+            0,
+            context,
+            out_value
+        );
+        if (status == CORE_OK) {
+            *out_attempt_status = POSITION_ROOT_COMPLETE;
+        }
+        return status;
+    }
+
+    MoveDirection first_moves[4];
+    MoveDirection second_moves[4];
+    int first_count = board_command_moves(board, first_snake_id, first_moves);
+    int second_count = board_command_moves(board, second_snake_id, second_moves);
+    if (evaluate_no_command_terminal(first_count, second_count, context, out_value)) {
+        *out_attempt_status = POSITION_ROOT_COMPLETE;
+        return CORE_OK;
+    }
+
+    double probability_matrix[4][4] = {{0.0}};
+    double confidence_matrix[4][4] = {{0.0}};
+    double row_strategy[4] = {0.0};
+    double col_strategy[4] = {0.0};
+    PositionRootCellResult cell_results[4][4];
+    memset(cell_results, 0, sizeof(cell_results));
+
+    if (root_parallel_enabled()) {
+#ifdef CORE_POSITION_EVAL_OPENMP
+        #pragma omp parallel for collapse(2) schedule(dynamic, 1) default(none) \
+            shared(cell_results, board, first_snake_id, second_snake_id, first_moves, second_moves, first_count, second_count, root_depth, context)
+        for (int i = 0; i < first_count; i++) {
+            for (int j = 0; j < second_count; j++) {
+                (void)evaluate_root_cell(
+                    board,
+                    first_snake_id,
+                    second_snake_id,
+                    first_moves[i],
+                    second_moves[j],
+                    root_depth,
+                    context,
+                    &cell_results[i][j]
+                );
+            }
+        }
+#endif
+    } else {
+        for (int i = 0; i < first_count; i++) {
+            for (int j = 0; j < second_count; j++) {
+                CoreStatus cell_status = evaluate_root_cell(
+                    board,
+                    first_snake_id,
+                    second_snake_id,
+                    first_moves[i],
+                    second_moves[j],
+                    root_depth,
+                    context,
+                    &cell_results[i][j]
+                );
+                if (cell_status != CORE_OK) {
+                    return cell_status;
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < first_count; i++) {
+        for (int j = 0; j < second_count; j++) {
+            PositionRootCellResult* cell = &cell_results[i][j];
+            if (cell->status != CORE_OK) {
+                return CORE_ERROR;
+            }
+            merge_position_eval_stats(context->result, &cell->stats);
+            if (cell->stats.timeout_leaves > 0) {
+                return CORE_OK;
+            }
+            probability_matrix[i][j] = cell->value.p;
+            confidence_matrix[i][j] = cell->value.confidence;
+        }
+    }
+
+    double confidence = 0.0;
+    double value = backup_root_matrix(
+        context,
+        probability_matrix,
+        confidence_matrix,
+        first_count,
+        second_count,
+        row_strategy,
+        col_strategy,
+        &confidence
+    );
+
+    *out_value = position_eval_value(clamp01(value), clamp01(confidence));
+    copy_strategy_by_moves(first_moves, row_strategy, first_count, out_value->first_strategy);
+    copy_strategy_by_moves(second_moves, col_strategy, second_count, out_value->second_strategy);
+    *out_attempt_status = POSITION_ROOT_COMPLETE;
+    return CORE_OK;
+}
+
+static CoreStatus evaluate_root_iterative(
+    const Board* board,
+    const char* first_snake_id,
+    const char* second_snake_id,
+    PositionEvalContext* context,
+    PositionEvalValue* out_value
+) {
+    PositionEvalValue best_complete = position_eval_value(0.5, 0.0);
+    PositionRootAttemptStatus depth_zero_status = POSITION_ROOT_INCOMPLETE;
+    CoreStatus status = evaluate_root_once(
+        board,
+        first_snake_id,
+        second_snake_id,
+        0,
+        context,
+        &best_complete,
+        &depth_zero_status
+    );
+    if (status != CORE_OK) {
+        return status;
+    }
+    if (depth_zero_status != POSITION_ROOT_COMPLETE) {
+        *out_value = best_complete;
+        return CORE_OK;
+    }
+    context->result->completed_depth = 0;
+
+    if (context->config.max_depth <= 0) {
+        *out_value = best_complete;
+        return CORE_OK;
+    }
+
+    for (int depth = 1; depth <= context->config.max_depth; depth++) {
+        context->result->max_depth_started = depth;
+        PositionEvalValue candidate = position_eval_value(0.5, 0.0);
+        PositionRootAttemptStatus attempt_status = POSITION_ROOT_INCOMPLETE;
+        uint64_t timeout_leaves_before = context->result->timeout_leaves;
+
+        status = evaluate_root_once(
+            board,
+            first_snake_id,
+            second_snake_id,
+            depth,
+            context,
+            &candidate,
+            &attempt_status
+        );
+        if (status != CORE_OK) {
+            return status;
+        }
+
+        if (
+            attempt_status != POSITION_ROOT_COMPLETE ||
+            context->result->timeout_leaves != timeout_leaves_before
+        ) {
+            break;
+        }
+
+        best_complete = candidate;
+        context->result->completed_depth = depth;
+    }
+
+    *out_value = best_complete;
+    return CORE_OK;
+}
+
 #ifdef CORE_POSITION_EVAL_TESTING
 typedef struct {
     double probability;
@@ -1015,6 +1349,10 @@ void CorePositionEvalTestForceTimeout(bool enabled) {
 void CorePositionEvalTestForceTimeoutAfterChecks(int checks) {
     position_eval_test_force_timeout = false;
     position_eval_test_force_timeout_after_checks = checks < 0 ? -1 : checks;
+}
+
+void CorePositionEvalTestForceTimeoutAtRootDepth(int depth) {
+    position_eval_test_force_timeout_at_root_depth = depth;
 }
 
 double CorePositionEvalTestSolveMatrix2x2(double a, double b, double c, double d) {
@@ -1198,11 +1536,10 @@ CoreStatus CorePositionEvaluateDuel(
     context.result = out_result;
 
     PositionEvalValue value;
-    CoreStatus status = evaluate_node(
+    CoreStatus status = evaluate_root_iterative(
         board,
         first_snake_id,
         second_snake_id,
-        config.max_depth,
         &context,
         &value
     );
