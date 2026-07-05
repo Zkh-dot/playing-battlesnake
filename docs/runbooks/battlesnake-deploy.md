@@ -8,12 +8,34 @@
 - Container: `playing-battlesnake`
 - Local service port: `8121`
 - Container port: `8000`
-- Current image pattern: `playing-battlesnake:icelake-native-<timestamp-or-commit>`
-- CPU target: server-local `-march=native -mtune=native`
-- Process priority: `nice -n -5`
+- Runtime process: `/app/battlesnake-server`
+- Current image pattern: `playing-battlesnake:native-<timestamp-or-commit>`
 
 Port `8120` is already used by the MTG backend. Keep Battlesnake on `8121`
 unless that service is intentionally moved.
+
+## Native Runtime
+
+The deployed container runs `/app/battlesnake-server`.
+
+Required environment:
+
+```text
+BATTLESNAKE_PORT=8000
+BATTLESNAKE_SEARCH_BUDGET_MS=400
+```
+
+Container-local health check:
+
+```bash
+curl -sS http://127.0.0.1:8000/
+```
+
+Expected response:
+
+```json
+{"apiversion":"1","author":"codex","color":"#2563eb","head":"default","tail":"default","version":"0.1.0-native"}
+```
 
 ## Status Checks
 
@@ -39,22 +61,19 @@ curl -fsS https://ya.sergeiscv.ru/snake/
 Expected response:
 
 ```json
-{"apiversion":"1","author":"codex","color":"#2563eb","head":"default","tail":"default","version":"0.1.0"}
+{"apiversion":"1","author":"codex","color":"#2563eb","head":"default","tail":"default","version":"0.1.0-native"}
 ```
 
-## Rebuild For Server CPU
+## Rebuild Native Image
 
-Build on `ya.sergeiscv.ru`, not locally. The native C extension should be
-compiled on the target CPU.
+Build on `ya.sergeiscv.ru`.
 
 ```bash
 cd ~/deploy/playing-battlesnake
 
-TAG=playing-battlesnake:icelake-native-$(date +%Y%m%d-%H%M%S)
+TAG=playing-battlesnake:native-$(date +%Y%m%d-%H%M%S)
 
-docker build -f battlesnake/Dockerfile \
-  --build-arg CFLAGS="-O3 -march=native -mtune=native -DNDEBUG" \
-  -t "$TAG" .
+docker build -f battlesnake/Dockerfile -t "$TAG" .
 ```
 
 ## Restart Container
@@ -67,37 +86,20 @@ docker rm -f playing-battlesnake
 docker run -d \
   --name playing-battlesnake \
   --restart unless-stopped \
-  --cap-add SYS_NICE \
-  --cpu-shares 2048 \
+  -e BATTLESNAKE_PORT=8000 \
+  -e BATTLESNAKE_SEARCH_BUDGET_MS=400 \
   -p 0.0.0.0:8121:8000 \
   "$TAG"
 ```
 
-`--cap-add SYS_NICE` is required so `nice -n -5` can actually apply inside the
-container. `--cpu-shares 2048` gives the container a higher relative CPU share
-when the host is under contention.
-
-## Verify Priority
+## Verify Native Process
 
 ```bash
 pid=$(docker inspect -f '{{.State.Pid}}' playing-battlesnake)
-ps -o pid,ni,pri,comm,args -p "$pid"
+ps -o pid,comm,args -p "$pid"
 ```
 
-Expected: `NI` is `-5` for the `uvicorn` process.
-
-## Verify Native Extension
-
-```bash
-docker exec playing-battlesnake python -c \
-  "import battlesnake.battlesnake_native as n; print(n.__file__)"
-```
-
-Expected: path ends with a compiled `.so`, for example:
-
-```text
-/usr/local/lib/python3.11/site-packages/battlesnake/battlesnake_native.cpython-311-x86_64-linux-gnu.so
-```
+Expected: command includes `/app/battlesnake-server`.
 
 ## API Smoke Test
 
@@ -114,7 +116,8 @@ Expected response is a legal move:
 ```
 
 The exact move can change as strategy logic changes. The important check is a
-successful JSON response with a `move` field.
+successful JSON response with a `move` field containing `up`, `down`, `left`,
+or `right`.
 
 ## Nginx Route
 
@@ -164,8 +167,8 @@ docker rm -f playing-battlesnake
 docker run -d \
   --name playing-battlesnake \
   --restart unless-stopped \
-  --cap-add SYS_NICE \
-  --cpu-shares 2048 \
+  -e BATTLESNAKE_PORT=8000 \
+  -e BATTLESNAKE_SEARCH_BUDGET_MS=400 \
   -p 0.0.0.0:8121:8000 \
   playing-battlesnake:OLD_TAG
 ```

@@ -50,7 +50,7 @@ setup(
     version="0.1.0",
     packages=["battlesnake", "battlesnake.core", "battlesnake.strategies", "battlesnake.training"],
     package_data={"battlesnake": ["*.pyi", "py.typed"]},
-    install_requires=["fastapi", "uvicorn", "pydantic"],
+    install_requires=[],
     python_requires=">=3.11",
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExt},
