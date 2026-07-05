@@ -329,6 +329,35 @@ static PyObject* py_voronoi_territory(PyObject* self, PyObject* args) {
     return result;
 }
 
+static int parse_parallel_mode(const char* value, CoreSearchParallelMode* out_mode) {
+    if (value == NULL || strcmp(value, "serial") == 0) {
+        *out_mode = CORE_SEARCH_PARALLEL_SERIAL;
+        return 0;
+    }
+    if (strcmp(value, "root_moves") == 0) {
+        *out_mode = CORE_SEARCH_PARALLEL_ROOT_MOVES;
+        return 0;
+    }
+    if (strcmp(value, "pv_root_moves") == 0) {
+        *out_mode = CORE_SEARCH_PARALLEL_PV_ROOT_MOVES;
+        return 0;
+    }
+    if (strcmp(value, "root_replies") == 0) {
+        *out_mode = CORE_SEARCH_PARALLEL_ROOT_REPLIES;
+        return 0;
+    }
+    if (strcmp(value, "ply1_tasks") == 0) {
+        *out_mode = CORE_SEARCH_PARALLEL_PLY1_TASKS;
+        return 0;
+    }
+    if (strcmp(value, "leaf_eval") == 0) {
+        *out_mode = CORE_SEARCH_PARALLEL_LEAF_EVAL;
+        return 0;
+    }
+    PyErr_Format(PyExc_ValueError, "unknown minimax parallel_mode: %s", value);
+    return -1;
+}
+
 static PyObject* py_minimax_move(PyObject* self, PyObject* args, PyObject* kwds) {
     (void)self;
     static char* kwlist[] = {"board", "snake_id", "time_budget_ms", "weights", NULL};
@@ -379,6 +408,7 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         "enable_move_ordering",
         "enable_make_unmake",
         "weights",
+        "parallel_mode",
         NULL,
     };
     PyObject* board_obj = NULL;
@@ -389,10 +419,11 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     int enable_tt = 1;
     int enable_move_ordering = 1;
     int enable_make_unmake = 1;
+    const char* parallel_mode = "serial";
     if (!PyArg_ParseTupleAndKeywords(
             args,
             kwds,
-            "Os|iiiiiO",
+            "Os|iiiiiOs",
             kwlist,
             &board_obj,
             &snake_id,
@@ -401,7 +432,8 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
             &enable_tt,
             &enable_move_ordering,
             &enable_make_unmake,
-            &weights_obj
+            &weights_obj,
+            &parallel_mode
         )) {
         return NULL;
     }
@@ -420,6 +452,9 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     config.enable_tt = enable_tt != 0;
     config.enable_move_ordering = enable_move_ordering != 0;
     config.enable_make_unmake = enable_make_unmake != 0;
+    if (parse_parallel_mode(parallel_mode, &config.parallel_mode) < 0) {
+        return NULL;
+    }
     if (parse_evaluation_weights(weights_obj, &config.weights) < 0) {
         return NULL;
     }
@@ -439,6 +474,8 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     if (dict_set_string(result, "move", MoveDirectionToString(stats.move)) < 0 ||
         dict_set_double(result, "score", stats.score) < 0 ||
         dict_set_double(result, "elapsed_ms", stats.elapsed_ms) < 0 ||
+        dict_set_int(result, "parallel_mode", stats.parallel_mode) < 0 ||
+        dict_set_int(result, "parallel_workers_used", stats.parallel_workers_used) < 0 ||
         dict_set_int(result, "completed_depth", stats.completed_depth) < 0 ||
         dict_set_int(result, "max_depth_started", stats.max_depth_started) < 0 ||
         dict_set_bool(result, "timed_out", stats.timed_out) < 0 ||

@@ -7,6 +7,15 @@
 
 #define CORE_SEARCH_MAX_DEPTH 32
 
+typedef enum {
+    CORE_SEARCH_PARALLEL_SERIAL = 0,
+    CORE_SEARCH_PARALLEL_ROOT_MOVES = 1,
+    CORE_SEARCH_PARALLEL_PV_ROOT_MOVES = 2,
+    CORE_SEARCH_PARALLEL_ROOT_REPLIES = 3,
+    CORE_SEARCH_PARALLEL_PLY1_TASKS = 4,
+    CORE_SEARCH_PARALLEL_LEAF_EVAL = 5,
+} CoreSearchParallelMode;
+
 typedef struct {
     uint64_t nodes;
     uint64_t leaf_evals;
@@ -28,6 +37,8 @@ typedef struct {
     bool timed_out;
     double score;
     double elapsed_ms;
+    int parallel_mode;
+    int parallel_workers_used;
     MoveDirection move;
 } CoreSearchStats;
 
@@ -60,6 +71,7 @@ typedef struct {
     bool enable_tt;
     bool enable_move_ordering;
     bool enable_make_unmake;
+    CoreSearchParallelMode parallel_mode;
     CoreEvaluationWeights weights;
 } CoreSearchConfig;
 
