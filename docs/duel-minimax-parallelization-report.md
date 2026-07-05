@@ -100,3 +100,31 @@ Environment notes:
 ## Results
 
 The following sections are appended after each candidate mode is measured.
+
+## Compute Node Performance Gate
+
+- Date: 2026-07-05
+- Status: done.
+- Host: `scv@192.168.1.6` (`scv-b760mhdvm2`, 24 online CPUs, Intel Core i7-13700K).
+- Remote workspace: `~/playing-battlesnake-2-minimax-parallel`.
+- Final benchmark mode list: `serial` only.
+- Thread counts: `1,2,4,8,16`.
+- Native build flags: `CFLAGS="-O3 -march=native -mtune=native -DNDEBUG"`.
+- Serial build command: `CFLAGS="-O3 -march=native -mtune=native -DNDEBUG" .venv/bin/python setup.py build_ext --inplace --force`.
+- OpenMP build command: `CFLAGS="-O3 -march=native -mtune=native -DNDEBUG" BATTLESNAKE_ENABLE_MINIMAX_OPENMP=1 .venv/bin/python setup.py build_ext --inplace --force`.
+- Correctness matrix: `OMP_NUM_THREADS=1`, `2`, and `4` with `.venv/bin/python -B -m unittest discover -v`; each run passed 29 tests.
+- Fixed-depth performance command: `.venv/bin/python -B tools/benchmark_minimax_parallel_modes.py --modes serial --threads 1,2,4,8,16 --budgets 400 --fixed-depths 6,8 --runs 15 --warmup 3 --out exports/minimax_parallel/compute-node-fixed-depth.jsonl`.
+- Live-budget performance command: `.venv/bin/python -B tools/benchmark_minimax_parallel_modes.py --modes serial --threads 1,2,4,8,16 --budgets 180,320,400 --fixed-depths 0 --runs 15 --warmup 3 --out exports/minimax_parallel/compute-node-budget.jsonl`.
+- Decision checker: `.venv/bin/python -B tools/check_minimax_parallel_report.py --results ...` printed no lines for both compute-node artifacts, which is expected because the final mode list is serial-only and there are no candidate rows.
+
+Compute-node artifacts copied back locally:
+
+- `exports/minimax_parallel/compute-node-fixed-depth.jsonl` (`70` rows).
+- `exports/minimax_parallel/compute-node-budget.jsonl` (`105` rows).
+- `exports/minimax_parallel/compute-node-env.txt` (`59` lines).
+
+Notes:
+
+- The workspace was synced with `rsync -a` excluding `.git`, `.venv`, `build`, `*.so`, and `exports/minimax_parallel`, so the compute node did not reuse the local native extension or local minimax export artifacts.
+- The first system-Python correctness attempt failed before search validation because `pydantic` was missing on the compute node. A remote `.venv` was created, project requirements were installed, both required native builds were repeated inside that `.venv`, and the correctness matrix then passed.
+- No locally kept parallel candidate mode remained to validate on the compute node. The reverted modes (`root_moves`, `pv_root_moves`, `root_replies`, `ply1_tasks`) and skipped `leaf_eval` were intentionally excluded from `--modes`.
