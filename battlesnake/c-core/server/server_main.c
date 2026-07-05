@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -20,6 +21,7 @@ typedef struct {
     size_t arena_bytes;
     size_t request_bytes;
     size_t response_bytes;
+    int io_timeout_ms;
     BsStrategyConfig strategy;
 } BsServerConfig;
 
@@ -64,82 +66,10 @@ static BsServerConfig config_from_env(void) {
     config.arena_bytes = parse_env_size("BATTLESNAKE_ARENA_BYTES", 262144u, 4096u);
     config.request_bytes = parse_env_size("BATTLESNAKE_MAX_REQUEST_BYTES", 196608u, 4096u);
     config.response_bytes = parse_env_size("BATTLESNAKE_RESPONSE_BYTES", 4096u, 512u);
+    config.io_timeout_ms = parse_env_int("BATTLESNAKE_IO_TIMEOUT_MS", 2000, 1);
     config.strategy = BsStrategyConfigDefault();
     config.strategy.default_time_budget_ms = parse_env_int("BATTLESNAKE_SEARCH_BUDGET_MS", 400, 1);
     return config;
-}
-
-static ssize_t find_header_end(const char* data, size_t len) {
-    if (data == NULL || len < 4u) {
-        return -1;
-    }
-    for (size_t i = 0; i + 3u < len; i++) {
-        if (data[i] == '\r' && data[i + 1u] == '\n' && data[i + 2u] == '\r' && data[i + 3u] == '\n') {
-            return (ssize_t)i;
-        }
-    }
-    return -1;
-}
-
-static int ascii_tolower(int ch) {
-    if (ch >= 'A' && ch <= 'Z') {
-        return ch - 'A' + 'a';
-    }
-    return ch;
-}
-
-static bool case_equal_n(const char* left, size_t left_len, const char* right) {
-    size_t right_len = strlen(right);
-    if (left_len != right_len) {
-        return false;
-    }
-    for (size_t i = 0; i < left_len; i++) {
-        if (ascii_tolower((unsigned char)left[i]) != ascii_tolower((unsigned char)right[i])) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool parse_content_length(const char* request, size_t header_end, size_t* out_length) {
-    size_t line_start = 0;
-    while (line_start + 1u < header_end) {
-        const char* crlf = NULL;
-        for (size_t i = line_start; i + 1u < header_end; i++) {
-            if (request[i] == '\r' && request[i + 1u] == '\n') {
-                crlf = request + i;
-                break;
-            }
-        }
-        if (crlf == NULL) {
-            return false;
-        }
-
-        const char* line = request + line_start;
-        const char* colon = memchr(line, ':', (size_t)(crlf - line));
-        if (colon != NULL && case_equal_n(line, (size_t)(colon - line), "content-length")) {
-            const char* value = colon + 1;
-            while (value < crlf && (*value == ' ' || *value == '\t')) {
-                value++;
-            }
-            size_t parsed = 0;
-            while (value < crlf && *value >= '0' && *value <= '9') {
-                parsed = parsed * 10u + (size_t)(*value - '0');
-                value++;
-            }
-            while (value < crlf && (*value == ' ' || *value == '\t')) {
-                value++;
-            }
-            if (value != crlf) {
-                return false;
-            }
-            *out_length = parsed;
-            return true;
-        }
-
-        line_start = (size_t)(crlf - request) + 2u;
-    }
-    return false;
 }
 
 static bool write_all(int fd, const char* data, size_t len) {
@@ -160,7 +90,20 @@ static bool write_all(int fd, const char* data, size_t len) {
     return true;
 }
 
+static void apply_socket_timeout(int fd, int timeout_ms) {
+    if (timeout_ms <= 0) {
+        return;
+    }
+    struct timeval timeout;
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = (timeout_ms % 1000) * 1000;
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+}
+
 static void handle_connection(int client_fd, const BsServerConfig* config) {
+    apply_socket_timeout(client_fd, config->io_timeout_ms);
+
     char* request = (char*)malloc(config->request_bytes);
     char* response = (char*)malloc(config->response_bytes);
     BsArena arena;
@@ -187,19 +130,11 @@ static void handle_connection(int client_fd, const BsServerConfig* config) {
         used += (size_t)received;
 
         if (!have_target) {
-            ssize_t header_end = find_header_end(request, used);
-            if (header_end >= 0) {
-                size_t content_length = 0;
-                size_t body_offset = (size_t)header_end + 4u;
-                if (parse_content_length(request, (size_t)header_end, &content_length)) {
-                    if (content_length > config->request_bytes || body_offset > config->request_bytes - content_length) {
-                        target_len = used;
-                    } else {
-                        target_len = body_offset + content_length;
-                    }
-                } else {
-                    target_len = body_offset;
-                }
+            size_t total_len = 0;
+            if (BsHttpRequestFrameLength(request, used, &total_len) == BS_HTTP_FRAME_COMPLETE) {
+                /* Requests larger than the buffer stop here; BsHandleHttpRequest
+                 * returns 413/400 for the truncated payload. */
+                target_len = total_len <= config->request_bytes ? total_len : used;
                 have_target = true;
             }
         }
@@ -253,6 +188,7 @@ int main(void) {
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
+    signal(SIGPIPE, SIG_IGN);
 
     int listen_fd = create_listen_socket(config.port);
     if (listen_fd < 0) {

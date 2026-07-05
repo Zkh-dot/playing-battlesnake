@@ -343,6 +343,63 @@ static BsHttpRoute bs_route_from_path(BsHttpSlice path) {
     return BS_HTTP_ROUTE_UNKNOWN;
 }
 
+BsHttpFrameStatus BsHttpRequestFrameLength(
+    const char* data,
+    size_t len,
+    size_t* out_total_len
+) {
+    if (data == 0 || out_total_len == 0) {
+        return BS_HTTP_FRAME_INCOMPLETE;
+    }
+
+    ssize_t header_end = bs_find_header_terminator(data, len);
+    if (header_end < 0) {
+        return BS_HTTP_FRAME_INCOMPLETE;
+    }
+
+    size_t body_offset = (size_t)header_end + 4u;
+    size_t content_length = 0;
+    bool have_content_length = false;
+
+    ssize_t request_line_end = bs_find_crlf(data, len, 0);
+    if (request_line_end >= 0 && request_line_end < header_end) {
+        size_t line_start = (size_t)request_line_end + 2u;
+        while (line_start < (size_t)header_end) {
+            ssize_t line_end = bs_find_crlf(data, len, line_start);
+            if (line_end < 0 || line_end > header_end || (size_t)line_end == line_start) {
+                break;
+            }
+
+            const char* line = data + line_start;
+            const char* line_stop = data + line_end;
+            const char* colon = memchr(line, ':', (size_t)(line_stop - line));
+            if (colon != 0 && colon != line) {
+                BsHttpSlice name = {line, (size_t)(colon - line)};
+                if (bs_case_equal_n(name.start, name.len, "content-length")) {
+                    BsHttpSlice value = bs_trim_ascii_space(colon + 1, line_stop);
+                    size_t parsed = 0;
+                    if (bs_parse_size_t(value, &parsed)) {
+                        content_length = parsed;
+                        have_content_length = true;
+                    }
+                    break;
+                }
+            }
+
+            line_start = (size_t)line_end + 2u;
+        }
+    }
+
+    if (have_content_length && content_length <= SIZE_MAX - body_offset) {
+        *out_total_len = body_offset + content_length;
+    } else if (have_content_length) {
+        *out_total_len = SIZE_MAX;
+    } else {
+        *out_total_len = body_offset;
+    }
+    return BS_HTTP_FRAME_COMPLETE;
+}
+
 BsHttpResult BsHandleHttpRequest(
     const char* request,
     size_t request_len,

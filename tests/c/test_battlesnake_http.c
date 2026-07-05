@@ -1,6 +1,7 @@
 #include "../../battlesnake/c-core/server/battlesnake_http.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -424,7 +425,66 @@ static void test_short_body_mismatch_returns_400(void) {
     BsArenaFree(&arena);
 }
 
+static size_t header_length(const char* request) {
+    const char* terminator = strstr(request, "\r\n\r\n");
+    assert(terminator != 0);
+    return (size_t)(terminator - request) + 4u;
+}
+
+static void test_frame_incomplete_without_terminator(void) {
+    const char* partial = "POST /move HTTP/1.1\r\nHost: x\r\n";
+    size_t total = 12345u;
+    assert(BsHttpRequestFrameLength(partial, strlen(partial), &total) == BS_HTTP_FRAME_INCOMPLETE);
+    assert(total == 12345u);
+}
+
+static void test_frame_get_without_body(void) {
+    const char* request = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    size_t total = 0;
+    assert(BsHttpRequestFrameLength(request, strlen(request), &total) == BS_HTTP_FRAME_COMPLETE);
+    assert(total == strlen(request));
+    assert(total == header_length(request));
+}
+
+static void test_frame_post_reports_full_length(void) {
+    char request[4096];
+    request_from_body_with_headers(request, sizeof(request), "POST", "/move", "Content-Length", 0, MOVE_BODY);
+    size_t total = 0;
+    assert(BsHttpRequestFrameLength(request, strlen(request), &total) == BS_HTTP_FRAME_COMPLETE);
+    assert(total == strlen(request));
+    assert(total == header_length(request) + strlen(MOVE_BODY));
+}
+
+static void test_frame_reports_length_beyond_received_bytes(void) {
+    const char* request =
+        "POST /move HTTP/1.1\r\n"
+        "Host: x\r\n"
+        "content-length: 10\r\n"
+        "\r\n"
+        "{}";
+    size_t total = 0;
+    assert(BsHttpRequestFrameLength(request, strlen(request), &total) == BS_HTTP_FRAME_COMPLETE);
+    assert(total == header_length(request) + 10u);
+    assert(total > strlen(request));
+}
+
+static void test_frame_overflow_content_length_clamps(void) {
+    const char* request =
+        "POST /move HTTP/1.1\r\n"
+        "Host: x\r\n"
+        "Content-Length: 18446744073709551615\r\n"
+        "\r\n";
+    size_t total = 0;
+    assert(BsHttpRequestFrameLength(request, strlen(request), &total) == BS_HTTP_FRAME_COMPLETE);
+    assert(total == SIZE_MAX);
+}
+
 int main(void) {
+    test_frame_incomplete_without_terminator();
+    test_frame_get_without_body();
+    test_frame_post_reports_full_length();
+    test_frame_reports_length_beyond_received_bytes();
+    test_frame_overflow_content_length_clamps();
     test_info_route();
     test_move_route();
     test_unknown_route();
