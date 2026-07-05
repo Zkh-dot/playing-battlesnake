@@ -101,6 +101,115 @@ Environment notes:
 
 The following sections are appended after each candidate mode is measured.
 
+## Local Candidate Measurements
+
+All local candidate artifacts below were measured from temporary experiment
+branches and then reverted after the checker decision stayed negative. The
+production `StrategyDuel` path is unchanged: no mode passed the local,
+compute-node, and final verification gates, so the final benchmark mode list is
+`serial` only.
+
+### root_moves
+
+- Artifact: `exports/minimax_parallel/root-moves.jsonl` (`112` rows).
+- Reverted diff: `/tmp/root-moves-reverted.diff`.
+- Coverage: `7` duel scenarios, fixed depths `6,8`, thread counts `1,2,4,8`.
+- Decision: rejected. Best group reached only `2` winning scenarios and every
+  group had fixed-depth regressions.
+
+```text
+mode=root_moves decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.874 median_speedup=0.697 best_group=1:400:6
+mode=root_moves decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.805 median_speedup=0.583 best_group=1:400:8
+mode=root_moves decision=revert wins=1 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=1.120 median_speedup=0.827 best_group=2:400:6
+mode=root_moves decision=revert wins=0 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=0.990 median_speedup=0.882 best_group=2:400:8
+mode=root_moves decision=revert wins=1 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=1.090 median_speedup=0.815 best_group=4:400:6
+mode=root_moves decision=revert wins=2 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=1.091 median_speedup=0.781 best_group=4:400:8
+mode=root_moves decision=revert wins=0 regressions=6 latency_failures=0 missing_baselines=0 best_speedup=0.926 median_speedup=0.670 best_group=8:400:6
+mode=root_moves decision=revert wins=0 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=1.036 median_speedup=0.725 best_group=8:400:8
+```
+
+### pv_root_moves
+
+- Artifact: `exports/minimax_parallel/pv-root-moves.jsonl` (`112` rows).
+- Reverted diff: `/tmp/pv-root-moves-reverted.diff`.
+- Coverage: `7` duel scenarios, fixed depths `6,8`, thread counts `1,2,4,8`.
+- Decision: rejected. Best group reached only `3` winning scenarios and every
+  group had fixed-depth regressions.
+
+```text
+mode=pv_root_moves decision=revert wins=1 regressions=2 latency_failures=0 missing_baselines=0 best_speedup=1.154 median_speedup=0.950 best_group=1:400:6
+mode=pv_root_moves decision=revert wins=0 regressions=4 latency_failures=0 missing_baselines=0 best_speedup=0.983 median_speedup=0.786 best_group=1:400:8
+mode=pv_root_moves decision=revert wins=3 regressions=4 latency_failures=0 missing_baselines=0 best_speedup=1.106 median_speedup=0.861 best_group=2:400:6
+mode=pv_root_moves decision=revert wins=1 regressions=4 latency_failures=0 missing_baselines=0 best_speedup=1.130 median_speedup=0.877 best_group=2:400:8
+mode=pv_root_moves decision=revert wins=0 regressions=3 latency_failures=0 missing_baselines=0 best_speedup=1.013 median_speedup=0.941 best_group=4:400:6
+mode=pv_root_moves decision=revert wins=1 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=1.114 median_speedup=0.713 best_group=4:400:8
+mode=pv_root_moves decision=revert wins=0 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=1.003 median_speedup=0.754 best_group=8:400:6
+mode=pv_root_moves decision=revert wins=0 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=1.024 median_speedup=0.800 best_group=8:400:8
+```
+
+### root_replies
+
+- Artifact: `exports/minimax_parallel/root-replies.jsonl` (`168` rows).
+- Reverted diff: `/tmp/root-replies-reverted.diff`.
+- Coverage: `7` duel scenarios, fixed depths `5,6,8`, thread counts
+  `1,2,4,8`.
+- Decision: rejected. Best group reached only `1` winning scenario and every
+  group had fixed-depth regressions.
+
+```text
+mode=root_replies decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.776 median_speedup=0.405 best_group=1:400:5
+mode=root_replies decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.543 median_speedup=0.442 best_group=1:400:6
+mode=root_replies decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.564 median_speedup=0.330 best_group=1:400:8
+mode=root_replies decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.892 median_speedup=0.511 best_group=2:400:5
+mode=root_replies decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.763 median_speedup=0.489 best_group=2:400:6
+mode=root_replies decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.710 median_speedup=0.436 best_group=2:400:8
+mode=root_replies decision=revert wins=0 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=0.999 median_speedup=0.751 best_group=4:400:5
+mode=root_replies decision=revert wins=1 regressions=6 latency_failures=0 missing_baselines=0 best_speedup=1.126 median_speedup=0.677 best_group=4:400:6
+mode=root_replies decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.887 median_speedup=0.608 best_group=4:400:8
+mode=root_replies decision=revert wins=0 regressions=5 latency_failures=0 missing_baselines=0 best_speedup=0.938 median_speedup=0.655 best_group=8:400:5
+mode=root_replies decision=revert wins=0 regressions=6 latency_failures=0 missing_baselines=0 best_speedup=0.933 median_speedup=0.755 best_group=8:400:6
+mode=root_replies decision=revert wins=0 regressions=6 latency_failures=0 missing_baselines=0 best_speedup=1.015 median_speedup=0.534 best_group=8:400:8
+```
+
+### ply1_tasks
+
+- Artifact: `exports/minimax_parallel/ply1-tasks.jsonl` (`84` rows).
+- Reverted diff: `/tmp/deep-parallel-experiments-reverted.diff`.
+- Coverage: `7` duel scenarios, fixed depths `6,8`, thread counts `2,4,8`.
+- Decision: rejected. Best group reached only `1` winning scenario and every
+  group had fixed-depth regressions.
+
+```text
+mode=ply1_tasks decision=revert wins=0 regressions=6 latency_failures=0 missing_baselines=0 best_speedup=0.976 median_speedup=0.651 best_group=2:400:6
+mode=ply1_tasks decision=revert wins=0 regressions=7 latency_failures=0 missing_baselines=0 best_speedup=0.787 median_speedup=0.484 best_group=2:400:8
+mode=ply1_tasks decision=revert wins=1 regressions=4 latency_failures=0 missing_baselines=0 best_speedup=1.065 median_speedup=0.748 best_group=4:400:6
+mode=ply1_tasks decision=revert wins=0 regressions=6 latency_failures=0 missing_baselines=0 best_speedup=1.037 median_speedup=0.648 best_group=4:400:8
+mode=ply1_tasks decision=revert wins=0 regressions=4 latency_failures=0 missing_baselines=0 best_speedup=1.031 median_speedup=0.803 best_group=8:400:6
+mode=ply1_tasks decision=revert wins=0 regressions=6 latency_failures=0 missing_baselines=0 best_speedup=1.008 median_speedup=0.538 best_group=8:400:8
+```
+
+## Rejected Experiments
+
+- `root_moves`: rejected and reverted. Artifact
+  `exports/minimax_parallel/root-moves.jsonl`; reverted diff
+  `/tmp/root-moves-reverted.diff`. Reason: insufficient winning scenarios and
+  repeated fixed-depth regressions.
+- `pv_root_moves`: rejected and reverted. Artifact
+  `exports/minimax_parallel/pv-root-moves.jsonl`; reverted diff
+  `/tmp/pv-root-moves-reverted.diff`. Reason: best group still missed the
+  four-scenario keep threshold and had regressions.
+- `root_replies`: rejected and reverted. Artifact
+  `exports/minimax_parallel/root-replies.jsonl`; reverted diff
+  `/tmp/root-replies-reverted.diff`. Reason: broad fixed-depth slowdown across
+  depths and thread counts.
+- `ply1_tasks`: rejected and reverted. Artifact
+  `exports/minimax_parallel/ply1-tasks.jsonl`; reverted diff
+  `/tmp/deep-parallel-experiments-reverted.diff`. Reason: insufficient wins and
+  fixed-depth regressions on every measured group.
+- `leaf_eval`: skipped. No implementation artifact was expected because the
+  current counters and evaluator architecture did not expose a safe coarse leaf
+  batch boundary.
+
 ## Compute Node Performance Gate
 
 - Date: 2026-07-05
