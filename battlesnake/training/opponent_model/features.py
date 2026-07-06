@@ -51,10 +51,8 @@ def _adjacent_shorter_heads(board: Board, snake_id: str, point: Coord) -> int:
     return count
 
 
-def _safe_reachable_space(board: Board, snake_id: str, point: Coord) -> float:
-    if not board.in_bounds(point):
-        return 0.0
-    if not board.is_safe(point, snake_id):
+def _safe_reachable_space(board: Board, snake_id: str, point: Coord, is_safe: bool) -> float:
+    if not is_safe:
         return 0.0
     return float(reachable_space(board, point, snake_id))
 
@@ -76,17 +74,19 @@ def candidate_rows(observation: MoveObservation, board: Board) -> Iterator[Candi
     for move in MOVES:
         point = _candidate_point(board, observation.snake_id, move)
         in_bounds = board.in_bounds(point)
+        is_safe = move in safe_moves
+        snake_rank = 999.0 if observation.snake_rank is None else float(observation.snake_rank)
         features = {
             "candidate_move": move,
             "turn": float(observation.turn),
             "board_width": float(board.width),
             "board_height": float(board.height),
             "alive_snakes": float(observation.alive_snakes),
-            "snake_rank": float(observation.snake_rank or 999),
+            "snake_rank": snake_rank,
             "snake_health": float(snake.health),
             "snake_length": float(snake.length),
             "safe_moves_count": float(len(safe_moves)),
-            "candidate_is_safe": 1.0 if move in safe_moves else 0.0,
+            "candidate_is_safe": 1.0 if is_safe else 0.0,
             "candidate_in_bounds": 1.0 if in_bounds else 0.0,
             "candidate_occupied_without_tails": 1.0 if point in occupied_without_tails else 0.0,
             "candidate_is_food": 1.0 if point in food else 0.0,
@@ -94,7 +94,7 @@ def candidate_rows(observation: MoveObservation, board: Board) -> Iterator[Candi
             "candidate_to_nearest_food": _nearest_distance(point, food),
             "head_to_nearest_food": _nearest_distance(head, food),
             "candidate_center_distance": _center_distance(board, point) if in_bounds else 99.0,
-            "candidate_reachable_space": _safe_reachable_space(board, observation.snake_id, point),
+            "candidate_reachable_space": _safe_reachable_space(board, observation.snake_id, point, is_safe),
             "adjacent_longer_or_equal_heads": float(
                 _adjacent_longer_or_equal_heads(board, observation.snake_id, point)
             ),
