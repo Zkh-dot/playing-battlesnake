@@ -13,7 +13,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-CATEGORICAL_FEATURES = ["feature_candidate_move", "snake_name"]
+CATEGORICAL_FEATURES = ["feature_candidate_move"]
 NUMERIC_FEATURES = [
     "feature_turn",
     "board_width",
