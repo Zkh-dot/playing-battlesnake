@@ -4,7 +4,7 @@ import unittest
 
 from battlesnake.main import select_strategy
 from battlesnake.strategies.duel import StrategyDuel
-from battlesnake.strategies.standard import StrategyStandard
+from battlesnake.strategies.first_safe import StrategyFirstSafe
 from battlesnake.types import BoardState, Coord, Game, GameState, Ruleset, Snake
 
 
@@ -33,8 +33,8 @@ class StrategySelectionTests(unittest.TestCase):
     def test_solo_two_snake_duel_uses_duel_strategy(self) -> None:
         self.assertIsInstance(select_strategy(make_state("solo", 2)), StrategyDuel)
 
-    def test_standard_multi_snake_game_uses_standard_strategy(self) -> None:
-        self.assertIsInstance(select_strategy(make_state("standard", 3)), StrategyStandard)
+    def test_standard_multi_snake_game_uses_default_variant(self) -> None:
+        self.assertIsInstance(select_strategy(make_state("standard", 3)), StrategyFirstSafe)
 
 
 if __name__ == "__main__":

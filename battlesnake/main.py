@@ -1,10 +1,27 @@
-"""FastAPI entrypoint for the Battlesnake bot."""
+"""FastAPI entrypoint for the Battlesnake dev snake.
+
+Production traffic is served by the native C server; this app is the Python
+dev snake used to iterate on Standard FFA strategies. Its identity, strategy
+variant, and timeout margin are controlled via environment variables so arena
+A/B runs can pin exact configurations without code edits:
+
+- ``STRATEGY_VARIANT``: standard FFA strategy variant (default ``first-safe``).
+- ``GIT_REVISION``: revision reported in ``/`` version (auto-detected if unset).
+- ``SNAKE_COLOR`` / ``SNAKE_HEAD`` / ``SNAKE_TAIL``: appearance overrides.
+- ``MOVE_SAFETY_MARGIN_MS``: reserve subtracted from the game timeout before
+  the internal decide deadline triggers the first-safe fallback.
+"""
 
 from __future__ import annotations
 
+import logging
+import os
+import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 if __package__ in (None, ""):
     current_dir = Path(__file__).resolve().parent
@@ -12,19 +29,66 @@ if __package__ in (None, ""):
     sys.path = [path for path in sys.path if Path(path or ".").resolve() != current_dir]
     sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
 from battlesnake.game import Board, board_from_game_state
+from battlesnake.strategies.base import Strategy
 from battlesnake.strategies.constrictor import StrategyConstrictor
 from battlesnake.strategies.duel import StrategyDuel
+from battlesnake.strategies.first_safe import StrategyFirstSafe
 from battlesnake.strategies.royale import StrategyRoyale
-from battlesnake.strategies.standard import StrategyStandard
 from battlesnake.types import GameState, Move
 
-app = FastAPI(title="Battlesnake Bot", version="0.1.0")
+logger = logging.getLogger("battlesnake.dev_snake")
+
+app = FastAPI(title="Battlesnake Dev Snake", version="0.1.0")
+
+BASE_VERSION = "0.1.0-dev"
+DEFAULT_STRATEGY_VARIANT = "first-safe"
+DEFAULT_SNAKE_COLOR = "#f59e0b"
+DEFAULT_GAME_TIMEOUT_MS = 500
+DEFAULT_MOVE_SAFETY_MARGIN_MS = 150
+MIN_MOVE_DEADLINE_MS = 50
+
+# Standard FFA strategy variants selectable via STRATEGY_VARIANT. New dev
+# snake variants register here; duel/royale/constrictor routing is unaffected.
+STANDARD_VARIANTS: dict[str, Callable[[], Strategy]] = {
+    "first-safe": StrategyFirstSafe,
+}
+
+_decide_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="decide")
 
 
-def select_strategy(state: GameState) -> StrategyStandard | StrategyRoyale | StrategyConstrictor | StrategyDuel:
+def _detect_git_revision() -> str:
+    """Return the short git revision from env or the local checkout."""
+
+    env_revision = os.environ.get("GIT_REVISION", "").strip()
+    if env_revision:
+        return env_revision
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+            cwd=Path(__file__).resolve().parent,
+        )
+        return result.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+GIT_REVISION = _detect_git_revision()
+
+
+def strategy_variant() -> str:
+    """Return the configured standard FFA strategy variant name."""
+
+    return os.environ.get("STRATEGY_VARIANT", DEFAULT_STRATEGY_VARIANT).strip() or DEFAULT_STRATEGY_VARIANT
+
+
+def select_strategy(state: GameState) -> Strategy:
     """Select a strategy implementation from the Battlesnake ruleset."""
 
     ruleset_name = state.game.ruleset.name.lower()
@@ -34,7 +98,24 @@ def select_strategy(state: GameState) -> StrategyStandard | StrategyRoyale | Str
         return StrategyConstrictor()
     if ruleset_name in {"solo", "standard"} and len(state.board.snakes) == 2:
         return StrategyDuel()
-    return StrategyStandard()
+
+    variant = strategy_variant()
+    factory = STANDARD_VARIANTS.get(variant)
+    if factory is None:
+        logger.warning("unknown STRATEGY_VARIANT %r, using %r", variant, DEFAULT_STRATEGY_VARIANT)
+        factory = STANDARD_VARIANTS[DEFAULT_STRATEGY_VARIANT]
+    return factory()
+
+
+def move_deadline_ms(game_timeout_ms: int | None) -> int:
+    """Return the internal decide deadline for a game timeout."""
+
+    timeout = game_timeout_ms or DEFAULT_GAME_TIMEOUT_MS
+    try:
+        margin = int(os.environ.get("MOVE_SAFETY_MARGIN_MS", DEFAULT_MOVE_SAFETY_MARGIN_MS))
+    except ValueError:
+        margin = DEFAULT_MOVE_SAFETY_MARGIN_MS
+    return max(MIN_MOVE_DEADLINE_MS, timeout - margin)
 
 
 def fallback_move(board: Board, snake_id: str) -> Move | str:
@@ -52,15 +133,15 @@ def move_response_value(move: Move | str) -> str:
 
 @app.get("/")
 def info() -> dict[str, Any]:
-    """Return Battlesnake appearance metadata."""
+    """Return Battlesnake appearance metadata identifying the dev variant."""
 
     return {
         "apiversion": "1",
         "author": "codex",
-        "color": "#2563eb",
-        "head": "default",
-        "tail": "default",
-        "version": "0.1.0",
+        "color": os.environ.get("SNAKE_COLOR", DEFAULT_SNAKE_COLOR),
+        "head": os.environ.get("SNAKE_HEAD", "default"),
+        "tail": os.environ.get("SNAKE_TAIL", "default"),
+        "version": f"{BASE_VERSION}+{strategy_variant()}.{GIT_REVISION}",
     }
 
 
@@ -73,17 +154,35 @@ def start(state: GameState) -> dict[str, str]:
 
 @app.post("/move")
 def move(state: GameState) -> dict[str, str]:
-    """Select and return a move for the current Battlesnake turn."""
+    """Select and return a move for the current Battlesnake turn.
+
+    The strategy runs in a worker thread under a hard internal deadline; on
+    timeout or any strategy failure the response falls back to the first safe
+    move, so the snake never times out at the game level or loses a turn to a
+    server error.
+    """
 
     board = board_from_game_state(state)
     strategy = select_strategy(state)
+    deadline_ms = move_deadline_ms(state.game.timeout)
 
+    future = _decide_executor.submit(strategy.decide, board, state.you.id)
     try:
-        selected_move = strategy.decide(board, state.you.id)
+        selected_move = future.result(timeout=deadline_ms / 1000.0)
+    except FutureTimeoutError:
+        future.cancel()
+        logger.warning(
+            "decide exceeded %d ms deadline (game=%s turn=%d), using fallback",
+            deadline_ms,
+            state.game.id,
+            state.turn,
+        )
+        selected_move = fallback_move(board, state.you.id)
     except NotImplementedError:
         selected_move = fallback_move(board, state.you.id)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("decide failed (game=%s turn=%d), using fallback", state.game.id, state.turn)
+        selected_move = fallback_move(board, state.you.id)
 
     return {"move": move_response_value(selected_move)}
 
