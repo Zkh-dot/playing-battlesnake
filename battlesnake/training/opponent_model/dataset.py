@@ -33,6 +33,8 @@ def flatten_row(row: CandidateRow, feature_names: list[str]) -> dict[str, object
         "label": row.label,
     }
     for name in feature_names:
+        if name in BASE_COLUMNS:
+            continue
         data[name] = row.features.get(name, "")
     return data
 
@@ -40,8 +42,8 @@ def flatten_row(row: CandidateRow, feature_names: list[str]) -> dict[str, object
 def write_candidate_rows(rows: Iterable[CandidateRow], output_path: Path) -> dict[str, object]:
     materialized = list(rows)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    feature_names = sorted({key for row in materialized for key in row.features})
-    fieldnames = BASE_COLUMNS + [name for name in feature_names if name not in BASE_COLUMNS]
+    feature_names = sorted({key for row in materialized for key in row.features} - set(BASE_COLUMNS))
+    fieldnames = BASE_COLUMNS + feature_names
     with output_path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
