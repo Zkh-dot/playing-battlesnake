@@ -111,6 +111,19 @@ static int core_safe_moves_or_all(const Board* board, const char* snake_id, Move
     return 4;
 }
 
+static int core_command_moves(const Board* board, const char* snake_id, MoveDirection out_moves[4]) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        return 0;
+    }
+
+    out_moves[0] = MOVE_UP;
+    out_moves[1] = MOVE_DOWN;
+    out_moves[2] = MOVE_LEFT;
+    out_moves[3] = MOVE_RIGHT;
+    return 4;
+}
+
 static void core_fill_movement_blocks(const Board* board, const char* snake_id, unsigned char* blocked) {
     for (int i = 0; i < board->snake_count; i++) {
         const Snake* snake = &board->snakes[i];
@@ -1078,10 +1091,13 @@ static CoreStatus core_minimax_search(
             }
             own_move_count = core_safe_moves_or_all(board, snake_id, own_moves);
         } else {
-            if (stats != NULL) {
-                stats->safe_move_calls++;
-            }
-            option_counts[i] = BoardSafeMoves(board, board->snakes[i].id, options[i]);
+            /*
+             * Opponent nodes must model legal commands, not our strategic
+             * "safe move" filter. BoardSafeMoves rejects aggressive legal
+             * moves such as stepping next to a longer head, which hides
+             * corridor-blocking traps from the adversarial search.
+             */
+            option_counts[i] = core_command_moves(board, board->snakes[i].id, options[i]);
             if (option_counts[i] <= 0) {
                 option_counts[i] = 1;
                 options[i][0] = MOVE_INVALID;
