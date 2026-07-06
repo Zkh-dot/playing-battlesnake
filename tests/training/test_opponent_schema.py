@@ -23,6 +23,9 @@ class OpponentSchemaTests(unittest.TestCase):
         split = deterministic_split("game-a")
         self.assertEqual(split, deterministic_split("game-a"))
         self.assertIn(split, {"train", "validation", "test"})
+        self.assertEqual(deterministic_split("game-3"), "train")
+        self.assertEqual(deterministic_split("game-2"), "validation")
+        self.assertEqual(deterministic_split("game-0"), "test")
 
     def test_dataclasses_expose_training_keys(self) -> None:
         observation = MoveObservation(

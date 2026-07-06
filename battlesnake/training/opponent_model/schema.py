@@ -34,6 +34,7 @@ class CandidateRow:
     snake_rank: int | None
     candidate_move: str
     label: int
+    # Dataclass freezing is shallow; callers should treat features as row-local.
     features: dict[str, Any]
 
 
