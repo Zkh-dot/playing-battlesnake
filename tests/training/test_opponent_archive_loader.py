@@ -44,6 +44,24 @@ class OpponentArchiveLoaderTests(unittest.TestCase):
         self.assertEqual([name for name, _ in exports], ["game-a.json", "game-b.json"])
         self.assertEqual(exports[0][1]["game_id"], "game-a")
 
+    def test_iter_replay_exports_skips_invalid_and_non_replay_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "games.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("invalid.json", "{")
+                zf.writestr("metadata.json", json.dumps({"source": "not a replay"}))
+                zf.writestr("wrong-frames.json", json.dumps({"game": {}, "frames": {}}))
+                zf.writestr("wrong-game.json", json.dumps({"game": "bad", "frames": []}))
+                zf.writestr(
+                    "valid.json",
+                    json.dumps({"game_id": "valid", "game": {"ID": "valid"}, "frames": []}),
+                )
+
+            exports = list(iter_replay_exports(archive))
+
+        self.assertEqual([name for name, _ in exports], ["valid.json"])
+        self.assertEqual(exports[0][1]["game_id"], "valid")
+
     def test_player_rank_by_display_skips_unparseable_ranks(self) -> None:
         manifest: dict[str, object] = {
             "selected_players": [
@@ -51,6 +69,7 @@ class OpponentArchiveLoaderTests(unittest.TestCase):
                 {"rank": "bad", "slug": "bad-rank", "display": "Bad Rank"},
                 {"rank": "3", "slug": "slug-rank"},
                 {"slug": "missing-rank"},
+                {"rank": 4, "slug": None, "display": "Null Slug"},
             ]
         }
 
@@ -62,6 +81,10 @@ class OpponentArchiveLoaderTests(unittest.TestCase):
         self.assertEqual(
             ranks["missing-rank"],
             PlayerMeta(rank=0, slug="missing-rank", display="missing-rank"),
+        )
+        self.assertEqual(
+            ranks["Null Slug"],
+            PlayerMeta(rank=4, slug="Null Slug", display="Null Slug"),
         )
 
 

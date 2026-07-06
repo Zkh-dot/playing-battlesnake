@@ -36,7 +36,7 @@ def player_rank_by_display(manifest: dict[str, object]) -> dict[str, PlayerMeta]
             continue
         result[display] = PlayerMeta(
             rank=rank,
-            slug=str(raw.get("slug", display)),
+            slug=str(raw.get("slug") or display),
             display=display,
         )
     return result
@@ -50,6 +50,13 @@ def iter_replay_exports(archive_path: Path) -> Iterator[tuple[str, dict[str, obj
             if name.endswith(".json") and name != "MANIFEST.json" and not name.endswith("/")
         )
         for name in names:
-            data = json.loads(archive.read(name))
-            if isinstance(data, dict) and "game" in data and "frames" in data:
+            try:
+                data = json.loads(archive.read(name))
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(data, dict)
+                and isinstance(data.get("game"), dict)
+                and isinstance(data.get("frames"), list)
+            ):
                 yield name, data
