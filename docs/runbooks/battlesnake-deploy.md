@@ -1,5 +1,12 @@
 # Battlesnake Deploy Runbook
 
+Two snakes are served from `ya.sergeiscv.ru`:
+
+| Snake | Public URL | Runtime | Purpose |
+|---|---|---|---|
+| Production | `https://ya.sergeiscv.ru/snake/` | Native C server | Ladder play |
+| Dev | `https://ya.sergeiscv.ru/test-snake/` | Python FastAPI | Standard FFA strategy experiments |
+
 ## Current Deployment
 
 - Server: `ya.sergeiscv.ru`
@@ -150,6 +157,62 @@ After editing nginx:
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+## Dev Snake (Python)
+
+The dev snake is the FastAPI app `battlesnake.main:app`, registered on
+play.battlesnake.com as a separate snake pointing to
+`https://ya.sergeiscv.ru/test-snake/`. It exists to iterate on Standard FFA
+strategies in Python before porting them to the native C server (see
+`docs/standard-ffa-strategy-spec.md`, Delivery Model).
+
+Environment:
+
+```text
+STRATEGY_VARIANT=first-safe     # standard FFA strategy variant
+GIT_REVISION=<short sha>        # reported in /  version; auto-detected from git if unset
+SNAKE_COLOR=#f59e0b             # dev identity; production snake is #2563eb
+MOVE_SAFETY_MARGIN_MS=150       # decide deadline = game timeout - margin
+```
+
+Run on the server (pick a free local port, e.g. `8122`; `8120` is the MTG
+backend, `8121` is the production snake):
+
+```bash
+cd ~/deploy/playing-battlesnake
+git pull
+
+python3 -m venv .venv-dev
+.venv-dev/bin/pip install -r requirements-dev.txt
+.venv-dev/bin/pip install -e .
+
+STRATEGY_VARIANT=first-safe \
+GIT_REVISION=$(git rev-parse --short HEAD) \
+.venv-dev/bin/uvicorn battlesnake.main:app --host 127.0.0.1 --port 8122
+```
+
+The nginx route for `/test-snake/` mirrors the `/snake/` route with
+`proxy_pass http://127.0.0.1:8122/;`.
+
+Smoke test:
+
+```bash
+curl -fsS https://ya.sergeiscv.ru/test-snake/
+```
+
+Expected: `"version":"0.1.0-dev+<variant>.<git rev>"` and the dev color. The
+`/move` smoke test payload from the production section works unchanged against
+`https://ya.sergeiscv.ru/test-snake/move`.
+
+Behavior notes:
+
+- `/move` runs the strategy under a hard internal deadline
+  (`game timeout - MOVE_SAFETY_MARGIN_MS`); on timeout or strategy failure it
+  answers with the first safe move instead of erroring, so a bad variant loses
+  quality, not games-by-timeout.
+- Strategy variants are registered in `STANDARD_VARIANTS` in
+  `battlesnake/main.py`; unknown `STRATEGY_VARIANT` values fall back to
+  `first-safe` with a warning in logs.
 
 ## Rollback
 
