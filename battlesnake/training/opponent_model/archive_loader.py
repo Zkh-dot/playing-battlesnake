@@ -52,7 +52,7 @@ def iter_replay_exports(archive_path: Path) -> Iterator[tuple[str, dict[str, obj
         for name in names:
             try:
                 data = json.loads(archive.read(name))
-            except json.JSONDecodeError:
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 continue
             if (
                 isinstance(data, dict)

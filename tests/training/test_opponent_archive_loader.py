@@ -48,6 +48,7 @@ class OpponentArchiveLoaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / "games.zip"
             with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("bad-bytes.json", b"\xff")
                 zf.writestr("invalid.json", "{")
                 zf.writestr("metadata.json", json.dumps({"source": "not a replay"}))
                 zf.writestr("wrong-frames.json", json.dumps({"game": {}, "frames": {}}))
