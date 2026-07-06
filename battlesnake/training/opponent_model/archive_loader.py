@@ -30,8 +30,12 @@ def player_rank_by_display(manifest: dict[str, object]) -> dict[str, PlayerMeta]
         display = str(raw.get("display") or raw.get("slug") or "")
         if not display:
             continue
+        try:
+            rank = int(raw.get("rank", 0))
+        except (TypeError, ValueError):
+            continue
         result[display] = PlayerMeta(
-            rank=int(raw.get("rank", 0)),
+            rank=rank,
             slug=str(raw.get("slug", display)),
             display=display,
         )
