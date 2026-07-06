@@ -1321,6 +1321,8 @@ CoreStatus CoreMinimaxMoveWithStats(
     CoreSearchStats local_stats;
     CoreSearchStats* stats = out_stats != NULL ? out_stats : &local_stats;
     CoreSearchStatsInit(stats);
+    stats->parallel_mode = config.parallel_mode;
+    stats->parallel_workers_used = 1;
 
     MoveDirection safe_moves[4];
     stats->safe_move_calls++;

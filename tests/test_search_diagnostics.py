@@ -11,6 +11,8 @@ EXPECTED_DIAGNOSTIC_KEYS = {
     "move",
     "score",
     "elapsed_ms",
+    "parallel_mode",
+    "parallel_workers_used",
     "completed_depth",
     "max_depth_started",
     "timed_out",
@@ -107,6 +109,48 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertEqual(first["completed_depth"], 3)
         self.assertEqual(second["completed_depth"], 3)
         self.assertEqual(first["nodes"], second["nodes"])
+
+    def test_parallel_mode_keyword_accepts_serial_mode(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        result = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            time_budget_ms=1000,
+            fixed_depth=3,
+            parallel_mode="serial",
+        )
+
+        self.assertEqual(result["completed_depth"], 3)
+        self.assertEqual(result["parallel_mode"], 0)
+        self.assertEqual(result["parallel_workers_used"], 1)
+
+    def test_old_positional_weights_slot_still_accepts_weights(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        result = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            1000,
+            3,
+            1,
+            1,
+            1,
+            {"health": 0.0},
+        )
+
+        self.assertEqual(result["completed_depth"], 3)
+        self.assertEqual(result["parallel_mode"], 0)
+
+    def test_unknown_parallel_mode_is_rejected(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+
+        with self.assertRaises(ValueError):
+            minimax_diagnostics(
+                build_board(scenario),
+                scenario.snake_id,
+                time_budget_ms=1000,
+                fixed_depth=3,
+                parallel_mode="threads_everywhere",
+            )
 
     def test_placeholder_flags_keep_api_shape(self) -> None:
         scenario = get_scenario("duel_open_7x7")
