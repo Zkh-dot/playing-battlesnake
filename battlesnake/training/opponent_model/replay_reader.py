@@ -63,7 +63,9 @@ def _alive_snakes(frame: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _heads_by_id(frame: dict[str, Any]) -> dict[str, tuple[int, int]]:
     heads = {}
-    for raw in _alive_snakes(frame):
+    for raw in frame.get("Snakes", []):
+        if raw.get("IsEnvironment"):
+            continue
         body = raw.get("Body", [])
         if body:
             heads[str(raw["ID"])] = _point(body[0])

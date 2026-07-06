@@ -68,6 +68,30 @@ class OpponentReplayReaderTests(unittest.TestCase):
         export["game"]["RulesetName"] = "royale"
         self.assertEqual(list(iter_move_observations("game-a.json", export, {})), [])
 
+    def test_extracts_terminal_move_when_snake_dies_in_next_frame(self) -> None:
+        export = standard_export()
+        next_snakes = export["frames"][1]["Snakes"]
+        next_snakes[0]["Death"] = {"Cause": "out-of-health", "Turn": 6}
+
+        observations = list(iter_move_observations("game-a.json", export, {}))
+
+        self.assertEqual(len(observations), 2)
+        self.assertEqual(observations[0].observation.snake_id, "s1")
+        self.assertEqual(observations[0].observation.target_move, "right")
+
+    def test_skips_current_frame_dead_environment_missing_body_and_invalid_delta(self) -> None:
+        export = standard_export()
+        current_snakes = export["frames"][0]["Snakes"]
+        next_snakes = export["frames"][1]["Snakes"]
+        current_snakes[0]["Death"] = {"Cause": "collision", "Turn": 5}
+        current_snakes[1]["IsEnvironment"] = True
+        current_snakes.append(snake("s3", "Gamma", []))
+        current_snakes.append(snake("s4", "Delta", [(7, 7), (7, 6)]))
+        next_snakes.append(snake("s3", "Gamma", [(4, 4)]))
+        next_snakes.append(snake("s4", "Delta", [(9, 7), (7, 7)]))
+
+        self.assertEqual(list(iter_move_observations("game-a.json", export, {})), [])
+
 
 if __name__ == "__main__":
     unittest.main()
