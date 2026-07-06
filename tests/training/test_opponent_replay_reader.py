@@ -101,6 +101,14 @@ class OpponentReplayReaderTests(unittest.TestCase):
         non_integer_height["game"]["Height"] = "tall"
         self.assertEqual(list(iter_move_observations("game-a.json", non_integer_height, {})), [])
 
+        zero_width = standard_export()
+        zero_width["game"]["Width"] = 0
+        self.assertEqual(list(iter_move_observations("game-a.json", zero_width, {})), [])
+
+        negative_height = standard_export()
+        negative_height["game"]["Height"] = -1
+        self.assertEqual(list(iter_move_observations("game-a.json", negative_height, {})), [])
+
     def test_skips_frame_pair_with_malformed_current_snake_without_exception(self) -> None:
         export = standard_export()
         current_snakes = export["frames"][0]["Snakes"]

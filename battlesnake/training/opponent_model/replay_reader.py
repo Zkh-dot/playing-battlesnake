@@ -133,6 +133,8 @@ def _board_dimensions(game: dict[str, Any]) -> tuple[int, int] | None:
     height = _to_int(game.get("Height"))
     if width is None or height is None:
         return None
+    if width <= 0 or height <= 0:
+        return None
     return width, height
 
 
