@@ -92,6 +92,54 @@ class OpponentReplayReaderTests(unittest.TestCase):
 
         self.assertEqual(list(iter_move_observations("game-a.json", export, {})), [])
 
+    def test_skips_exports_with_missing_or_non_integer_dimensions(self) -> None:
+        missing_width = standard_export()
+        del missing_width["game"]["Width"]
+        self.assertEqual(list(iter_move_observations("game-a.json", missing_width, {})), [])
+
+        non_integer_height = standard_export()
+        non_integer_height["game"]["Height"] = "tall"
+        self.assertEqual(list(iter_move_observations("game-a.json", non_integer_height, {})), [])
+
+    def test_skips_frame_pair_with_malformed_current_snake_without_exception(self) -> None:
+        export = standard_export()
+        current_snakes = export["frames"][0]["Snakes"]
+        current_snakes.append(
+            {
+                "ID": "bad-current",
+                "Name": "Bad Current",
+                "Health": 90,
+                "Body": [{"X": "bad", "Y": 4}],
+            }
+        )
+
+        self.assertEqual(list(iter_move_observations("game-a.json", export, {})), [])
+
+    def test_skips_malformed_next_frame_heads_without_exception(self) -> None:
+        export = standard_export()
+        current_snakes = export["frames"][0]["Snakes"]
+        next_snakes = export["frames"][1]["Snakes"]
+        current_snakes.append(snake("s3", "Gamma", [(7, 7), (7, 6)]))
+        current_snakes.append(snake("s4", "Delta", [(8, 8), (8, 7)]))
+        current_snakes.append("not-a-snake")
+        current_snakes.append({"Name": "Missing ID", "Body": [coord(9, 9)]})
+        next_snakes.append(
+            {
+                "ID": "s3",
+                "Name": "Gamma",
+                "Health": 90,
+                "Body": [{"X": "bad", "Y": 7}],
+            }
+        )
+        next_snakes.append({"Name": "Missing ID", "Body": [coord(8, 7)]})
+        next_snakes.append("not-a-snake")
+        next_snakes.append(snake("s4", "Delta", [(8, 7), (8, 8)]))
+
+        observations = list(iter_move_observations("game-a.json", export, {}))
+
+        self.assertEqual([item.observation.snake_id for item in observations], ["s1", "s2", "s4"])
+        self.assertEqual(observations[-1].observation.target_move, "down")
+
 
 if __name__ == "__main__":
     unittest.main()
