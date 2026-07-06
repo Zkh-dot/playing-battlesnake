@@ -63,7 +63,13 @@ class BuildExt(build_ext):
 setup(
     name="playing-battlesnake",
     version="0.1.0",
-    packages=["battlesnake", "battlesnake.core", "battlesnake.strategies", "battlesnake.training"],
+    packages=[
+        "battlesnake",
+        "battlesnake.core",
+        "battlesnake.strategies",
+        "battlesnake.training",
+        "battlesnake.training.opponent_model",
+    ],
     package_data={"battlesnake": ["*.pyi", "py.typed"]},
     install_requires=[],
     python_requires=">=3.11",
