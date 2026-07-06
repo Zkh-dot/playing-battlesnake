@@ -11,6 +11,7 @@ Best trained model:
 - Model family: `gbdt`
 - Training engine: `polars+lightgbm`
 - Model artifact: `ai-artifacts/opponent-model/gbdt_lightgbm.joblib`
+- Published model archive: `ai-artifacts/opponent-model/gbdt_lightgbm.joblib.gz`
 - Training host: `scv@192.168.1.6`
 - Train rows: `6,292,684`
 - Validation rows: `1,311,972`
@@ -262,7 +263,19 @@ Suggested first latency budget:
 
 ## Artifacts
 
-Generated artifacts are intentionally not committed:
+Committed model artifact:
+
+- `ai-artifacts/opponent-model/gbdt_lightgbm.joblib.gz`
+- Size: `8,392,812` bytes
+- SHA-256: `e2d3f89a2db5d660c0b0629cb3ec991f217a6770c3a36607c12dbac08248340a`
+
+Restore the runtime model with:
+
+```bash
+gzip -dc ai-artifacts/opponent-model/gbdt_lightgbm.joblib.gz > ai-artifacts/opponent-model/gbdt_lightgbm.joblib
+```
+
+Generated artifacts intentionally not committed:
 
 - `ai-artifacts/opponent-model/candidate_rows.csv`
 - `ai-artifacts/opponent-model/candidate_rows.parquet`
@@ -273,4 +286,5 @@ Generated artifacts are intentionally not committed:
 - `ai-artifacts/opponent-model/compute_run_metadata.json`
 - `ai-artifacts/opponent-model/compute-requirements-ml.lock`
 
-Committed docs/code record the reproducible pipeline and measured results.
+Committed docs/code record the reproducible pipeline, measured results, and the
+compressed selected model artifact.
