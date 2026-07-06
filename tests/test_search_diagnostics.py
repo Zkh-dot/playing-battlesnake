@@ -34,6 +34,72 @@ EXPECTED_DIAGNOSTIC_KEYS = {
 }
 
 
+ISSUE_11_SNAKE_ID = "gs_XyxHhq8f9MqXJkwSYdh37XbY"
+
+
+def _issue_11_turn_113_board() -> Board:
+    return Board(
+        width=11,
+        height=11,
+        ruleset_name="standard",
+        hazard_damage=0,
+        snakes=[
+            Snake(
+                id=ISSUE_11_SNAKE_ID,
+                name="scvnak",
+                health=92,
+                body=[
+                    Coord(9, 0),
+                    Coord(8, 0),
+                    Coord(7, 0),
+                    Coord(6, 0),
+                    Coord(5, 0),
+                    Coord(4, 0),
+                    Coord(4, 1),
+                    Coord(4, 2),
+                    Coord(3, 2),
+                    Coord(3, 1),
+                    Coord(2, 1),
+                    Coord(2, 2),
+                    Coord(1, 2),
+                    Coord(1, 1),
+                    Coord(0, 1),
+                    Coord(0, 2),
+                    Coord(0, 3),
+                    Coord(1, 3),
+                    Coord(2, 3),
+                ],
+                head=Coord(9, 0),
+                length=19,
+            ),
+            Snake(
+                id="gs_xfDkPgGMwBWQwkjSSfJd7vSF",
+                name="test ml",
+                health=86,
+                body=[
+                    Coord(8, 1),
+                    Coord(8, 2),
+                    Coord(8, 3),
+                    Coord(8, 4),
+                    Coord(8, 5),
+                    Coord(8, 6),
+                    Coord(7, 6),
+                ],
+                head=Coord(8, 1),
+                length=7,
+            ),
+        ],
+        food=[
+            Coord(10, 10),
+            Coord(8, 9),
+            Coord(7, 4),
+            Coord(9, 5),
+            Coord(7, 8),
+        ],
+        hazards=[],
+    )
+
+
 class SearchDiagnosticsTests(unittest.TestCase):
     def test_minimax_diagnostics_shape(self) -> None:
         scenario = get_scenario("duel_open_7x7")
@@ -66,6 +132,27 @@ class SearchDiagnosticsTests(unittest.TestCase):
 
         self.assertEqual(set(diagnostics), EXPECTED_DIAGNOSTIC_KEYS)
         self.assertIn(diagnostics["move"], {"up", "down", "left", "right"})
+
+    def test_issue_11_turn_113_production_budget_avoids_fatal_corridor(self) -> None:
+        result = minimax_diagnostics(
+            _issue_11_turn_113_board(),
+            ISSUE_11_SNAKE_ID,
+            time_budget_ms=400,
+        )
+
+        self.assertEqual(result["move"], "up")
+        self.assertNotEqual(result["move"], "right")
+
+    def test_issue_11_turn_113_fixed_depth_models_opponent_corridor_block(self) -> None:
+        result = minimax_diagnostics(
+            _issue_11_turn_113_board(),
+            ISSUE_11_SNAKE_ID,
+            time_budget_ms=5000,
+            fixed_depth=11,
+        )
+
+        self.assertEqual(result["completed_depth"], 11)
+        self.assertEqual(result["move"], "up")
 
     def test_opponent_pressure_weight_overrides_change_score(self) -> None:
         scenario = get_scenario("duel_open_7x7")
