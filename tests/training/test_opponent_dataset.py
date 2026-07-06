@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from battlesnake.training.opponent_model.dataset import BASE_COLUMNS, write_candidate_rows
+from battlesnake.training.opponent_model.dataset import BASE_COLUMNS, write_candidate_rows, write_candidate_rows_streaming
 from battlesnake.training.opponent_model.schema import CandidateRow
 
 
@@ -138,6 +138,49 @@ class OpponentDatasetTests(unittest.TestCase):
             summary = write_candidate_rows(rows, out)
 
         self.assertEqual(summary["snakes"], 2)
+
+    def test_write_candidate_rows_streaming_writes_without_materializing(self) -> None:
+        rows = [
+            CandidateRow(
+                observation_id="g1:1:s1",
+                game_id="g1",
+                split="train",
+                turn=1,
+                snake_id="s1",
+                snake_name="Alpha",
+                snake_rank=1,
+                candidate_move="up",
+                label=0,
+                features={"candidate_move": "up", "snake_health": 90.0},
+            ),
+            CandidateRow(
+                observation_id="g1:1:s1",
+                game_id="g1",
+                split="train",
+                turn=1,
+                snake_id="s1",
+                snake_name="Alpha",
+                snake_rank=1,
+                candidate_move="right",
+                label=1,
+                features={"candidate_move": "right", "snake_health": 90.0},
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "rows.csv"
+            summary = write_candidate_rows_streaming(iter(rows), out)
+            with out.open() as handle:
+                reader = csv.DictReader(handle)
+                written = list(reader)
+                header = reader.fieldnames
+
+        self.assertEqual(summary["rows"], 2)
+        self.assertEqual(summary["observations"], 1)
+        self.assertEqual(summary["games"], 1)
+        self.assertEqual(summary["snakes"], 1)
+        self.assertEqual(summary["split_rows"], {"train": 2})
+        self.assertEqual(header, BASE_COLUMNS + ["feature_candidate_move", "snake_health"])
+        self.assertEqual(written[1]["feature_candidate_move"], "right")
 
 
 if __name__ == "__main__":

@@ -77,3 +77,57 @@ def write_candidate_rows(rows: Iterable[CandidateRow], output_path: Path) -> dic
         "split_rows": dict(sorted(split_counts.items())),
         "output_path": str(output_path),
     }
+
+
+def write_candidate_rows_streaming(
+    rows: Iterable[CandidateRow],
+    output_path: Path,
+    feature_names: Iterable[str] | None = None,
+) -> dict[str, object]:
+    iterator = iter(rows)
+    first = next(iterator, None)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if first is None:
+        feature_columns = _feature_columns(feature_names or [])
+    else:
+        first_feature_names = set(feature_names) if feature_names is not None else set(first.features)
+        feature_columns = _feature_columns(first_feature_names)
+
+    known_features = {name for name, _ in feature_columns}
+    fieldnames = BASE_COLUMNS + [column_name for _, column_name in feature_columns]
+    split_counts: Counter[str] = Counter()
+    observation_ids: set[str] = set()
+    game_ids: set[str] = set()
+    snake_ids: set[str] = set()
+    row_count = 0
+
+    def write_row(writer: csv.DictWriter, row: CandidateRow) -> None:
+        nonlocal row_count
+        extra_features = set(row.features) - known_features
+        if extra_features:
+            names = ", ".join(sorted(extra_features))
+            raise ValueError(f"Unexpected feature columns after streaming header was written: {names}")
+        writer.writerow(flatten_row(row, feature_columns))
+        row_count += 1
+        split_counts[row.split] += 1
+        observation_ids.add(row.observation_id)
+        game_ids.add(row.game_id)
+        snake_ids.add(row.snake_id)
+
+    with output_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        if first is not None:
+            write_row(writer, first)
+            for row in iterator:
+                write_row(writer, row)
+
+    return {
+        "rows": row_count,
+        "observations": len(observation_ids),
+        "games": len(game_ids),
+        "snakes": len(snake_ids),
+        "split_rows": dict(sorted(split_counts.items())),
+        "output_path": str(output_path),
+    }
