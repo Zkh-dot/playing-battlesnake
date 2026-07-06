@@ -46,11 +46,13 @@ BsStrategyStatus BsChooseMove(
         budget = config->default_time_budget_ms;
     }
 
-    /* Minimax search is applied only to solo-ruleset 1v1 duels, the production
-     * runtime target for this native server. Every other ruleset (royale,
-     * constrictor, standard, 4+ snakes) intentionally uses the safe fallback
-     * move; the FastAPI comparator retains the per-ruleset strategies. */
-    if (board->ruleset_name != 0 && strcmp(board->ruleset_name, "solo") == 0 && board->snake_count == 2) {
+    /* Minimax search is applied to 1v1 duels. Battlesnake ladder duels are
+     * delivered as standard ruleset games with two snakes, while local duel
+     * tooling may use solo. Other rulesets and multi-snake games intentionally
+     * use the safe fallback move. */
+    if (board->ruleset_name != 0 &&
+        (strcmp(board->ruleset_name, "solo") == 0 || strcmp(board->ruleset_name, "standard") == 0) &&
+        board->snake_count == 2) {
         CoreStatus status = CoreMinimaxMove(board, snake_id, budget, out_move);
         if (status == CORE_ERROR) {
             return BS_STRATEGY_ERROR;

@@ -32,7 +32,7 @@ def select_strategy(state: GameState) -> StrategyStandard | StrategyRoyale | Str
         return StrategyRoyale()
     if ruleset_name == "constrictor":
         return StrategyConstrictor()
-    if ruleset_name == "solo" and len(state.board.snakes) == 2:
+    if ruleset_name in {"solo", "standard"} and len(state.board.snakes) == 2:
         return StrategyDuel()
     return StrategyStandard()
 

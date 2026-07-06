@@ -76,6 +76,27 @@ static void test_solo_two_snakes_uses_minimax_with_null_config(void) {
     BoardFree(board);
 }
 
+static void test_standard_two_snakes_uses_minimax(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord me_body[] = {{1, 3}, {1, 2}, {1, 1}};
+    Coord you_body[] = {{5, 3}, {5, 2}, {5, 1}};
+    Snake me = make_snake("me", me_body, 3, 90);
+    Snake you = make_snake("you", you_body, 3, 90);
+    MoveDirection move = MOVE_INVALID;
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    config.default_time_budget_ms = 25;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(BoardAddFood(board, (Coord){3, 3}));
+    assert(BsChooseMove(board, "me", &config, &move) == BS_STRATEGY_OK);
+    assert(move == MOVE_UP || move == MOVE_DOWN || move == MOVE_LEFT || move == MOVE_RIGHT);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
 static void test_null_config_uses_default_budget_and_fallback(void) {
     Board* board = BoardCreate(5, 5, "standard", 0);
     Coord body[] = {{2, 2}, {2, 1}, {2, 0}};
@@ -101,6 +122,7 @@ int main(void) {
     test_missing_snake_is_error();
     test_solo_two_snakes_uses_minimax();
     test_solo_two_snakes_uses_minimax_with_null_config();
+    test_standard_two_snakes_uses_minimax();
     test_null_config_uses_default_budget_and_fallback();
     return 0;
 }
