@@ -31,6 +31,7 @@ if __package__ in (None, ""):
 
 from fastapi import FastAPI
 
+from battlesnake.decision_telemetry import record_decision, record_game_end
 from battlesnake.game import Board, board_from_game_state
 from battlesnake.strategies.base import Strategy
 from battlesnake.strategies.constrictor import StrategyConstrictor
@@ -180,6 +181,7 @@ def move(state: GameState) -> dict[str, str]:
     board = board_from_game_state(state)
     strategy = select_strategy(state)
     deadline_ms = move_deadline_ms(state.game.timeout)
+    fallback_reason: str | None = None
 
     future = _decide_executor.submit(strategy.decide, board, state.you.id)
     try:
@@ -193,17 +195,43 @@ def move(state: GameState) -> dict[str, str]:
             state.turn,
         )
         selected_move = fallback_move(board, state.you.id)
+        fallback_reason = "endpoint_deadline"
     except NotImplementedError:
         selected_move = fallback_move(board, state.you.id)
+        fallback_reason = "not_implemented"
     except Exception:
         logger.exception("decide failed (game=%s turn=%d), using fallback", state.game.id, state.turn)
         selected_move = fallback_move(board, state.you.id)
+        fallback_reason = "strategy_exception"
 
-    return {"move": move_response_value(selected_move)}
+    selected_value = move_response_value(selected_move)
+    try:
+        strategy_record = getattr(strategy, "last_decision_record", None)
+        record = dict(strategy_record) if isinstance(strategy_record, dict) else {}
+        record.update(
+            {
+                "game_id": state.game.id,
+                "turn": state.turn,
+                "snake_id": state.you.id,
+                "variant": strategy_variant(),
+                "chosen_move": selected_value,
+                "fallback_used": fallback_reason is not None or record.get("fallback_reason") is not None,
+                "fallback_reason": record.get("fallback_reason") or fallback_reason,
+            }
+        )
+        record_decision(record)
+    except Exception:
+        logger.exception("decision telemetry failed (game=%s turn=%d)", state.game.id, state.turn)
+
+    return {"move": selected_value}
 
 
 @app.post("/end")
 def end(state: GameState) -> dict[str, str]:
     """Handle Battlesnake game end."""
 
+    try:
+        record_game_end(state)
+    except Exception:
+        logger.exception("game-end telemetry failed (game=%s turn=%d)", state.game.id, state.turn)
     return {"message": f"Finished game {state.game.id}"}

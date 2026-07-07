@@ -6,7 +6,7 @@ import itertools
 import math
 import time
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 from battlesnake.core.astar import shortest_path
 from battlesnake.core.evaluation import WEIGHTS as EVALUATION_WEIGHTS
@@ -74,30 +74,80 @@ class StrategyStandard(Strategy):
         self.max_scenarios = max(1, max_scenarios)
         self.deadline_ms = max(1, deadline_ms)
         self._fallback = StrategyFirstSafe()
+        self.last_decision_record: dict[str, Any] | None = None
 
     def decide(self, board: Board, snake_id: str) -> Move | str:
         """Choose a Standard FFA move using deterministic root scenario scoring."""
 
+        move, record = self.explain_decision(board, snake_id)
+        self.last_decision_record = record
+        return move
+
+    def explain_decision(self, board: Board, snake_id: str) -> tuple[Move | str, dict[str, Any]]:
+        """Choose a move and return the complete decision telemetry record."""
+
+        started = time.perf_counter()
         deadline = time.perf_counter() + self.deadline_ms / 1000.0
         try:
             gates = classify_standard_ffa_candidates(board, snake_id)
             candidates = gates.eligible_candidates
-            if not candidates:
-                return gates.least_bad_candidate.move
-
             priors = _opponent_priors(board, snake_id)
-            scored = [
-                (
-                    self._score_candidate(board, snake_id, candidate, priors, deadline),
-                    -MOVE_ORDER.index(candidate.move),
-                    candidate.move,
+            if not candidates:
+                move = gates.least_bad_candidate.move
+                record = _decision_record(
+                    board=board,
+                    snake_id=snake_id,
+                    chosen_move=move,
+                    gates=gates.to_dict(),
+                    opponent_priors=priors,
+                    candidate_scores=[
+                        _unscored_candidate_record(candidate, reason="all_candidates_gated")
+                        for candidate in gates.candidates
+                    ],
+                    started=started,
+                    fallback_reason="all_candidates_gated",
                 )
-                for candidate in candidates
-            ]
+                return move, record
+
+            candidate_scores = []
+            scored = []
+            for candidate in gates.candidates:
+                if not candidate.eligible:
+                    candidate_scores.append(_unscored_candidate_record(candidate, reason="gated"))
+                    continue
+                detail = self._score_candidate_detail(board, snake_id, candidate, priors, deadline)
+                candidate_scores.append(detail)
+                scored.append(
+                    (
+                        detail["score"],
+                        -MOVE_ORDER.index(candidate.move),
+                        candidate.move,
+                    )
+                )
             scored.sort(reverse=True)
-            return scored[0][2]
+            move = scored[0][2]
+            record = _decision_record(
+                board=board,
+                snake_id=snake_id,
+                chosen_move=move,
+                gates=gates.to_dict(),
+                opponent_priors=priors,
+                candidate_scores=candidate_scores,
+                started=started,
+            )
+            return move, record
         except _DeadlineExceeded:
-            return self._fallback.decide(board, snake_id)
+            move = self._fallback.decide(board, snake_id)
+            record = {
+                "strategy": "standard-v1",
+                "snake_id": snake_id,
+                "chosen_move": str(move),
+                "fallback_reason": "deadline_exceeded",
+                "latency_ms": _elapsed_ms(started),
+                "candidates": [],
+                "opponent_priors": {},
+            }
+            return move, record
 
     def _score_candidate(
         self,
@@ -107,20 +157,45 @@ class StrategyStandard(Strategy):
         priors: dict[str, list[tuple[str, float]]],
         deadline: float,
     ) -> float:
+        return float(self._score_candidate_detail(board, snake_id, candidate, priors, deadline)["score"])
+
+    def _score_candidate_detail(
+        self,
+        board: Board,
+        snake_id: str,
+        candidate: StandardMoveCandidate,
+        priors: dict[str, list[tuple[str, float]]],
+        deadline: float,
+    ) -> dict[str, Any]:
         scenarios = _scenario_set(board, snake_id, candidate, priors, self.max_scenarios, self.theta)
         weighted_total = 0.0
         probability_total = 0.0
         worst = math.inf
+        weighted_terms: dict[str, float] = {}
 
         for scenario in scenarios:
             _check_deadline(deadline)
-            utility = self._scenario_utility(board, snake_id, candidate, scenario)
+            utility, terms = self._scenario_utility_terms(board, snake_id, candidate, scenario)
             weighted_total += scenario.probability * utility
             probability_total += scenario.probability
             worst = min(worst, utility)
+            for key, value in terms.items():
+                weighted_terms[key] = weighted_terms.get(key, 0.0) + scenario.probability * value
 
         expected = weighted_total / probability_total if probability_total > 0 else worst
-        return self.theta["w_expected"] * expected + self.theta["w_worst"] * worst
+        expected_terms = {
+            key: value / probability_total
+            for key, value in weighted_terms.items()
+        } if probability_total > 0 else weighted_terms
+        score = self.theta["w_expected"] * expected + self.theta["w_worst"] * worst
+        return {
+            **candidate.to_dict(),
+            "score": score,
+            "expected": expected,
+            "worst": worst,
+            "scenario_count": len(scenarios),
+            "terms": expected_terms,
+        }
 
     def _scenario_utility(
         self,
@@ -129,18 +204,94 @@ class StrategyStandard(Strategy):
         candidate: StandardMoveCandidate,
         scenario: _Scenario,
     ) -> float:
+        score, _terms = self._scenario_utility_terms(board, snake_id, candidate, scenario)
+        return score
+
+    def _scenario_utility_terms(
+        self,
+        board: Board,
+        snake_id: str,
+        candidate: StandardMoveCandidate,
+        scenario: _Scenario,
+    ) -> tuple[float, dict[str, float]]:
         joint_moves = dict(scenario.moves)
         joint_moves[snake_id] = candidate.move
         next_board = board.clone_and_apply(joint_moves)
         if snake_id not in next_board.snakes:
-            return -1_000_000.0
+            return -1_000_000.0, {
+                "terminal": -1_000_000.0,
+                "native_evaluate": 0.0,
+                "space": 0.0,
+                "head_pressure": 0.0,
+                "food": 0.0,
+                "pocket": 0.0,
+            }
 
-        score = evaluate(next_board, snake_id, _evaluation_theta(self.theta))
-        score += _space_adjustment(next_board, snake_id, self.theta)
-        score += _head_pressure_adjustment(board, snake_id, candidate, scenario, self.theta)
-        score += _food_adjustment(board, next_board, snake_id, candidate, self.theta)
-        score += _pocket_adjustment(next_board, snake_id, self.theta)
-        return score
+        terms = {
+            "terminal": 0.0,
+            "native_evaluate": evaluate(next_board, snake_id, _evaluation_theta(self.theta)),
+            "space": _space_adjustment(next_board, snake_id, self.theta),
+            "head_pressure": _head_pressure_adjustment(board, snake_id, candidate, scenario, self.theta),
+            "food": _food_adjustment(board, next_board, snake_id, candidate, self.theta),
+            "pocket": _pocket_adjustment(next_board, snake_id, self.theta),
+        }
+        return sum(terms.values()), terms
+
+
+def _decision_record(
+    *,
+    board: Board,
+    snake_id: str,
+    chosen_move: str,
+    gates: dict[str, Any],
+    opponent_priors: dict[str, list[tuple[str, float]]],
+    candidate_scores: list[dict[str, Any]],
+    started: float,
+    fallback_reason: str | None = None,
+) -> dict[str, Any]:
+    snake = board.snakes[snake_id]
+    record = {
+        "strategy": "standard-v1",
+        "snake_id": snake_id,
+        "chosen_move": chosen_move,
+        "latency_ms": _elapsed_ms(started),
+        "fallback_reason": fallback_reason,
+        "snake": {
+            "health": snake.health,
+            "length": snake.length or len(snake.body),
+            "head": _coord_dict(board.head(snake_id)),
+        },
+        "gates": gates,
+        "candidates": candidate_scores,
+        "opponent_priors": {
+            opponent_id: [
+                {"move": move, "probability": probability}
+                for move, probability in moves
+            ]
+            for opponent_id, moves in opponent_priors.items()
+        },
+    }
+    return record
+
+
+def _unscored_candidate_record(candidate: StandardMoveCandidate, *, reason: str) -> dict[str, Any]:
+    return {
+        **candidate.to_dict(),
+        "score": None,
+        "expected": None,
+        "worst": None,
+        "scenario_count": 0,
+        "terms": {},
+        "not_scored_reason": reason,
+    }
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.perf_counter() - started) * 1000.0
+
+
+def _coord_dict(coord: Coord) -> dict[str, int]:
+    return {"x": coord.x, "y": coord.y}
 
 
 def _opponent_priors(board: Board, snake_id: str) -> dict[str, list[tuple[str, float]]]:
