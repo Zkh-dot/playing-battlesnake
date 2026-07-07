@@ -10,6 +10,7 @@ Add the rerunnable Standard FFA theta-search plumbing against the #21 arena obje
 - Update `tools/standard_ffa_arena.py` to accept `--candidate-theta`.
 - Add `tests/test_issue_22_standard_ffa_weight_search.py`.
 - Add `configs/evaluation_weights/standard-ffa-v1-tuned.json` after a successful search.
+- Add `tools/tuning/remote_standard_ffa_weight_tuning.sh` for a compute-node Standard FFA run matching the local search command.
 - Update docs with the rerunnable search and validation commands.
 
 ## Current Findings
@@ -19,6 +20,8 @@ Add the rerunnable Standard FFA theta-search plumbing against the #21 arena obje
   - jump-host probe through `ya.sergeiscv.ru` also timed out on SSH to `192.168.1.6`.
 - Local multi-seed mutation search command:
   - `python3 -m tools.tuning.search_standard_ffa_weights --search-mode mutate --mutation-scale 0.16 --trials 220 --games 4 --max-turns 80 --seed 20260707 --train-seeds 7000,9000,11000,13000,15000 --output configs/evaluation_weights/standard-ffa-v1-tuned.json --trials-output /tmp/standard-ffa-v1-multiseed-trials.jsonl`
+- Compute-node command prepared:
+  - `TRIALS=220 GAMES=4 MAX_TURNS=80 SEED=20260707 TRAIN_SEEDS=7000,9000,11000,13000,15000 tools/tuning/remote_standard_ffa_weight_tuning.sh`
 - Local search best score:
   - `0.88759375`
 - Held-out arena, tuned file (`seed=17000`, 16 games):
@@ -35,5 +38,6 @@ Commit the tuned config as a local held-out winner, then rerun on the compute no
 ## Verification
 
 - `python3 -m pytest tests/test_issue_22_standard_ffa_weight_search.py`
+- `bash -n tools/tuning/remote_standard_ffa_weight_tuning.sh`
 - `python3 tools/standard_ffa_arena.py --games 16 --max-turns 80 --seed 17000 --candidate-theta configs/evaluation_weights/standard-ffa-v1-tuned.json --output /tmp/tuned-file-heldout-16.json --summary-output /tmp/tuned-file-heldout-16.txt`
 - `python3 tools/standard_ffa_arena.py --games 16 --max-turns 80 --seed 17000 --output /tmp/default-file-heldout-16.json --summary-output /tmp/default-file-heldout-16.txt`

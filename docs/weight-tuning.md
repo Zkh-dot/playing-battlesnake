@@ -134,6 +134,35 @@ The committed local run wrote
 `configs/evaluation_weights/standard-ffa-v1-tuned.json` with best score
 `0.88759375`.
 
+Run the same Standard FFA search on the compute node:
+
+```bash
+TRIALS=220 \
+GAMES=4 \
+MAX_TURNS=80 \
+SEED=20260707 \
+TRAIN_SEEDS=7000,9000,11000,13000,15000 \
+tools/tuning/remote_standard_ffa_weight_tuning.sh
+```
+
+Watch the run:
+
+```bash
+ssh scv@192.168.1.6 'tmux attach -t battlesnake-standard-ffa-tuning'
+```
+
+If `tmux` is unavailable on the compute node, watch the background run with:
+
+```bash
+ssh scv@192.168.1.6 'tail -f /tmp/playing-battlesnake-standard-ffa-tuning/artifacts/standard_ffa_weight_tuning/search.log'
+```
+
+Fetch remote artifacts:
+
+```bash
+rsync -az scv@192.168.1.6:/tmp/playing-battlesnake-standard-ffa-tuning/artifacts/standard_ffa_weight_tuning/ artifacts/standard_ffa_weight_tuning/
+```
+
 Validate the tuned file on held-out arena seeds:
 
 ```bash

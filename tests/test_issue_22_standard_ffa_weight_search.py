@@ -98,3 +98,14 @@ def test_weight_search_cli_writes_best_theta_and_trials(tmp_path: Path) -> None:
     assert trial_rows[0]["trial"] == 0
     assert trial_rows[0]["theta"] == DEFAULT_STANDARD_THETA
     assert summary["output"] == str(output)
+
+
+def test_remote_standard_ffa_runner_has_valid_bash_syntax() -> None:
+    completed = subprocess.run(
+        ["bash", "-n", "tools/tuning/remote_standard_ffa_weight_tuning.sh"],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert completed.stdout == ""
