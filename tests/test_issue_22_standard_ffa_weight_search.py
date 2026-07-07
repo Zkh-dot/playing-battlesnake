@@ -8,6 +8,8 @@ from pathlib import Path
 from battlesnake.strategies.standard import DEFAULT_STANDARD_THETA
 from tools.tuning.search_standard_ffa_weights import (
     THETA_SEARCH_SPACE,
+    mutate_theta,
+    parse_seeds,
     scenario_suite_passes,
     suggest_theta,
 )
@@ -44,6 +46,20 @@ def test_random_theta_stays_within_bounds_and_suite_accepts_default() -> None:
         lower, upper = THETA_SEARCH_SPACE[key]
         assert lower <= value <= upper
     assert scenario_suite_passes(DEFAULT_STANDARD_THETA)
+
+
+def test_mutation_search_helpers_are_deterministic_and_bounded() -> None:
+    import random
+
+    theta = mutate_theta(dict(DEFAULT_STANDARD_THETA), random.Random(20260707), 0.16)
+
+    assert parse_seeds("7000, 9000,,11000", 5) == [7000, 9000, 11000]
+    assert parse_seeds(None, 5) == [5]
+    for key, value in theta.items():
+        if key not in THETA_SEARCH_SPACE:
+            continue
+        lower, upper = THETA_SEARCH_SPACE[key]
+        assert lower <= value <= upper
 
 
 def test_weight_search_cli_writes_best_theta_and_trials(tmp_path: Path) -> None:

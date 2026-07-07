@@ -106,3 +106,66 @@ python3 -B -m tools.tuning.evaluate_weights \
 ```
 
 Promote a tuned config only if validation improves over `configs/evaluation_weights/default.json` and test does not regress materially.
+
+## Standard FFA Arena Theta
+
+Issue #22 tunes `StrategyStandard` theta values against the Standard FFA paired
+arena objective from `tools/standard_ffa_arena.py`. The search starts from the
+hand-set theta, mutates bounded parameters, prunes candidates that fail the
+scenario suite or latency gate, and scores candidates by mean arena objective
+across the configured training seeds.
+
+Rerun the local multi-seed search:
+
+```bash
+python3 -m tools.tuning.search_standard_ffa_weights \
+  --search-mode mutate \
+  --mutation-scale 0.16 \
+  --trials 220 \
+  --games 4 \
+  --max-turns 80 \
+  --seed 20260707 \
+  --train-seeds 7000,9000,11000,13000,15000 \
+  --output configs/evaluation_weights/standard-ffa-v1-tuned.json \
+  --trials-output /tmp/standard-ffa-v1-multiseed-trials.jsonl
+```
+
+The committed local run wrote
+`configs/evaluation_weights/standard-ffa-v1-tuned.json` with best score
+`0.88759375`.
+
+Validate the tuned file on held-out arena seeds:
+
+```bash
+python3 tools/standard_ffa_arena.py \
+  --games 16 \
+  --max-turns 80 \
+  --seed 17000 \
+  --candidate-theta configs/evaluation_weights/standard-ffa-v1-tuned.json \
+  --output /tmp/tuned-file-heldout-16.json \
+  --summary-output /tmp/tuned-file-heldout-16.txt
+```
+
+Compare the hand-set theta on the same held-out batch:
+
+```bash
+python3 tools/standard_ffa_arena.py \
+  --games 16 \
+  --max-turns 80 \
+  --seed 17000 \
+  --output /tmp/default-file-heldout-16.json \
+  --summary-output /tmp/default-file-heldout-16.txt
+```
+
+Held-out results from the local run:
+
+| theta | objective | placement_score | latency_p95_ms | placements |
+| --- | ---: | ---: | ---: | --- |
+| tuned file | `0.7111` | `0.5750` | `0.854` | `{'1': 4, '2': 8, '3': 4, '4': 0}` |
+| hand-set | `0.6141` | `0.4750` | `0.855` | `{'1': 2, '2': 8, '3': 6, '4': 0}` |
+
+The compute-node path for this repository is still `scv@192.168.1.6`, but the
+issue #22 workstation attempt could not reach it: direct SSH timed out, and the
+same target also timed out when probed through `ya.sergeiscv.ru`. Rerun the same
+commands there when SSH access is restored if strict acceptance requires compute
+node provenance.

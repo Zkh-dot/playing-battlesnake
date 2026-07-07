@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,20 @@ def suggest_theta(seed: int) -> dict[str, float]:
     return theta
 
 
+def mutate_theta(parent: dict[str, float], rng: random.Random, scale: float) -> dict[str, float]:
+    theta = dict(parent)
+    for key, (lower, upper) in THETA_SEARCH_SPACE.items():
+        if rng.random() >= 0.45:
+            continue
+        current = theta[key]
+        if current == 0.0:
+            value = rng.uniform(lower, upper)
+        else:
+            value = current * math.exp(rng.gauss(0.0, scale))
+        theta[key] = max(lower, min(upper, value))
+    return theta
+
+
 def scenario_suite_passes(theta: dict[str, float]) -> bool:
     strategy = StrategyStandard(theta=theta)
     return (
@@ -74,31 +89,35 @@ def run_trial(
     trial: int,
     theta: dict[str, float],
     games: int,
-    seed: int,
+    seeds: list[int],
     max_turns: int,
     min_food: int,
     latency_budget_ms: float,
 ) -> dict[str, Any]:
     if not scenario_suite_passes(theta):
         return {"trial": trial, "status": "pruned_scenario_suite", "score": None, "theta": theta}
-    report = run_paired_arena(
-        ArenaArgs(
-            games=games,
-            seed=seed,
-            max_turns=max_turns,
-            min_food=min_food,
-            latency_budget_ms=latency_budget_ms,
-            candidate_theta=theta,
+    reports = [
+        run_paired_arena(
+            ArenaArgs(
+                games=games,
+                seed=seed,
+                max_turns=max_turns,
+                min_food=min_food,
+                latency_budget_ms=latency_budget_ms,
+                candidate_theta=theta,
+            )
         )
-    )
-    if not report["candidate"]["latency_gate_passed"]:
-        return {"trial": trial, "status": "pruned_latency", "score": None, "theta": theta, "report": report}
+        for seed in seeds
+    ]
+    if any(not report["candidate"]["latency_gate_passed"] for report in reports):
+        return {"trial": trial, "status": "pruned_latency", "score": None, "theta": theta, "reports": reports}
+    score = sum(report["candidate"]["objective"] for report in reports) / len(reports)
     return {
         "trial": trial,
         "status": "ok",
-        "score": report["candidate"]["objective"],
+        "score": score,
         "theta": theta,
-        "report": report,
+        "reports": reports,
     }
 
 
@@ -106,13 +125,21 @@ def run_search(args: argparse.Namespace) -> dict[str, Any]:
     best_score = float("-inf")
     best_theta = dict(DEFAULT_STANDARD_THETA)
     trials: list[dict[str, Any]] = []
+    rng = random.Random(args.seed)
+    seeds = parse_seeds(args.train_seeds, args.seed)
     for trial in range(args.trials):
-        theta = dict(DEFAULT_STANDARD_THETA) if trial == 0 else suggest_theta(args.seed + trial)
+        if trial == 0:
+            theta = dict(DEFAULT_STANDARD_THETA)
+        elif args.search_mode == "mutate":
+            parent = best_theta if rng.random() < 0.8 else DEFAULT_STANDARD_THETA
+            theta = mutate_theta(parent, rng, args.mutation_scale)
+        else:
+            theta = suggest_theta(args.seed + trial)
         row = run_trial(
             trial=trial,
             theta=theta,
             games=args.games,
-            seed=args.seed,
+            seeds=seeds,
             max_turns=args.max_turns,
             min_food=args.min_food,
             latency_budget_ms=args.latency_budget_ms,
@@ -122,6 +149,15 @@ def run_search(args: argparse.Namespace) -> dict[str, Any]:
             best_score = float(row["score"])
             best_theta = theta
     return {"best_score": best_score, "best_theta": best_theta, "trials": trials}
+
+
+def parse_seeds(raw: str | None, fallback: int) -> list[int]:
+    if not raw:
+        return [fallback]
+    seeds = [int(part.strip()) for part in raw.split(",") if part.strip()]
+    if not seeds:
+        raise ValueError("train seeds must not be empty")
+    return seeds
 
 
 def _hungry_food_board() -> Board:
@@ -155,6 +191,9 @@ def main() -> int:
     parser.add_argument("--trials", type=int, default=20)
     parser.add_argument("--games", type=int, default=20)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--train-seeds", help="Comma-separated arena seed groups; defaults to --seed")
+    parser.add_argument("--search-mode", choices=["mutate", "random"], default="mutate")
+    parser.add_argument("--mutation-scale", type=float, default=0.16)
     parser.add_argument("--max-turns", type=int, default=120)
     parser.add_argument("--min-food", type=int, default=3)
     parser.add_argument("--latency-budget-ms", type=float, default=80.0)
