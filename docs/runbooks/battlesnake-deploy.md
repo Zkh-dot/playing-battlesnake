@@ -32,6 +32,13 @@ BATTLESNAKE_PORT=8000
 BATTLESNAKE_SEARCH_BUDGET_MS=400
 ```
 
+Routing behavior:
+
+- standard games with exactly two snakes use duel minimax;
+- standard games with three or more snakes use the native Standard FFA
+  strategy;
+- timeout/error fallback remains first-safe.
+
 Container-local health check:
 
 ```bash
@@ -125,6 +132,30 @@ Expected response is a legal move:
 The exact move can change as strategy logic changes. The important check is a
 successful JSON response with a `move` field containing `up`, `down`, `left`,
 or `right`.
+
+Standard FFA routing smoke:
+
+```bash
+curl -fsS -H "Content-Type: application/json" \
+  -d '{"game":{"id":"standard-ffa-smoke","ruleset":{"name":"standard","settings":{}}},"turn":1,"board":{"height":7,"width":7,"food":[{"x":3,"y":3}],"hazards":[],"snakes":[{"id":"me","name":"me","health":100,"body":[{"x":2,"y":2},{"x":2,"y":1},{"x":2,"y":0}]},{"id":"north","name":"north","health":100,"body":[{"x":6,"y":6},{"x":6,"y":5},{"x":6,"y":4}]},{"id":"east","name":"east","health":100,"body":[{"x":6,"y":0},{"x":5,"y":0},{"x":4,"y":0}]}]},"you":{"id":"me","name":"me","health":100,"body":[{"x":2,"y":2},{"x":2,"y":1},{"x":2,"y":0}]}}' \
+  https://ya.sergeiscv.ru/snake/move
+```
+
+Expected response is any legal move. This specifically exercises the production
+Standard FFA C path rather than the two-snake duel minimax route.
+
+## Ladder Observation
+
+After deploying a Standard FFA native image, watch at least the first ladder
+observation window before considering the rollout healthy:
+
+- no `/move` timeout or error spikes in container logs;
+- no unexpected first-safe fallback surge;
+- standard 3+ snake games return legal moves under the configured Battlesnake
+  timeout;
+- death-cause mix remains consistent with the Python dev-snake evidence from
+  `docs/standard-ffa-depth-search-ab.md` and
+  `docs/standard-ffa-native-port-report.md`.
 
 ## Nginx Route
 

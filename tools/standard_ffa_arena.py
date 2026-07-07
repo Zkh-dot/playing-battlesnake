@@ -18,6 +18,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from battlesnake.game import Board, Coord, Snake
+from battlesnake.battlesnake_native import standard_ffa_move
 from battlesnake.opponent_model_prior import LightGBMOpponentPrior
 from battlesnake.strategies.first_safe import StrategyFirstSafe
 from battlesnake.strategies.standard import StrategyStandard
@@ -36,24 +37,41 @@ DEATH_PENALTY = {
 }
 
 
+class StrategyNativeStandardFfa:
+    def __init__(self, *, theta: dict[str, float] | None = None, time_budget_ms: int = 80) -> None:
+        self.theta = theta
+        self.time_budget_ms = time_budget_ms
+        self.last_decision_record: dict[str, Any] | None = None
+
+    def decide(self, board: Board, snake_id: str) -> str:
+        move = standard_ffa_move(board, snake_id, self.time_budget_ms, self.theta)
+        self.last_decision_record = {
+            "fallback_reason": None,
+            "deepening": {"status": "native"},
+            "candidates": [],
+        }
+        return move
+
+
 def run_paired_arena(args: argparse.Namespace) -> dict[str, Any]:
     seeds = [args.seed + index for index in range(args.games)]
     candidate_theta = getattr(args, "candidate_theta", None)
     baseline_theta = getattr(args, "baseline_theta", None)
+    candidate_strategy = getattr(args, "candidate_strategy", "standard-v1")
     candidate_prior = getattr(args, "candidate_opponent_prior", "uniform")
     baseline_strategy = getattr(args, "baseline_strategy", "first-safe")
     baseline_prior = getattr(args, "baseline_opponent_prior", "uniform")
     if candidate_prior == "model" or baseline_prior == "model":
         LightGBMOpponentPrior().preload()
     candidate = [
-        _run_one(seed, "standard-v1", args.max_turns, args.min_food, candidate_theta, candidate_prior)
+        _run_one(seed, candidate_strategy, args.max_turns, args.min_food, candidate_theta, candidate_prior)
         for seed in seeds
     ]
     baseline = [
         _run_one(seed, baseline_strategy, args.max_turns, args.min_food, baseline_theta, baseline_prior)
         for seed in seeds
     ]
-    candidate_label = "standard-v1" if candidate_prior == "uniform" else f"standard-v1:{candidate_prior}"
+    candidate_label = candidate_strategy if candidate_prior == "uniform" else f"{candidate_strategy}:{candidate_prior}"
     baseline_label = baseline_strategy if baseline_strategy != "standard-v1" else f"standard-v1:{baseline_prior}"
     report = {
         "config": {
@@ -95,6 +113,7 @@ def _run_one(
     )
     strategies = {
         "standard-v1": StrategyStandard(theta=candidate_theta, opponent_prior=opponent_prior),
+        "standard-v1-native": StrategyNativeStandardFfa(theta=candidate_theta),
         "first-safe": StrategyFirstSafe(),
     }
     elimination_turns: dict[str, int] = {}
@@ -337,7 +356,8 @@ def main() -> int:
     parser.add_argument("--candidate-theta", type=Path, help="JSON theta override for standard-v1")
     parser.add_argument("--baseline-theta", type=Path, help="JSON theta override for baseline standard-v1")
     parser.add_argument("--candidate-opponent-prior", choices=["uniform", "model"], default="uniform")
-    parser.add_argument("--baseline-strategy", choices=["first-safe", "standard-v1"], default="first-safe")
+    parser.add_argument("--candidate-strategy", choices=["standard-v1", "standard-v1-native"], default="standard-v1")
+    parser.add_argument("--baseline-strategy", choices=["first-safe", "standard-v1", "standard-v1-native"], default="first-safe")
     parser.add_argument("--baseline-opponent-prior", choices=["uniform", "model"], default="uniform")
     parser.add_argument("--no-fail-on-latency", action="store_true")
     args = parser.parse_args()

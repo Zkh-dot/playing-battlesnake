@@ -97,6 +97,30 @@ static void test_standard_two_snakes_uses_minimax(void) {
     BoardFree(board);
 }
 
+static void test_standard_three_snakes_uses_standard_ffa(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord me_body[] = {{2, 2}, {2, 1}, {2, 0}};
+    Coord north_body[] = {{6, 6}, {6, 5}, {6, 4}};
+    Coord east_body[] = {{6, 0}, {5, 0}, {4, 0}};
+    Snake me = make_snake("me", me_body, 3, 90);
+    Snake north = make_snake("north", north_body, 3, 90);
+    Snake east = make_snake("east", east_body, 3, 90);
+    MoveDirection move = MOVE_INVALID;
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    config.default_time_budget_ms = 80;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &north));
+    assert(BoardAddSnake(board, &east));
+    assert(BsChooseMove(board, "me", &config, &move) == BS_STRATEGY_OK);
+    assert(move == MOVE_UP || move == MOVE_DOWN || move == MOVE_LEFT || move == MOVE_RIGHT);
+
+    SnakeFree(&me);
+    SnakeFree(&north);
+    SnakeFree(&east);
+    BoardFree(board);
+}
+
 static void test_null_config_uses_default_budget_and_fallback(void) {
     Board* board = BoardCreate(5, 5, "standard", 0);
     Coord body[] = {{2, 2}, {2, 1}, {2, 0}};
@@ -170,6 +194,7 @@ int main(void) {
     test_solo_two_snakes_uses_minimax();
     test_solo_two_snakes_uses_minimax_with_null_config();
     test_standard_two_snakes_uses_minimax();
+    test_standard_three_snakes_uses_standard_ffa();
     test_null_config_uses_default_budget_and_fallback();
     test_effective_budget_uses_configured_budget_without_request_timeout();
     test_effective_budget_clamps_to_request_timeout_margin();
