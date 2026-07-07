@@ -7,6 +7,9 @@
 BsStrategyConfig BsStrategyConfigDefault(void) {
     BsStrategyConfig config;
     config.default_time_budget_ms = 400;
+    config.game_timeout_ms = 0;
+    config.safety_margin_ms = 150;
+    config.min_time_budget_ms = 50;
     return config;
 }
 
@@ -25,6 +28,27 @@ static BsStrategyStatus fallback_move(const Board* board, const char* snake_id, 
     return BS_STRATEGY_FALLBACK_USED;
 }
 
+int BsStrategyEffectiveBudgetMs(const BsStrategyConfig* config) {
+    BsStrategyConfig effective = BsStrategyConfigDefault();
+    if (config != 0) {
+        effective = *config;
+    }
+
+    int budget = effective.default_time_budget_ms > 0 ? effective.default_time_budget_ms : 1;
+    if (effective.game_timeout_ms > 0) {
+        int min_budget = effective.min_time_budget_ms > 0 ? effective.min_time_budget_ms : 1;
+        int safety_margin = effective.safety_margin_ms > 0 ? effective.safety_margin_ms : 0;
+        int deadline_budget = effective.game_timeout_ms - safety_margin;
+        if (deadline_budget < min_budget) {
+            deadline_budget = min_budget;
+        }
+        if (budget > deadline_budget) {
+            budget = deadline_budget;
+        }
+    }
+    return budget > 0 ? budget : 1;
+}
+
 BsStrategyStatus BsChooseMove(
     const Board* board,
     const char* snake_id,
@@ -41,10 +65,7 @@ BsStrategyStatus BsChooseMove(
         return BS_STRATEGY_ERROR;
     }
 
-    int budget = BsStrategyConfigDefault().default_time_budget_ms;
-    if (config != 0) {
-        budget = config->default_time_budget_ms;
-    }
+    int budget = BsStrategyEffectiveBudgetMs(config);
 
     /* Minimax search is applied to 1v1 duels. Battlesnake ladder duels are
      * delivered as standard ruleset games with two snakes, while local duel

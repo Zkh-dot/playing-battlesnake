@@ -49,6 +49,7 @@ DEFAULT_SNAKE_COLOR = "#f59e0b"
 DEFAULT_GAME_TIMEOUT_MS = 500
 DEFAULT_MOVE_SAFETY_MARGIN_MS = 150
 MIN_MOVE_DEADLINE_MS = 50
+DEFAULT_SEARCH_BUDGET_MS = 400
 
 # Standard FFA strategy variants selectable via STRATEGY_VARIANT. New dev
 # snake variants register here; duel/royale/constrictor routing is unaffected.
@@ -88,6 +89,21 @@ def strategy_variant() -> str:
     return os.environ.get("STRATEGY_VARIANT", DEFAULT_STRATEGY_VARIANT).strip() or DEFAULT_STRATEGY_VARIANT
 
 
+def _env_int(name: str, fallback: int, minimum: int = 1) -> int:
+    try:
+        value = int(os.environ.get(name, fallback))
+    except ValueError:
+        return fallback
+    return value if value >= minimum else fallback
+
+
+def effective_search_budget_ms(game_timeout_ms: int | None) -> int:
+    """Return the minimax budget clamped to the request deadline."""
+
+    env_budget = _env_int("BATTLESNAKE_SEARCH_BUDGET_MS", DEFAULT_SEARCH_BUDGET_MS)
+    return min(env_budget, move_deadline_ms(game_timeout_ms))
+
+
 def select_strategy(state: GameState) -> Strategy:
     """Select a strategy implementation from the Battlesnake ruleset."""
 
@@ -97,7 +113,7 @@ def select_strategy(state: GameState) -> Strategy:
     if ruleset_name == "constrictor":
         return StrategyConstrictor()
     if ruleset_name in {"solo", "standard"} and len(state.board.snakes) == 2:
-        return StrategyDuel()
+        return StrategyDuel(time_budget_ms=effective_search_budget_ms(state.game.timeout))
 
     variant = strategy_variant()
     factory = STANDARD_VARIANTS.get(variant)
@@ -111,10 +127,7 @@ def move_deadline_ms(game_timeout_ms: int | None) -> int:
     """Return the internal decide deadline for a game timeout."""
 
     timeout = game_timeout_ms or DEFAULT_GAME_TIMEOUT_MS
-    try:
-        margin = int(os.environ.get("MOVE_SAFETY_MARGIN_MS", DEFAULT_MOVE_SAFETY_MARGIN_MS))
-    except ValueError:
-        margin = DEFAULT_MOVE_SAFETY_MARGIN_MS
+    margin = _env_int("MOVE_SAFETY_MARGIN_MS", DEFAULT_MOVE_SAFETY_MARGIN_MS, minimum=0)
     return max(MIN_MOVE_DEADLINE_MS, timeout - margin)
 
 

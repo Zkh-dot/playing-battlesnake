@@ -8,7 +8,8 @@ import time
 import unittest
 from contextlib import closing
 
-from benchmarks.battlesnake_payloads import payload_by_name
+from benchmarks.battlesnake_payloads import move_payload, payload_by_name
+from benchmarks.scenarios import SCENARIOS
 
 
 def find_free_port() -> int:
@@ -71,6 +72,29 @@ class NativeServerEquivalenceTests(unittest.TestCase):
                 with self.subTest(name=name):
                     response = post_move(port, payload_by_name(name))
                     self.assertIn(response["move"], {"up", "down", "left", "right"})
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    def test_native_server_clamps_search_budget_to_request_timeout(self) -> None:
+        port = find_free_port()
+        proc = subprocess.Popen(
+            ["build/battlesnake-server"],
+            env={**os.environ, "BATTLESNAKE_PORT": str(port), "BATTLESNAKE_SEARCH_BUDGET_MS": "400"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            wait_for_port(port)
+            scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
+            body = move_payload(scenario, timeout=180)
+
+            started = time.monotonic()
+            response = post_move(port, body)
+            elapsed_ms = (time.monotonic() - started) * 1000
+
+            self.assertIn(response["move"], {"up", "down", "left", "right"})
+            self.assertLess(elapsed_ms, 180)
         finally:
             proc.terminate()
             proc.wait(timeout=5)

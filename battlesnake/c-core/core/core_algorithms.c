@@ -764,6 +764,8 @@ typedef struct {
     CoreSearchWorkspace workspace;
     CoreSearchState* state;
     bool tt_enabled;
+    bool root_best_valid;
+    MoveDirection root_best_move;
     MoveDirection principal_variation[CORE_MINIMAX_MAX_DEPTH + 1];
     MoveDirection killer_moves[CORE_MINIMAX_MAX_DEPTH + 1][2];
     int history_scores[4];
@@ -1280,6 +1282,10 @@ static CoreStatus core_minimax_search(
         if (best_score > alpha) {
             alpha = best_score;
         }
+        if (ply == 0 && core_valid_move_direction(best_move)) {
+            context->root_best_valid = true;
+            context->root_best_move = best_move;
+        }
         if (alpha >= beta) {
             break;
         }
@@ -1355,6 +1361,8 @@ CoreStatus CoreMinimaxMoveWithStats(
     context.timer = core_search_timer_start(config.time_budget_ms);
     context.config = config;
     context.stats = stats;
+    context.root_best_valid = true;
+    context.root_best_move = completed_best;
     bool fixed_depth_requested = config.fixed_depth > 0;
     int max_depth = fixed_depth_requested ? config.fixed_depth : CORE_MINIMAX_MAX_DEPTH;
     size_t tt_capacity = fixed_depth_requested ? (1u << 12) : (1u << 20);
@@ -1410,11 +1418,16 @@ CoreStatus CoreMinimaxMoveWithStats(
             return status;
         }
         if (iteration_timed_out) {
+            if (context.root_best_valid) {
+                completed_best = context.root_best_move;
+            }
             timed_out = true;
             break;
         }
 
         completed_best = candidate;
+        context.root_best_valid = true;
+        context.root_best_move = completed_best;
         preferred_move = candidate;
         if (context.config.enable_move_ordering) {
             context.principal_variation[0] = candidate;

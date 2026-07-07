@@ -117,6 +117,53 @@ static void test_null_config_uses_default_budget_and_fallback(void) {
     BoardFree(board);
 }
 
+static void test_effective_budget_uses_configured_budget_without_request_timeout(void) {
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    config.default_time_budget_ms = 275;
+    assert(BsStrategyEffectiveBudgetMs(&config) == 275);
+}
+
+static void test_effective_budget_clamps_to_request_timeout_margin(void) {
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    config.default_time_budget_ms = 400;
+    config.game_timeout_ms = 500;
+    config.safety_margin_ms = 150;
+    config.min_time_budget_ms = 50;
+    assert(BsStrategyEffectiveBudgetMs(&config) == 350);
+}
+
+static void test_effective_budget_preserves_smaller_env_budget(void) {
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    config.default_time_budget_ms = 25;
+    config.game_timeout_ms = 500;
+    config.safety_margin_ms = 150;
+    config.min_time_budget_ms = 50;
+    assert(BsStrategyEffectiveBudgetMs(&config) == 25);
+}
+
+static void test_effective_budget_floors_tiny_request_timeout(void) {
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    config.default_time_budget_ms = 400;
+    config.game_timeout_ms = 100;
+    config.safety_margin_ms = 150;
+    config.min_time_budget_ms = 50;
+    assert(BsStrategyEffectiveBudgetMs(&config) == 50);
+}
+
+static void test_effective_budget_allows_zero_margin(void) {
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    config.default_time_budget_ms = 400;
+    config.game_timeout_ms = 500;
+    config.safety_margin_ms = 0;
+    config.min_time_budget_ms = 50;
+    assert(BsStrategyEffectiveBudgetMs(&config) == 400);
+}
+
 int main(void) {
     test_single_snake_uses_safe_fallback();
     test_missing_snake_is_error();
@@ -124,5 +171,10 @@ int main(void) {
     test_solo_two_snakes_uses_minimax_with_null_config();
     test_standard_two_snakes_uses_minimax();
     test_null_config_uses_default_budget_and_fallback();
+    test_effective_budget_uses_configured_budget_without_request_timeout();
+    test_effective_budget_clamps_to_request_timeout_margin();
+    test_effective_budget_preserves_smaller_env_budget();
+    test_effective_budget_floors_tiny_request_timeout();
+    test_effective_budget_allows_zero_margin();
     return 0;
 }
