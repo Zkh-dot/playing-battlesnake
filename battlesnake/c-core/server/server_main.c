@@ -69,6 +69,8 @@ static BsServerConfig config_from_env(void) {
     config.io_timeout_ms = parse_env_int("BATTLESNAKE_IO_TIMEOUT_MS", 2000, 1);
     config.strategy = BsStrategyConfigDefault();
     config.strategy.default_time_budget_ms = parse_env_int("BATTLESNAKE_SEARCH_BUDGET_MS", 400, 1);
+    config.strategy.safety_margin_ms = parse_env_int("BATTLESNAKE_MOVE_SAFETY_MARGIN_MS", 150, 0);
+    config.strategy.min_time_budget_ms = parse_env_int("BATTLESNAKE_MIN_SEARCH_BUDGET_MS", 50, 1);
     return config;
 }
 

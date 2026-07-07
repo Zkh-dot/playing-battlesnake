@@ -4,6 +4,9 @@
 
 typedef struct {
     int default_time_budget_ms;
+    int game_timeout_ms;
+    int safety_margin_ms;
+    int min_time_budget_ms;
 } BsStrategyConfig;
 
 typedef enum {
@@ -13,6 +16,7 @@ typedef enum {
 } BsStrategyStatus;
 
 BsStrategyConfig BsStrategyConfigDefault(void);
+int BsStrategyEffectiveBudgetMs(const BsStrategyConfig* config);
 BsStrategyStatus BsChooseMove(
     const Board* board,
     const char* snake_id,

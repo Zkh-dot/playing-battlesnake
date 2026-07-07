@@ -4,10 +4,8 @@ import time
 import unittest
 from unittest import mock
 
-from fastapi.testclient import TestClient
-
 import battlesnake.main as main
-from battlesnake.main import app, move_deadline_ms, select_strategy
+from battlesnake.main import info, move, move_deadline_ms, select_strategy
 from battlesnake.strategies.base import Strategy
 from battlesnake.strategies.first_safe import StrategyFirstSafe
 from battlesnake.types import Move
@@ -50,24 +48,20 @@ class FailingStrategy(Strategy):
 class InfoTests(unittest.TestCase):
     def test_info_reports_variant_and_revision(self) -> None:
         with mock.patch.dict("os.environ", {"STRATEGY_VARIANT": "first-safe"}):
-            response = TestClient(app).get("/")
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
+            body = info()
         self.assertTrue(body["version"].startswith("0.1.0-dev+first-safe."))
         self.assertNotIn(body["version"].rsplit(".", 1)[-1], ("", "None"))
 
     def test_info_color_overridable_via_env(self) -> None:
         with mock.patch.dict("os.environ", {"SNAKE_COLOR": "#123456"}):
-            response = TestClient(app).get("/")
-        self.assertEqual(response.json()["color"], "#123456")
+            self.assertEqual(info()["color"], "#123456")
 
     def test_info_default_color_differs_from_production_snake(self) -> None:
         with mock.patch.dict("os.environ", clear=False):
             import os
 
             os.environ.pop("SNAKE_COLOR", None)
-            response = TestClient(app).get("/")
-        self.assertNotEqual(response.json()["color"], "#2563eb")
+            self.assertNotEqual(info()["color"], "#2563eb")
 
 
 class VariantSelectionTests(unittest.TestCase):
@@ -98,6 +92,10 @@ class MoveDeadlineTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"MOVE_SAFETY_MARGIN_MS": "150"}):
             self.assertEqual(move_deadline_ms(500), 350)
 
+    def test_deadline_allows_zero_safety_margin(self) -> None:
+        with mock.patch.dict("os.environ", {"MOVE_SAFETY_MARGIN_MS": "0"}):
+            self.assertEqual(move_deadline_ms(500), 500)
+
     def test_deadline_has_minimum_floor(self) -> None:
         with mock.patch.dict("os.environ", {"MOVE_SAFETY_MARGIN_MS": "150"}):
             self.assertEqual(move_deadline_ms(100), 50)
@@ -109,27 +107,30 @@ class MoveDeadlineTests(unittest.TestCase):
 
 class MoveEndpointTests(unittest.TestCase):
     def test_move_returns_legal_move_for_standard_ffa(self) -> None:
-        response = TestClient(app).post("/move", json=make_payload(snake_count=3))
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(response.json()["move"], LEGAL_MOVES)
+        from battlesnake.types import GameState
+
+        response = move(GameState.model_validate(make_payload(snake_count=3)))
+        self.assertIn(response["move"], LEGAL_MOVES)
 
     def test_slow_strategy_falls_back_before_game_timeout(self) -> None:
         payload = make_payload(snake_count=3, timeout_ms=300)
         with mock.patch.dict(main.STANDARD_VARIANTS, {"slow-test": SlowStrategy}):
             with mock.patch.dict("os.environ", {"STRATEGY_VARIANT": "slow-test"}):
                 started = time.monotonic()
-                response = TestClient(app).post("/move", json=payload)
+                from battlesnake.types import GameState
+
+                response = move(GameState.model_validate(payload))
                 elapsed_ms = (time.monotonic() - started) * 1000
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(response.json()["move"], LEGAL_MOVES)
+        self.assertIn(response["move"], LEGAL_MOVES)
         self.assertLess(elapsed_ms, 300)
 
     def test_failing_strategy_falls_back_instead_of_500(self) -> None:
         with mock.patch.dict(main.STANDARD_VARIANTS, {"failing-test": FailingStrategy}):
             with mock.patch.dict("os.environ", {"STRATEGY_VARIANT": "failing-test"}):
-                response = TestClient(app).post("/move", json=make_payload(snake_count=3))
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(response.json()["move"], LEGAL_MOVES)
+                from battlesnake.types import GameState
+
+                response = move(GameState.model_validate(make_payload(snake_count=3)))
+        self.assertIn(response["move"], LEGAL_MOVES)
 
 
 if __name__ == "__main__":

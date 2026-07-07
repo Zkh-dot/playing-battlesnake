@@ -1,0 +1,122 @@
+[
+  {
+    "id": "6e37c0ea-t163",
+    "turn": 163,
+    "previous_direction": "left",
+    "expected_move": "down",
+    "payload": {
+      "game": {
+        "id": "6e37c0ea-049e-4eb4-aa72-e7df0992b946",
+        "ruleset": {"name": "standard", "version": "v1", "settings": {"hazardDamagePerTurn": 15}},
+        "timeout": 500
+      },
+      "turn": 163,
+      "board": {
+        "height": 11,
+        "width": 11,
+        "food": [],
+        "hazards": [],
+        "snakes": [
+          {
+            "id": "me",
+            "name": "me",
+            "health": 90,
+            "body": [{"x": 0, "y": 3}, {"x": 0, "y": 4}, {"x": 1, "y": 4}, {"x": 1, "y": 3}, {"x": 2, "y": 3}]
+          },
+          {
+            "id": "opponent",
+            "name": "opponent",
+            "health": 90,
+            "body": [{"x": 9, "y": 9}, {"x": 9, "y": 8}, {"x": 9, "y": 7}]
+          }
+        ]
+      },
+      "you": {
+        "id": "me",
+        "name": "me",
+        "health": 90,
+        "body": [{"x": 0, "y": 3}, {"x": 0, "y": 4}, {"x": 1, "y": 4}, {"x": 1, "y": 3}, {"x": 2, "y": 3}]
+      }
+    }
+  },
+  {
+    "id": "f398161b-t66",
+    "turn": 66,
+    "previous_direction": "right",
+    "expected_move": "up",
+    "payload": {
+      "game": {
+        "id": "f398161b-8a3d-49d7-aea6-47a7e68b7a8b",
+        "ruleset": {"name": "standard", "version": "v1", "settings": {"hazardDamagePerTurn": 15}},
+        "timeout": 500
+      },
+      "turn": 66,
+      "board": {
+        "height": 11,
+        "width": 11,
+        "food": [],
+        "hazards": [],
+        "snakes": [
+          {
+            "id": "me",
+            "name": "me",
+            "health": 90,
+            "body": [{"x": 10, "y": 4}, {"x": 10, "y": 3}, {"x": 9, "y": 3}, {"x": 9, "y": 4}, {"x": 8, "y": 4}]
+          },
+          {
+            "id": "opponent",
+            "name": "opponent",
+            "health": 90,
+            "body": [{"x": 1, "y": 9}, {"x": 1, "y": 8}, {"x": 1, "y": 7}]
+          }
+        ]
+      },
+      "you": {
+        "id": "me",
+        "name": "me",
+        "health": 90,
+        "body": [{"x": 10, "y": 4}, {"x": 10, "y": 3}, {"x": 9, "y": 3}, {"x": 9, "y": 4}, {"x": 8, "y": 4}]
+      }
+    }
+  },
+  {
+    "id": "31fd7c91-t37",
+    "turn": 37,
+    "previous_direction": "down",
+    "expected_move": "right",
+    "payload": {
+      "game": {
+        "id": "31fd7c91-2d5f-4c45-a42f-b3b63760161b",
+        "ruleset": {"name": "standard", "version": "v1", "settings": {"hazardDamagePerTurn": 15}},
+        "timeout": 500
+      },
+      "turn": 37,
+      "board": {
+        "height": 11,
+        "width": 11,
+        "food": [],
+        "hazards": [],
+        "snakes": [
+          {
+            "id": "me",
+            "name": "me",
+            "health": 90,
+            "body": [{"x": 7, "y": 0}, {"x": 7, "y": 1}, {"x": 6, "y": 1}, {"x": 6, "y": 0}, {"x": 5, "y": 0}]
+          },
+          {
+            "id": "opponent",
+            "name": "opponent",
+            "health": 90,
+            "body": [{"x": 1, "y": 9}, {"x": 1, "y": 8}, {"x": 1, "y": 7}]
+          }
+        ]
+      },
+      "you": {
+        "id": "me",
+        "name": "me",
+        "health": 90,
+        "body": [{"x": 7, "y": 0}, {"x": 7, "y": 1}, {"x": 6, "y": 1}, {"x": 6, "y": 0}, {"x": 5, "y": 0}]
+      }
+    }
+  }
+]

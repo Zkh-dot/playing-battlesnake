@@ -480,11 +480,17 @@ BsHttpResult BsHandleHttpRequest(
         return bs_write_response(parsed.version, 200, empty_body, response, response_capacity);
     }
 
+    BsStrategyConfig request_strategy_config = BsStrategyConfigDefault();
+    if (strategy_config != 0) {
+        request_strategy_config = *strategy_config;
+    }
+    request_strategy_config.game_timeout_ms = game_request.timeout_ms;
+
     MoveDirection move = MOVE_INVALID;
     BsStrategyStatus strategy_status = BsChooseMove(
         game_request.board,
         game_request.you_id,
-        strategy_config,
+        &request_strategy_config,
         &move
     );
     if (strategy_status == BS_STRATEGY_ERROR) {
