@@ -13,6 +13,7 @@ from battlesnake.core.evaluation import WEIGHTS as EVALUATION_WEIGHTS
 from battlesnake.core.evaluation import evaluate
 from battlesnake.core.flood_fill import reachable_space
 from battlesnake.game import Board, Coord
+from battlesnake.opponent_model_prior import LightGBMOpponentPrior, uniform_safe_priors
 from battlesnake.strategies.base import Strategy
 from battlesnake.strategies.first_safe import StrategyFirstSafe
 from battlesnake.strategies.standard_gates import (
@@ -67,14 +68,21 @@ class StrategyStandard(Strategy):
         theta: dict[str, float] | None = None,
         max_scenarios: int = 12,
         deadline_ms: int = 80,
+        opponent_prior: str = "uniform",
     ) -> None:
         self.theta = dict(DEFAULT_STANDARD_THETA)
         if theta:
             self.theta.update(theta)
         self.max_scenarios = max(1, max_scenarios)
         self.deadline_ms = max(1, deadline_ms)
+        self.opponent_prior = opponent_prior
+        self.current_turn = 0
+        self._model_prior = LightGBMOpponentPrior() if opponent_prior == "model" else None
         self._fallback = StrategyFirstSafe()
         self.last_decision_record: dict[str, Any] | None = None
+
+    def set_context(self, *, turn: int) -> None:
+        self.current_turn = turn
 
     def decide(self, board: Board, snake_id: str) -> Move | str:
         """Choose a Standard FFA move using deterministic root scenario scoring."""
@@ -91,7 +99,7 @@ class StrategyStandard(Strategy):
         try:
             gates = classify_standard_ffa_candidates(board, snake_id)
             candidates = gates.eligible_candidates
-            priors = _opponent_priors(board, snake_id)
+            priors = self._opponent_priors(board, snake_id)
             if not candidates:
                 move = gates.least_bad_candidate.move
                 record = _decision_record(
@@ -100,6 +108,7 @@ class StrategyStandard(Strategy):
                     chosen_move=move,
                     gates=gates.to_dict(),
                     opponent_priors=priors,
+                    opponent_prior_status=self._opponent_prior_status(),
                     candidate_scores=[
                         _unscored_candidate_record(candidate, reason="all_candidates_gated")
                         for candidate in gates.candidates
@@ -132,6 +141,7 @@ class StrategyStandard(Strategy):
                 chosen_move=move,
                 gates=gates.to_dict(),
                 opponent_priors=priors,
+                opponent_prior_status=self._opponent_prior_status(),
                 candidate_scores=candidate_scores,
                 started=started,
             )
@@ -146,8 +156,23 @@ class StrategyStandard(Strategy):
                 "latency_ms": _elapsed_ms(started),
                 "candidates": [],
                 "opponent_priors": {},
+                "opponent_prior_status": self._opponent_prior_status(),
             }
             return move, record
+
+    def _opponent_priors(self, board: Board, snake_id: str) -> dict[str, list[tuple[str, float]]]:
+        if self._model_prior is None:
+            return uniform_safe_priors(board, snake_id)
+        return self._model_prior.priors(board, snake_id, turn=self.current_turn)
+
+    def _opponent_prior_status(self) -> dict[str, Any]:
+        if self._model_prior is None:
+            return {"source": "uniform", "status": "uniform", "latency_ms": 0.0}
+        return {
+            "source": "model",
+            "status": self._model_prior.last_status,
+            "latency_ms": self._model_prior.last_latency_ms,
+        }
 
     def _score_candidate(
         self,
@@ -245,6 +270,7 @@ def _decision_record(
     chosen_move: str,
     gates: dict[str, Any],
     opponent_priors: dict[str, list[tuple[str, float]]],
+    opponent_prior_status: dict[str, Any],
     candidate_scores: list[dict[str, Any]],
     started: float,
     fallback_reason: str | None = None,
@@ -262,6 +288,7 @@ def _decision_record(
             "head": _coord_dict(board.head(snake_id)),
         },
         "gates": gates,
+        "opponent_prior_status": opponent_prior_status,
         "candidates": candidate_scores,
         "opponent_priors": {
             opponent_id: [
@@ -292,18 +319,6 @@ def _elapsed_ms(started: float) -> float:
 
 def _coord_dict(coord: Coord) -> dict[str, int]:
     return {"x": coord.x, "y": coord.y}
-
-
-def _opponent_priors(board: Board, snake_id: str) -> dict[str, list[tuple[str, float]]]:
-    priors: dict[str, list[tuple[str, float]]] = {}
-    for opponent_id in sorted(board.snakes):
-        if opponent_id == snake_id:
-            continue
-        safe_moves = [move for move in MOVE_ORDER if move in set(board.safe_moves(opponent_id))]
-        moves = safe_moves or list(MOVE_ORDER)
-        probability = 1.0 / len(moves)
-        priors[opponent_id] = [(move, probability) for move in moves]
-    return priors
 
 
 def _scenario_set(

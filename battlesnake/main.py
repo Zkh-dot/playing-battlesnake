@@ -42,7 +42,6 @@ from battlesnake.strategies.standard import StrategyStandard
 from battlesnake.types import GameState, Move
 
 logger = logging.getLogger("battlesnake.dev_snake")
-
 app = FastAPI(title="Battlesnake Dev Snake", version="0.1.0")
 
 BASE_VERSION = "0.1.0-dev"
@@ -180,6 +179,8 @@ def move(state: GameState) -> dict[str, str]:
 
     board = board_from_game_state(state)
     strategy = select_strategy(state)
+    if hasattr(strategy, "set_context"):
+        strategy.set_context(turn=state.turn)
     deadline_ms = move_deadline_ms(state.game.timeout)
     fallback_reason: str | None = None
 
