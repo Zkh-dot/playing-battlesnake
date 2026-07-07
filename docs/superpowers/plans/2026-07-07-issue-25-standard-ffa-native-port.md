@@ -4,8 +4,8 @@
 
 1. Add a C `standard_ffa` core module for the frozen deterministic strategy.
 2. Keep two-snake standard/solo routing on duel minimax.
-3. Route standard games with three or more snakes to the native Standard FFA
-   strategy.
+3. Keep the production route conservative until native selected-move parity is
+   broad enough for Standard FFA traffic.
 4. Expose the C strategy through the Python extension for selected-move parity
    tests.
 5. Add parity/routing tests and an arena option for native-vs-Python
@@ -19,7 +19,7 @@ Implemented:
 - `battlesnake/c-core/core/standard_ffa.c`
 - `battlesnake/c-core/core/standard_ffa.h`
 - `standard_ffa_move(...)` extension function
-- production routing in `battlesnake/c-core/server/battlesnake_strategy.c`
+- conservative production routing in `battlesnake/c-core/server/battlesnake_strategy.c`
 - `standard-v1-native` arena strategy option
 - parity test corpus in `tests/test_issue_25_standard_ffa_native.py`
 - C routing coverage in `tests/c/test_battlesnake_strategy.c`
@@ -28,6 +28,11 @@ Implemented:
 The native port uses deterministic/uniform priors. The LightGBM prior is not
 ported because #23 was a no-go. The #24 guardrail is included conservatively
 for forced solo/frozen-obstacle traps.
+
+After review, standard 3+ snake production traffic remains on the prior
+first-safe fallback instead of routing into the C scorer. The native scorer is
+kept behind the Python extension and arena harness until a broader parity corpus
+is green.
 
 ## Validation
 

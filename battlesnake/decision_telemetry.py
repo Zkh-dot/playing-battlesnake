@@ -44,12 +44,13 @@ def record_game_end(state: GameState) -> dict[str, Any] | None:
 
     if not telemetry_enabled():
         return None
+    last_decision = _last_decisions.pop(state.game.id, None)
     record = {
         "type": "game_end",
         "game_id": state.game.id,
         "turn": state.turn,
         "snake_id": state.you.id,
-        "death_cause": classify_death_cause(state, _last_decisions.get(state.game.id)),
+        "death_cause": classify_death_cause(state, last_decision),
     }
     _enqueue(record)
     return record
@@ -100,6 +101,7 @@ def _chosen_candidate(last_decision: dict[str, Any] | None) -> dict[str, Any] | 
 
 
 def _enqueue(record: dict[str, Any]) -> None:
+    _pending[:] = [future for future in _pending if not future.done()]
     future = _writer.submit(_append_jsonl, decision_log_path(), record)
     _pending.append(future)
 

@@ -1,7 +1,6 @@
 #include "battlesnake_strategy.h"
 
 #include "../core/core_algorithms.h"
-#include "../core/standard_ffa.h"
 
 #include <string.h>
 
@@ -75,17 +74,6 @@ BsStrategyStatus BsChooseMove(
         (strcmp(board->ruleset_name, "solo") == 0 || strcmp(board->ruleset_name, "standard") == 0) &&
         board->snake_count == 2) {
         CoreStatus status = CoreMinimaxMove(board, snake_id, budget, out_move);
-        if (status == CORE_ERROR) {
-            return BS_STRATEGY_ERROR;
-        }
-        if (status == CORE_OK && is_legal_move(*out_move)) {
-            return BS_STRATEGY_OK;
-        }
-    }
-
-    if (board->ruleset_name != 0 && strcmp(board->ruleset_name, "standard") == 0 && board->snake_count >= 3) {
-        CoreStandardFfaConfig standard_config = CoreStandardFfaConfigDefault(budget);
-        CoreStatus status = CoreStandardFfaMove(board, snake_id, &standard_config, out_move);
         if (status == CORE_ERROR) {
             return BS_STRATEGY_ERROR;
         }

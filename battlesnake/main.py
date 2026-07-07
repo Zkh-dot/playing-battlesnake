@@ -15,6 +15,7 @@ A/B runs can pin exact configurations without code edits:
 from __future__ import annotations
 
 import logging
+import json
 import os
 import subprocess
 import sys
@@ -54,9 +55,14 @@ DEFAULT_SEARCH_BUDGET_MS = 400
 
 # Standard FFA strategy variants selectable via STRATEGY_VARIANT. New dev
 # snake variants register here; duel/royale/constrictor routing is unaffected.
+def _standard_v1_strategy() -> Strategy:
+    theta_path = Path(__file__).resolve().parent.parent / "configs" / "evaluation_weights" / "standard-ffa-v1-tuned.json"
+    return StrategyStandard(theta=json.loads(theta_path.read_text(encoding="utf-8")))
+
+
 STANDARD_VARIANTS: dict[str, Callable[[], Strategy]] = {
     "first-safe": StrategyFirstSafe,
-    "standard-v1": StrategyStandard,
+    "standard-v1": _standard_v1_strategy,
 }
 
 _decide_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="decide")
@@ -207,7 +213,7 @@ def move(state: GameState) -> dict[str, str]:
 
     selected_value = move_response_value(selected_move)
     try:
-        strategy_record = getattr(strategy, "last_decision_record", None)
+        strategy_record = None if fallback_reason == "endpoint_deadline" else getattr(strategy, "last_decision_record", None)
         record = dict(strategy_record) if isinstance(strategy_record, dict) else {}
         record.update(
             {

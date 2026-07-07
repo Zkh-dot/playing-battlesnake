@@ -1,5 +1,6 @@
 #include "standard_ffa.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -46,6 +47,18 @@ static int standard_manhattan(Coord left, Coord right) {
 static bool standard_coord_in_array(const Coord* coords, int count, Coord coord) {
     for (int i = 0; i < count; i++) {
         if (CoordEquals(coords[i], coord)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool standard_coord_in_snake_body(const Snake* snake, Coord coord) {
+    if (snake == NULL) {
+        return false;
+    }
+    for (int i = 0; i < snake->body_len; i++) {
+        if (CoordEquals(snake->body[i], coord)) {
             return true;
         }
     }
@@ -203,7 +216,7 @@ static void standard_classify_candidates(
         candidate->food = standard_coord_in_array(board->food, board->food_count, candidate->target);
         candidate->hazard = standard_coord_in_array(board->hazards, board->hazard_count, candidate->target);
         candidate->score = STANDARD_TERMINAL_LOSS;
-        bool hazard_starvation = candidate->hazard && snake->health <= board->hazard_damage + 1;
+        bool hazard_starvation = candidate->hazard && !candidate->food && snake->health <= board->hazard_damage + 1;
 
         if (candidate->in_bounds && candidate->safe_by_rules && !hazard_starvation) {
             Board* after = standard_board_after_own_static(board, snake_id, (MoveDirection)move);
@@ -224,16 +237,18 @@ static void standard_classify_candidates(
         } else if (!candidate->safe_by_rules) {
             candidate->terminal = true;
             candidate->severity = 40;
-            for (int i = 0; i < board->snake_count; i++) {
-                const Snake* other = &board->snakes[i];
-                if (strcmp(other->id, snake_id) == 0 || other->body_len == 0) {
-                    continue;
-                }
-                if (standard_snake_length(other) >= own_length) {
-                    Coord other_head = SnakeHead(other);
-                    for (int other_move = MOVE_UP; other_move <= MOVE_RIGHT; other_move++) {
-                        if (CoordEquals(candidate->target, MoveStep(other_head, (MoveDirection)other_move))) {
-                            candidate->severity = 20;
+            if (!standard_coord_in_snake_body(snake, candidate->target)) {
+                for (int i = 0; i < board->snake_count; i++) {
+                    const Snake* other = &board->snakes[i];
+                    if (strcmp(other->id, snake_id) == 0 || other->body_len == 0) {
+                        continue;
+                    }
+                    if (standard_snake_length(other) >= own_length) {
+                        Coord other_head = SnakeHead(other);
+                        for (int other_move = MOVE_UP; other_move <= MOVE_RIGHT; other_move++) {
+                            if (CoordEquals(candidate->target, MoveStep(other_head, (MoveDirection)other_move))) {
+                                candidate->severity = 20;
+                            }
                         }
                     }
                 }
@@ -422,6 +437,41 @@ static double standard_head_pressure(
     return score;
 }
 
+static int standard_path_distance(const Board* board, const char* snake_id, Coord target) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        return INT_MAX;
+    }
+    Coord* path = NULL;
+    int path_count = 0;
+    CoreStatus status = CoreShortestPath(board, SnakeHead(snake), target, snake_id, &path, &path_count);
+    if (status != CORE_OK || path_count <= 0) {
+        free(path);
+        return INT_MAX;
+    }
+    int distance = path_count - 1;
+    free(path);
+    return distance;
+}
+
+static bool standard_wins_food_race(const Board* board, const char* snake_id, Coord food) {
+    int my_distance = standard_path_distance(board, snake_id, food);
+    if (my_distance == INT_MAX) {
+        return false;
+    }
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* other = &board->snakes[i];
+        if (strcmp(other->id, snake_id) == 0 || other->body_len == 0) {
+            continue;
+        }
+        int other_distance = standard_path_distance(board, other->id, food);
+        if (other_distance != INT_MAX && other_distance <= my_distance) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static double standard_food_adjustment(
     const Board* board,
     const Board* next,
@@ -454,7 +504,7 @@ static double standard_food_adjustment(
         return score - config->w_contested_food;
     }
     MoveDirection safe_moves[4];
-    if (BoardSafeMoves(next, snake_id, safe_moves) <= 0) {
+    if (BoardSafeMoves(next, snake_id, safe_moves) <= 0 || !standard_wins_food_race(board, snake_id, candidate->target)) {
         score -= config->w_contested_food;
     }
     return score;
@@ -642,6 +692,12 @@ CoreStatus CoreStandardFfaMove(
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     if (snake == NULL || snake->body_len == 0) {
         return CORE_ERROR;
+    }
+    if (board->snake_count - 1 > STANDARD_MAX_SNAKES) {
+        MoveDirection safe_moves[4];
+        int safe_count = BoardSafeMoves(board, snake_id, safe_moves);
+        *out_move = safe_count > 0 ? safe_moves[0] : MOVE_UP;
+        return CORE_OK;
     }
 
     CoreStandardFfaConfig effective = config != NULL ? *config : CoreStandardFfaConfigDefault(80);

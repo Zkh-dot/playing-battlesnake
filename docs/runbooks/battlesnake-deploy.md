@@ -35,8 +35,8 @@ BATTLESNAKE_SEARCH_BUDGET_MS=400
 Routing behavior:
 
 - standard games with exactly two snakes use duel minimax;
-- standard games with three or more snakes use the native Standard FFA
-  strategy;
+- standard games with three or more snakes currently use the safe fallback
+  while the experimental native Standard FFA scorer remains parity-gated;
 - timeout/error fallback remains first-safe.
 
 Container-local health check:
@@ -133,7 +133,7 @@ The exact move can change as strategy logic changes. The important check is a
 successful JSON response with a `move` field containing `up`, `down`, `left`,
 or `right`.
 
-Standard FFA routing smoke:
+Standard multi-snake smoke:
 
 ```bash
 curl -fsS -H "Content-Type: application/json" \
@@ -142,17 +142,18 @@ curl -fsS -H "Content-Type: application/json" \
 ```
 
 Expected response is any legal move. This specifically exercises the production
-Standard FFA C path rather than the two-snake duel minimax route.
+standard 3+ snake route and verifies it remains a 200 response while native
+Standard FFA parity work is still gated.
 
 ## Ladder Observation
 
-After deploying a Standard FFA native image, watch at least the first ladder
-observation window before considering the rollout healthy:
+After deploying a native image, watch at least the first ladder observation
+window before considering the rollout healthy:
 
 - no `/move` timeout or error spikes in container logs;
 - no unexpected first-safe fallback surge;
-- standard 3+ snake games return legal moves under the configured Battlesnake
-  timeout;
+- standard 3+ snake games return legal fallback moves under the configured
+  Battlesnake timeout;
 - death-cause mix remains consistent with the Python dev-snake evidence from
   `docs/standard-ffa-depth-search-ab.md` and
   `docs/standard-ffa-native-port-report.md`.

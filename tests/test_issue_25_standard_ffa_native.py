@@ -105,3 +105,33 @@ def test_native_standard_ffa_accepts_default_frozen_tuned_weights() -> None:
     board = parity_positions()[0][1]
 
     assert standard_ffa_move(board, "me") in {"up", "down", "left", "right"}
+
+
+def test_native_standard_ffa_allows_food_on_hazard_to_save_health() -> None:
+    theta = tuned_theta()
+    board = Board(
+        5,
+        5,
+        [
+            snake("me", [(1, 1), (1, 0)], health=10),
+            snake("other", [(4, 4)]),
+            snake("third", [(0, 4)]),
+        ],
+        food=[c(2, 1)],
+        hazards=[c(2, 1)],
+        hazard_damage=14,
+    )
+
+    assert standard_ffa_move(board, "me", 80, theta) == str(StrategyStandard(theta=theta).decide(board, "me"))
+
+
+def test_native_standard_ffa_excess_snakes_use_safe_move_without_dropping_bodies() -> None:
+    theta = tuned_theta()
+    snakes = [snake("me", [(2, 2), (2, 1), (2, 0)])]
+    for index in range(9):
+        snakes.append(snake(f"other-{index}", [(index % 5, 6), (index % 5, 5)]))
+    board = Board(7, 7, snakes)
+
+    move = standard_ffa_move(board, "me", 80, theta)
+
+    assert move in board.safe_moves("me")

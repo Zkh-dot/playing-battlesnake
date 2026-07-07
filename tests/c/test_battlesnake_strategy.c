@@ -1,6 +1,7 @@
 #include "../../battlesnake/c-core/server/battlesnake_strategy.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
 static Snake make_snake(const char* id, Coord* body, int body_len, int health) {
@@ -97,7 +98,7 @@ static void test_standard_two_snakes_uses_minimax(void) {
     BoardFree(board);
 }
 
-static void test_standard_three_snakes_uses_standard_ffa(void) {
+static void test_standard_three_snakes_uses_safe_fallback_until_native_parity_graduates(void) {
     Board* board = BoardCreate(7, 7, "standard", 0);
     Coord me_body[] = {{2, 2}, {2, 1}, {2, 0}};
     Coord north_body[] = {{6, 6}, {6, 5}, {6, 4}};
@@ -112,12 +113,58 @@ static void test_standard_three_snakes_uses_standard_ffa(void) {
     assert(BoardAddSnake(board, &me));
     assert(BoardAddSnake(board, &north));
     assert(BoardAddSnake(board, &east));
-    assert(BsChooseMove(board, "me", &config, &move) == BS_STRATEGY_OK);
+    assert(BsChooseMove(board, "me", &config, &move) == BS_STRATEGY_FALLBACK_USED);
     assert(move == MOVE_UP || move == MOVE_DOWN || move == MOVE_LEFT || move == MOVE_RIGHT);
 
     SnakeFree(&me);
     SnakeFree(&north);
     SnakeFree(&east);
+    BoardFree(board);
+}
+
+static void test_standard_multi_snake_malformed_body_uses_fallback(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord north_body[] = {{6, 6}, {6, 5}, {6, 4}};
+    Coord east_body[] = {{6, 0}, {5, 0}, {4, 0}};
+    Snake me = make_snake("me", NULL, 0, 90);
+    Snake north = make_snake("north", north_body, 3, 90);
+    Snake east = make_snake("east", east_body, 3, 90);
+    MoveDirection move = MOVE_INVALID;
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &north));
+    assert(BoardAddSnake(board, &east));
+    assert(BsChooseMove(board, "me", &config, &move) == BS_STRATEGY_FALLBACK_USED);
+    assert(move == MOVE_UP);
+
+    SnakeFree(&me);
+    SnakeFree(&north);
+    SnakeFree(&east);
+    BoardFree(board);
+}
+
+static void test_standard_multi_snake_excess_snakes_returns_legal_safe_move(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord me_body[] = {{2, 2}, {2, 1}, {2, 0}};
+    Snake me = make_snake("me", me_body, 3, 90);
+    MoveDirection move = MOVE_INVALID;
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    assert(BoardAddSnake(board, &me));
+    for (int i = 0; i < 9; i++) {
+        Coord body[] = {{i % 7, 6}, {i % 7, 5}};
+        char id[16];
+        snprintf(id, sizeof(id), "other-%d", i);
+        Snake other = make_snake(id, body, 2, 90);
+        assert(BoardAddSnake(board, &other));
+        SnakeFree(&other);
+    }
+
+    assert(BsChooseMove(board, "me", &config, &move) == BS_STRATEGY_FALLBACK_USED);
+    assert(move == MOVE_UP || move == MOVE_DOWN || move == MOVE_LEFT || move == MOVE_RIGHT);
+
+    SnakeFree(&me);
     BoardFree(board);
 }
 
@@ -194,7 +241,9 @@ int main(void) {
     test_solo_two_snakes_uses_minimax();
     test_solo_two_snakes_uses_minimax_with_null_config();
     test_standard_two_snakes_uses_minimax();
-    test_standard_three_snakes_uses_standard_ffa();
+    test_standard_three_snakes_uses_safe_fallback_until_native_parity_graduates();
+    test_standard_multi_snake_malformed_body_uses_fallback();
+    test_standard_multi_snake_excess_snakes_returns_legal_safe_move();
     test_null_config_uses_default_budget_and_fallback();
     test_effective_budget_uses_configured_budget_without_request_timeout();
     test_effective_budget_clamps_to_request_timeout_margin();

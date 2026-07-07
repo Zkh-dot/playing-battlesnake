@@ -261,7 +261,9 @@ bool BoardIsSafe(const Board* board, Coord coord, const char* snake_id) {
         return false;
     }
 
-    if (coord_in_array(board->hazards, board->hazard_count, coord) && snake->health <= board->hazard_damage + 1) {
+    if (coord_in_array(board->hazards, board->hazard_count, coord) &&
+        !coord_in_array(board->food, board->food_count, coord) &&
+        snake->health <= board->hazard_damage + 1) {
         return false;
     }
 

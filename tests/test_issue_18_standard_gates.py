@@ -125,6 +125,28 @@ def test_classifies_hazard_starvation_death() -> None:
     assert right.enters_hazard
 
 
+def test_food_on_hazard_can_prevent_starvation_classification() -> None:
+    board = Board(
+        5,
+        5,
+        [
+            snake("me", [(1, 1), (1, 0)], health=10),
+            snake("other", [(4, 4)]),
+            snake("third", [(0, 4)]),
+        ],
+        food=[c(2, 1)],
+        hazards=[c(2, 1)],
+        hazard_damage=14,
+    )
+
+    right = candidate(classify_standard_ffa_candidates(board, "me"), "right")
+
+    assert right.candidate_food
+    assert right.enters_hazard
+    assert right.death_class is None
+    assert right.eligible
+
+
 def test_classifies_zero_escape_as_trapped_next_turn() -> None:
     board = Board(
         5,

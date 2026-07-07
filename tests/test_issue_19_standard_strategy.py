@@ -31,7 +31,7 @@ def decide(board: Board, snake_id: str = "me") -> str:
 
 def test_theta_is_json_serializable_and_standard_variant_is_registered() -> None:
     json.dumps(DEFAULT_STANDARD_THETA, sort_keys=True)
-    assert STANDARD_VARIANTS["standard-v1"] is StrategyStandard
+    assert isinstance(STANDARD_VARIANTS["standard-v1"](), StrategyStandard)
 
 
 def test_decide_avoids_wall_and_returns_valid_move() -> None:

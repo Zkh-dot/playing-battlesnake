@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+import battlesnake.decision_telemetry as decision_telemetry
+import battlesnake.main as main_module
 from battlesnake.battlesnake_native import Board, Coord, Snake
 from battlesnake.decision_telemetry import flush, record_decision
 from battlesnake.main import end, move
@@ -104,6 +107,53 @@ def test_end_endpoint_writes_game_end_death_cause(tmp_path: Path, monkeypatch) -
     rows = [json.loads(line) for line in log_path.read_text().splitlines()]
     assert rows[0]["type"] == "game_end"
     assert rows[0]["death_cause"] == "alive"
+
+
+def test_game_end_evicts_last_decision_and_pending_futures_are_pruned(tmp_path: Path, monkeypatch) -> None:
+    log_path = tmp_path / "bounded.jsonl"
+    monkeypatch.setenv("STANDARD_DECISION_LOG", str(log_path))
+    monkeypatch.setenv("STANDARD_DECISION_TELEMETRY", "1")
+    decision_telemetry._last_decisions.clear()
+    decision_telemetry._pending.clear()
+
+    record_decision({"game_id": "bounded", "turn": 1, "chosen_move": "up"})
+    flush()
+    record_decision({"game_id": "bounded", "turn": 2, "chosen_move": "right"})
+    response = end(GameState.model_validate(payload(game_id="bounded", turn=3)))
+    flush()
+
+    assert response["message"] == "Finished game bounded"
+    assert "bounded" not in decision_telemetry._last_decisions
+    assert decision_telemetry._pending == []
+
+
+def test_timeout_fallback_telemetry_does_not_reuse_late_strategy_record(tmp_path: Path, monkeypatch) -> None:
+    class SlowStrategy:
+        last_decision_record = None
+
+        def decide(self, board: Board, snake_id: str) -> str:
+            time.sleep(0.1)
+            self.last_decision_record = {
+                "chosen_move": "left",
+                "candidates": [{"move": "left", "score": 1.0}],
+                "fallback_reason": None,
+            }
+            return "left"
+
+    log_path = tmp_path / "timeout.jsonl"
+    monkeypatch.setenv("STANDARD_DECISION_LOG", str(log_path))
+    monkeypatch.setenv("STANDARD_DECISION_TELEMETRY", "1")
+    monkeypatch.setenv("STRATEGY_VARIANT", "standard-v1")
+    monkeypatch.setattr(main_module, "select_strategy", lambda state: SlowStrategy())
+
+    response = move(GameState.model_validate(payload(game_id="timeout-game", turn=1) | {"game": {**payload()["game"], "timeout": 1}}))
+    flush()
+
+    assert response["move"] in {"up", "down", "left", "right"}
+    rows = [json.loads(line) for line in log_path.read_text().splitlines()]
+    assert rows[0]["fallback_used"] is True
+    assert rows[0]["fallback_reason"] == "endpoint_deadline"
+    assert rows[0].get("candidates") in (None, [])
 
 
 def test_analysis_tool_summarizes_and_prints_turn_table(tmp_path: Path) -> None:

@@ -131,7 +131,7 @@ def _classify_candidate(
     food = target in _coord_keys(board.food)
     hazard = target in _coord_keys(board.hazards)
     safe_by_board_rules = in_bounds and board.is_safe(target_coord, snake_id)
-    hazard_starvation = hazard and snake.health <= board.hazard_damage + 1
+    hazard_starvation = hazard and not food and snake.health <= board.hazard_damage + 1
 
     immediate_safe_count = 0
     immediate_space = 0

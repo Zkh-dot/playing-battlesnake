@@ -4,9 +4,11 @@ Issue: #25
 
 ## Scope
 
-The production native server now has a C implementation for standard games
-with three or more snakes. Two-snake standard/solo games still route to duel
-minimax. Timeout and error fallback remains first-safe.
+The native extension now has an experimental C implementation for Standard FFA
+parity testing. The production native server does not route standard games with
+three or more snakes into this scorer yet; those games keep the previous
+first-safe fallback until the native implementation clears a broader parity
+corpus. Two-snake standard/solo games still route to duel minimax.
 
 The native port intentionally excludes the LightGBM opponent prior because #23
 was a no-go. It ships the deterministic/uniform-prior Standard FFA pipeline
@@ -19,7 +21,8 @@ Added:
 - `battlesnake/c-core/core/standard_ffa.c`
 - `battlesnake/c-core/core/standard_ffa.h`
 - Python extension function `standard_ffa_move(...)` for parity tests
-- native server routing in `battlesnake_strategy.c`
+- native server routing remains conservative: standard 3+ snake games do not
+  enter the experimental C scorer yet
 - arena option `--candidate-strategy standard-v1-native`
 
 Build lists updated:
@@ -43,11 +46,23 @@ against native `standard_ffa_move` on a representative corpus:
 - contested equal-length food;
 - #24 corridor trap with frozen-snake deepening.
 
-All selected moves match on the corpus.
+All selected moves match on the focused corpus.
 
-The native scorer is a C translation of the frozen deterministic strategy
-shape, not the Python telemetry implementation. Candidate score parity is kept
-qualitative in this port; selected-move parity is the enforced contract.
+The native scorer is not yet behaviorally equivalent to the Python strategy on
+a broader corpus. A review-reproduced mismatch remains the gating example for
+why production routing stays off:
+
+```text
+Board 7x7, food=[(3,0)]
+me: [(2,2),(2,1),(2,0)] health=90
+a:  [(1,5),(1,4),(1,3)] health=50
+b:  [(2,6),(3,6),(4,6)] health=20
+StrategyStandard(theta=tuned) -> left
+standard_ffa_move(board, "me", 80, tuned) -> right
+```
+
+The native scorer therefore remains a measurable parity target, not a
+production replacement.
 
 ## Arena Confirmation
 
@@ -67,7 +82,8 @@ candidate placements={'1': 11, '2': 9, '3': 3, '4': 1} deaths={'alive': 13, 'won
 baseline placements={'1': 9, '2': 11, '3': 4, '4': 0} deaths={'alive': 15, 'won': 9}
 ```
 
-This local batch shows no placement regression and large latency headroom.
+This local batch shows latency headroom, but it is not sufficient for
+production graduation because the broader parity gap above remains.
 
 ## Latency
 
@@ -97,7 +113,9 @@ tools/build_native_server.sh
 
 The native image was built locally through `tools/build_native_server.sh`. Live
 deployment still follows `docs/runbooks/battlesnake-deploy.md`: build the image
-on `ya.sergeiscv.ru`, restart `playing-battlesnake`, run health and FFA move
-smokes, then observe ladder logs for timeout/error/fallback regressions.
+on `ya.sergeiscv.ru`, restart `playing-battlesnake`, run health and multi-snake
+move smokes, then observe ladder logs for timeout/error/fallback regressions.
+This PR does not switch standard 3+ snake production traffic to the
+experimental native Standard FFA scorer.
 
 The Python dev snake remains deployable for the next iteration cycle.
