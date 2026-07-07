@@ -37,8 +37,9 @@ DEATH_PENALTY = {
 
 def run_paired_arena(args: argparse.Namespace) -> dict[str, Any]:
     seeds = [args.seed + index for index in range(args.games)]
-    candidate = [_run_one(seed, "standard-v1", args.max_turns, args.min_food) for seed in seeds]
-    baseline = [_run_one(seed, "first-safe", args.max_turns, args.min_food) for seed in seeds]
+    candidate_theta = getattr(args, "candidate_theta", None)
+    candidate = [_run_one(seed, "standard-v1", args.max_turns, args.min_food, candidate_theta) for seed in seeds]
+    baseline = [_run_one(seed, "first-safe", args.max_turns, args.min_food, None) for seed in seeds]
     report = {
         "config": {
             "runner": "local",
@@ -63,7 +64,13 @@ def run_paired_arena(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
-def _run_one(seed: int, controlled_strategy: str, max_turns: int, min_food: int) -> dict[str, Any]:
+def _run_one(
+    seed: int,
+    controlled_strategy: str,
+    max_turns: int,
+    min_food: int,
+    candidate_theta: dict[str, float] | None,
+) -> dict[str, Any]:
     rng = Random(seed)
     board = _refill_food(
         Board(11, 11, _initial_snakes(), food=[], hazards=[], ruleset_name="standard", hazard_damage=15),
@@ -71,7 +78,7 @@ def _run_one(seed: int, controlled_strategy: str, max_turns: int, min_food: int)
         min_food,
     )
     strategies = {
-        "standard-v1": StrategyStandard(),
+        "standard-v1": StrategyStandard(theta=candidate_theta),
         "first-safe": StrategyFirstSafe(),
     }
     elimination_turns: dict[str, int] = {}
@@ -257,8 +264,11 @@ def main() -> int:
     parser.add_argument("--latency-budget-ms", type=float, default=80.0)
     parser.add_argument("--output", type=Path, default=Path("benchmarks/results/standard-ffa-arena.json"))
     parser.add_argument("--summary-output", type=Path)
+    parser.add_argument("--candidate-theta", type=Path, help="JSON theta override for standard-v1")
     parser.add_argument("--no-fail-on-latency", action="store_true")
     args = parser.parse_args()
+    if args.candidate_theta:
+        args.candidate_theta = json.loads(args.candidate_theta.read_text(encoding="utf-8"))
 
     report = run_paired_arena(args)
     summary = format_summary(report)
