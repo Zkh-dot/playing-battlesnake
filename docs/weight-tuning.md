@@ -145,6 +145,21 @@ TRAIN_SEEDS=7000,9000,11000,13000,15000 \
 tools/tuning/remote_standard_ffa_weight_tuning.sh
 ```
 
+If direct LAN SSH is unavailable but the reverse tunnel is listening on
+`ro.sergeiscv.ru`, run the same command through the loopback tunnel:
+
+```bash
+REMOTE=scv@127.0.0.1 \
+SSH_PROXY_JUMP=ro.sergeiscv.ru \
+SSH_PORT=2206 \
+TRIALS=220 \
+GAMES=4 \
+MAX_TURNS=80 \
+SEED=20260707 \
+TRAIN_SEEDS=7000,9000,11000,13000,15000 \
+tools/tuning/remote_standard_ffa_weight_tuning.sh
+```
+
 Watch the run:
 
 ```bash

@@ -11,6 +11,7 @@ Add the rerunnable Standard FFA theta-search plumbing against the #21 arena obje
 - Add `tests/test_issue_22_standard_ffa_weight_search.py`.
 - Add `configs/evaluation_weights/standard-ffa-v1-tuned.json` after a successful search.
 - Add `tools/tuning/remote_standard_ffa_weight_tuning.sh` for a compute-node Standard FFA run matching the local search command.
+  - Support `SSH_PROXY_JUMP` and `SSH_PORT` so the same runner works through the `ro.sergeiscv.ru` reverse tunnel when it is listening.
 - Update docs with the rerunnable search and validation commands.
 
 ## Current Findings
@@ -22,6 +23,7 @@ Add the rerunnable Standard FFA theta-search plumbing against the #21 arena obje
   - `python3 -m tools.tuning.search_standard_ffa_weights --search-mode mutate --mutation-scale 0.16 --trials 220 --games 4 --max-turns 80 --seed 20260707 --train-seeds 7000,9000,11000,13000,15000 --output configs/evaluation_weights/standard-ffa-v1-tuned.json --trials-output /tmp/standard-ffa-v1-multiseed-trials.jsonl`
 - Compute-node command prepared:
   - `TRIALS=220 GAMES=4 MAX_TURNS=80 SEED=20260707 TRAIN_SEEDS=7000,9000,11000,13000,15000 tools/tuning/remote_standard_ffa_weight_tuning.sh`
+  - Tunnel variant: `REMOTE=scv@127.0.0.1 SSH_PROXY_JUMP=ro.sergeiscv.ru SSH_PORT=2206 TRIALS=220 GAMES=4 MAX_TURNS=80 SEED=20260707 TRAIN_SEEDS=7000,9000,11000,13000,15000 tools/tuning/remote_standard_ffa_weight_tuning.sh`
 - Local search best score:
   - `0.88759375`
 - Held-out arena, tuned file (`seed=17000`, 16 games):

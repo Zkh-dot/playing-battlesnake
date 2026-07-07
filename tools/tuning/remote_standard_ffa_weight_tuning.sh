@@ -4,6 +4,8 @@ set -euo pipefail
 REMOTE="${REMOTE:-scv@192.168.1.6}"
 REMOTE_DIR="${REMOTE_DIR:-/tmp/playing-battlesnake-standard-ffa-tuning}"
 SESSION="${SESSION:-battlesnake-standard-ffa-tuning}"
+SSH_PORT="${SSH_PORT:-}"
+SSH_PROXY_JUMP="${SSH_PROXY_JUMP:-}"
 TRIALS="${TRIALS:-220}"
 GAMES="${GAMES:-4}"
 MAX_TURNS="${MAX_TURNS:-80}"
@@ -16,6 +18,13 @@ LATENCY_BUDGET_MS="${LATENCY_BUDGET_MS:-80}"
 REMOTE_PYTHON="${REMOTE_DIR}/.venv/bin/python"
 ARTIFACT_DIR="artifacts/standard_ffa_weight_tuning"
 SSH_OPTS=(-o ServerAliveInterval=30 -o ServerAliveCountMax=20)
+if [[ -n "${SSH_PORT}" ]]; then
+  SSH_OPTS+=(-p "${SSH_PORT}")
+fi
+if [[ -n "${SSH_PROXY_JUMP}" ]]; then
+  SSH_OPTS+=(-J "${SSH_PROXY_JUMP}")
+fi
+RSYNC_RSH="ssh ${SSH_OPTS[*]}"
 
 require_positive_int() {
   local name="$1"
@@ -54,6 +63,7 @@ require_number LATENCY_BUDGET_MS "${LATENCY_BUDGET_MS}"
 mkdir -p "${ARTIFACT_DIR}"
 
 rsync -az --delete \
+  -e "${RSYNC_RSH}" \
   --exclude '.git/' \
   --exclude '__pycache__/' \
   --include 'battlesnake/battlesnake_native*.so' \

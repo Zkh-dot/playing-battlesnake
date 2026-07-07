@@ -101,6 +101,7 @@ def test_weight_search_cli_writes_best_theta_and_trials(tmp_path: Path) -> None:
 
 
 def test_remote_standard_ffa_runner_has_valid_bash_syntax() -> None:
+    script = Path("tools/tuning/remote_standard_ffa_weight_tuning.sh").read_text()
     completed = subprocess.run(
         ["bash", "-n", "tools/tuning/remote_standard_ffa_weight_tuning.sh"],
         text=True,
@@ -108,4 +109,7 @@ def test_remote_standard_ffa_runner_has_valid_bash_syntax() -> None:
         check=True,
     )
 
+    assert "SSH_PROXY_JUMP" in script
+    assert "SSH_PORT" in script
+    assert "-e \"${RSYNC_RSH}\"" in script
     assert completed.stdout == ""
