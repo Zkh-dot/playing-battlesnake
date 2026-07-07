@@ -37,6 +37,7 @@ from battlesnake.strategies.constrictor import StrategyConstrictor
 from battlesnake.strategies.duel import StrategyDuel
 from battlesnake.strategies.first_safe import StrategyFirstSafe
 from battlesnake.strategies.royale import StrategyRoyale
+from battlesnake.strategies.standard import StrategyStandard
 from battlesnake.types import GameState, Move
 
 logger = logging.getLogger("battlesnake.dev_snake")
@@ -55,6 +56,7 @@ DEFAULT_SEARCH_BUDGET_MS = 400
 # snake variants register here; duel/royale/constrictor routing is unaffected.
 STANDARD_VARIANTS: dict[str, Callable[[], Strategy]] = {
     "first-safe": StrategyFirstSafe,
+    "standard-v1": StrategyStandard,
 }
 
 _decide_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="decide")
