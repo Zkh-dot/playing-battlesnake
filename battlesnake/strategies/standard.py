@@ -12,7 +12,7 @@ from battlesnake.core.astar import shortest_path
 from battlesnake.core.evaluation import WEIGHTS as EVALUATION_WEIGHTS
 from battlesnake.core.evaluation import evaluate
 from battlesnake.core.flood_fill import reachable_space
-from battlesnake.game import Board, Coord
+from battlesnake.game import Board, Coord, Snake
 from battlesnake.opponent_model_prior import LightGBMOpponentPrior, uniform_safe_priors
 from battlesnake.strategies.base import Strategy
 from battlesnake.strategies.first_safe import StrategyFirstSafe
@@ -44,6 +44,12 @@ DEFAULT_STANDARD_THETA: dict[str, float] = {
     "food_urgency_health": 35.0,
     "pocket_space_per_length": 2.5,
     "nearby_opponent_distance": 4.0,
+    "deepening_enabled": 1.0,
+    "deepening_depth": 3.0,
+    "deepening_top_candidates": 2.0,
+    "deepening_interaction_radius": 6.0,
+    "deepening_margin_ms": 20.0,
+    "deepening_trap_penalty": 900_000.0,
 }
 
 _EVALUATOR_WEIGHT_KEYS = set(EVALUATION_WEIGHTS)
@@ -114,12 +120,14 @@ class StrategyStandard(Strategy):
                         for candidate in gates.candidates
                     ],
                     started=started,
+                    deepening=_deepening_disabled_record(),
                     fallback_reason="all_candidates_gated",
                 )
                 return move, record
 
             candidate_scores = []
             scored = []
+            candidates_by_move = {candidate.move: candidate for candidate in gates.candidates}
             for candidate in gates.candidates:
                 if not candidate.eligible:
                     candidate_scores.append(_unscored_candidate_record(candidate, reason="gated"))
@@ -134,6 +142,37 @@ class StrategyStandard(Strategy):
                     )
                 )
             scored.sort(reverse=True)
+
+            deepening = _deepening_disabled_record()
+            if _deepening_enabled(self.theta):
+                depth1_scores = {detail["move"]: dict(detail) for detail in candidate_scores if detail.get("score") is not None}
+                try:
+                    deepened_scores, deepening = self._deepened_scores(
+                        board=board,
+                        snake_id=snake_id,
+                        scored=scored,
+                        candidates_by_move=candidates_by_move,
+                        deadline=deadline,
+                    )
+                except _DeadlineExceeded:
+                    deepened_scores = {}
+                    deepening = _deepening_timeout_record(depth1_move=scored[0][2])
+
+                if deepened_scores:
+                    candidate_scores = _merge_deepened_scores(candidate_scores, deepened_scores)
+                    scored = [
+                        (
+                            float(detail["score"]),
+                            -MOVE_ORDER.index(str(detail["move"])),
+                            str(detail["move"]),
+                        )
+                        for detail in candidate_scores
+                        if detail.get("score") is not None
+                    ]
+                    scored.sort(reverse=True)
+                else:
+                    candidate_scores = _mark_depth1_fallback(candidate_scores, depth1_scores)
+
             move = scored[0][2]
             record = _decision_record(
                 board=board,
@@ -144,6 +183,7 @@ class StrategyStandard(Strategy):
                 opponent_prior_status=self._opponent_prior_status(),
                 candidate_scores=candidate_scores,
                 started=started,
+                deepening=deepening,
             )
             return move, record
         except _DeadlineExceeded:
@@ -157,8 +197,185 @@ class StrategyStandard(Strategy):
                 "candidates": [],
                 "opponent_priors": {},
                 "opponent_prior_status": self._opponent_prior_status(),
+                "deepening": _deepening_timeout_record(depth1_move=None),
             }
             return move, record
+
+    def _deepened_scores(
+        self,
+        *,
+        board: Board,
+        snake_id: str,
+        scored: list[tuple[float, int, str]],
+        candidates_by_move: dict[str, StandardMoveCandidate],
+        deadline: float,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+        depth = _deepening_depth(self.theta)
+        top_count = _deepening_top_candidates(self.theta, len(scored))
+        margin_s = max(0.0, self.theta["deepening_margin_ms"] / 1000.0)
+        deep_deadline = deadline - margin_s
+        if depth < 2 or top_count <= 0 or time.perf_counter() >= deep_deadline:
+            raise _DeadlineExceeded
+
+        top_moves = [move for _score, _rank, move in scored[:top_count]]
+        results: dict[str, dict[str, Any]] = {}
+        summaries: list[dict[str, Any]] = []
+        refused_traps = 0
+        for move in top_moves:
+            _check_deadline(deep_deadline)
+            candidate = candidates_by_move[move]
+            value, detail = self._deep_search_root(board, snake_id, candidate, depth, deep_deadline)
+            depth1_score = scored[[item[2] for item in scored].index(move)][0]
+            refused = (
+                value <= -self.theta["deepening_trap_penalty"]
+                and detail["terminal_rate"] >= 1.0
+                and not detail["active_opponents"]
+            )
+            final_score = value if refused else depth1_score
+            if refused:
+                refused_traps += 1
+            result = {
+                **detail,
+                "status": "completed",
+                "depth1_score": depth1_score,
+                "score": final_score,
+                "deep_score": value,
+                "refused_trap": refused,
+            }
+            results[move] = result
+            summaries.append({key: result[key] for key in (
+                "move",
+                "depth",
+                "active_opponents",
+                "frozen_opponents",
+                "nodes",
+                "terminal_rate",
+                "deep_score",
+                "depth1_score",
+                "score",
+                "refused_trap",
+                "frozen_interaction_risk",
+            )})
+
+        return results, {
+            "enabled": True,
+            "status": "completed",
+            "depth": depth,
+            "top_candidates": top_moves,
+            "refused_traps": refused_traps,
+            "candidates": summaries,
+        }
+
+    def _deep_search_root(
+        self,
+        board: Board,
+        snake_id: str,
+        candidate: StandardMoveCandidate,
+        depth: int,
+        deadline: float,
+    ) -> tuple[float, dict[str, Any]]:
+        active = _active_opponents(board, snake_id, depth, self.theta)
+        frozen = sorted(opponent_id for opponent_id in board.snakes if opponent_id != snake_id and opponent_id not in active)
+        frozen_occupied = _occupied_by_snakes(board, frozen)
+        nodes = 0
+        root_target = _coord_from_tuple(candidate.target)
+        if _coord_key(root_target) in frozen_occupied:
+            return -1_000_000.0, _deep_candidate_record(
+                candidate=candidate,
+                depth=depth,
+                active=active,
+                frozen=frozen,
+                nodes=1,
+                score=-1_000_000.0,
+                terminal_rate=1.0,
+                frozen_risk=_frozen_interaction_risk(board, root_target, frozen, depth),
+            )
+
+        opponent_joint_moves = _joint_active_moves(board, active, frozen_occupied)
+        if not opponent_joint_moves:
+            opponent_joint_moves = [{}]
+
+        worst = math.inf
+        terminal_outcomes = 0
+        outcome_count = 0
+        for opponent_moves in opponent_joint_moves:
+            _check_deadline(deadline)
+            joint_moves = dict(opponent_moves)
+            joint_moves[snake_id] = candidate.move
+            next_board = _apply_dynamic_moves(board, joint_moves, frozen)
+            nodes += 1
+            value, child_nodes = self._deep_search_value(
+                next_board,
+                snake_id,
+                active,
+                frozen,
+                depth_remaining=depth - 1,
+                deadline=deadline,
+            )
+            nodes += child_nodes
+            worst = min(worst, value)
+            outcome_count += 1
+            if value <= -self.theta["deepening_trap_penalty"]:
+                terminal_outcomes += 1
+
+        score = worst if worst < math.inf else -1_000_000.0
+        return score, _deep_candidate_record(
+            candidate=candidate,
+            depth=depth,
+            active=active,
+            frozen=frozen,
+            nodes=nodes,
+            score=score,
+            terminal_rate=terminal_outcomes / outcome_count if outcome_count else 1.0,
+            frozen_risk=_frozen_interaction_risk(board, root_target, frozen, depth),
+        )
+
+    def _deep_search_value(
+        self,
+        board: Board,
+        snake_id: str,
+        active: list[str],
+        frozen: list[str],
+        *,
+        depth_remaining: int,
+        deadline: float,
+    ) -> tuple[float, int]:
+        _check_deadline(deadline)
+        if snake_id not in board.snakes:
+            return -1_000_000.0, 1
+        if depth_remaining <= 0 or len(board.snakes) <= 1:
+            return _deep_leaf_utility(board, snake_id, self.theta), 1
+
+        active = [opponent_id for opponent_id in active if opponent_id in board.snakes]
+        frozen_occupied = _occupied_by_snakes(board, frozen)
+        own_moves = _safe_moves_with_frozen(board, snake_id, frozen_occupied)
+        if not own_moves:
+            return -1_000_000.0, 1
+
+        best = -math.inf
+        nodes = 1
+        for own_move in own_moves:
+            _check_deadline(deadline)
+            worst = math.inf
+            opponent_joint_moves = _joint_active_moves(board, active, frozen_occupied)
+            if not opponent_joint_moves:
+                opponent_joint_moves = [{}]
+            for opponent_moves in opponent_joint_moves:
+                joint_moves = dict(opponent_moves)
+                joint_moves[snake_id] = own_move
+                next_board = _apply_dynamic_moves(board, joint_moves, frozen)
+                child_value, child_nodes = self._deep_search_value(
+                    next_board,
+                    snake_id,
+                    active,
+                    frozen,
+                    depth_remaining=depth_remaining - 1,
+                    deadline=deadline,
+                )
+                nodes += child_nodes
+                worst = min(worst, child_value)
+            best = max(best, worst)
+        return best, nodes
 
     def _opponent_priors(self, board: Board, snake_id: str) -> dict[str, list[tuple[str, float]]]:
         if self._model_prior is None:
@@ -273,6 +490,7 @@ def _decision_record(
     opponent_prior_status: dict[str, Any],
     candidate_scores: list[dict[str, Any]],
     started: float,
+    deepening: dict[str, Any],
     fallback_reason: str | None = None,
 ) -> dict[str, Any]:
     snake = board.snakes[snake_id]
@@ -290,6 +508,7 @@ def _decision_record(
         "gates": gates,
         "opponent_prior_status": opponent_prior_status,
         "candidates": candidate_scores,
+        "deepening": deepening,
         "opponent_priors": {
             opponent_id: [
                 {"move": move, "probability": probability}
@@ -527,6 +746,223 @@ def _coord_from_tuple(value: tuple[int, int]) -> Coord:
 
 def _manhattan(left: Coord, right: Coord) -> int:
     return abs(left.x - right.x) + abs(left.y - right.y)
+
+
+def _deepening_enabled(theta: dict[str, float]) -> bool:
+    return theta.get("deepening_enabled", 0.0) > 0.0
+
+
+def _deepening_depth(theta: dict[str, float]) -> int:
+    return max(1, min(3, int(theta.get("deepening_depth", 1.0))))
+
+
+def _deepening_top_candidates(theta: dict[str, float], scored_count: int) -> int:
+    return max(0, min(scored_count, int(theta.get("deepening_top_candidates", 0.0))))
+
+
+def _deepening_disabled_record() -> dict[str, Any]:
+    return {"enabled": False, "status": "disabled"}
+
+
+def _deepening_timeout_record(depth1_move: str | None) -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "status": "timeout_depth1_fallback",
+        "depth1_move": depth1_move,
+    }
+
+
+def _merge_deepened_scores(
+    candidate_scores: list[dict[str, Any]],
+    deepened_scores: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = []
+    for detail in candidate_scores:
+        move = detail.get("move")
+        if move not in deepened_scores:
+            merged.append(detail)
+            continue
+        deepened = deepened_scores[str(move)]
+        updated = dict(detail)
+        updated["depth1_score"] = detail["score"]
+        updated["score"] = deepened["score"]
+        updated["deepening"] = deepened
+        merged.append(updated)
+    return merged
+
+
+def _mark_depth1_fallback(
+    candidate_scores: list[dict[str, Any]],
+    depth1_scores: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    marked = []
+    for detail in candidate_scores:
+        move = detail.get("move")
+        if move in depth1_scores:
+            updated = dict(detail)
+            updated["depth1_score"] = detail["score"]
+            updated["deepening"] = {"status": "depth1_fallback"}
+            marked.append(updated)
+        else:
+            marked.append(detail)
+    return marked
+
+
+def _deep_candidate_record(
+    *,
+    candidate: StandardMoveCandidate,
+    depth: int,
+    active: list[str],
+    frozen: list[str],
+    nodes: int,
+    score: float,
+    terminal_rate: float,
+    frozen_risk: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "move": candidate.move,
+        "depth": depth,
+        "active_opponents": active,
+        "frozen_opponents": frozen,
+        "nodes": nodes,
+        "terminal_rate": terminal_rate,
+        "deep_score": score,
+        "frozen_interaction_risk": frozen_risk,
+    }
+
+
+def _active_opponents(board: Board, snake_id: str, depth: int, theta: dict[str, float]) -> list[str]:
+    radius = theta.get("deepening_interaction_radius", 0.0)
+    if radius <= 0:
+        radius = 2 * depth
+    own_head = board.head(snake_id)
+    active = []
+    for opponent_id in sorted(board.snakes):
+        if opponent_id == snake_id:
+            continue
+        if _manhattan(own_head, board.head(opponent_id)) <= radius:
+            active.append(opponent_id)
+    return active
+
+
+def _occupied_by_snakes(board: Board, snake_ids: Iterable[str]) -> set[tuple[int, int]]:
+    occupied: set[tuple[int, int]] = set()
+    for snake_id in snake_ids:
+        snake = board.snakes.get(snake_id)
+        if snake is None:
+            continue
+        occupied.update(_coord_key(coord) for coord in snake.body)
+    return occupied
+
+
+def _safe_moves_with_frozen(board: Board, snake_id: str, frozen_occupied: set[tuple[int, int]]) -> list[str]:
+    if snake_id not in board.snakes:
+        return []
+    head = board.head(snake_id)
+    moves = []
+    for move in board.safe_moves(snake_id):
+        target = board.step(head, move)
+        if _coord_key(target) not in frozen_occupied:
+            moves.append(str(move))
+    return moves
+
+
+def _joint_active_moves(
+    board: Board,
+    active: list[str],
+    frozen_occupied: set[tuple[int, int]],
+) -> list[dict[str, str]]:
+    move_lists: list[list[str | None]] = []
+    active_ids: list[str] = []
+    for opponent_id in active:
+        if opponent_id not in board.snakes:
+            continue
+        moves = _safe_moves_with_frozen(board, opponent_id, frozen_occupied)
+        move_lists.append(moves if moves else [None])
+        active_ids.append(opponent_id)
+    if not active_ids:
+        return [{}]
+
+    joints = []
+    for product in itertools.product(*move_lists):
+        moves = {
+            opponent_id: move
+            for opponent_id, move in zip(active_ids, product)
+            if move is not None
+        }
+        joints.append(moves)
+    return joints
+
+
+def _apply_dynamic_moves(board: Board, joint_moves: dict[str, str], frozen: list[str]) -> Board:
+    frozen_set = set(frozen)
+    frozen_occupied = _occupied_by_snakes(board, frozen)
+    dynamic_snakes = [
+        snake
+        for snake_id, snake in board.snakes.items()
+        if snake_id not in frozen_set
+    ]
+    dynamic_board = Board(
+        board.width,
+        board.height,
+        dynamic_snakes,
+        food=board.food,
+        hazards=board.hazards,
+        ruleset_name=board.ruleset_name,
+        hazard_damage=board.hazard_damage,
+    )
+    filtered_moves = {}
+    for snake_id, move in joint_moves.items():
+        if snake_id not in dynamic_board.snakes:
+            continue
+        target = dynamic_board.step(dynamic_board.head(snake_id), move)
+        if _coord_key(target) in frozen_occupied:
+            continue
+        filtered_moves[snake_id] = move
+
+    next_dynamic = dynamic_board.clone_and_apply(filtered_moves)
+    snakes: list[Snake] = list(next_dynamic.snakes.values())
+    snakes.extend(board.snakes[snake_id] for snake_id in frozen if snake_id in board.snakes)
+    return Board(
+        board.width,
+        board.height,
+        snakes,
+        food=next_dynamic.food,
+        hazards=board.hazards,
+        ruleset_name=board.ruleset_name,
+        hazard_damage=board.hazard_damage,
+    )
+
+
+def _deep_leaf_utility(board: Board, snake_id: str, theta: dict[str, float]) -> float:
+    if snake_id not in board.snakes:
+        return -1_000_000.0
+    if len(board.snakes) == 1:
+        return 1_000_000.0
+    return (
+        evaluate(board, snake_id, _evaluation_theta(theta))
+        + _space_adjustment(board, snake_id, theta)
+        + _pocket_adjustment(board, snake_id, theta)
+    )
+
+
+def _frozen_interaction_risk(
+    board: Board,
+    root_target: Coord,
+    frozen: list[str],
+    depth: int,
+) -> dict[str, Any]:
+    risk_radius = max(0, 2 * (depth - 1))
+    risky = [
+        snake_id
+        for snake_id in frozen
+        if snake_id in board.snakes and _manhattan(root_target, board.head(snake_id)) <= risk_radius
+    ]
+    return {
+        "checked": len(frozen),
+        "risk_radius": risk_radius,
+        "risky": risky,
+    }
 
 
 def _check_deadline(deadline: float) -> None:

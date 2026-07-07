@@ -100,6 +100,13 @@ def _run_one(
     elimination_turns: dict[str, int] = {}
     death_causes: dict[str, str] = {}
     latencies: list[float] = []
+    fallback_count = 0
+    deepening_completed = 0
+    deepening_timeout_fallbacks = 0
+    deepening_depth1_fallbacks = 0
+    deepening_refused_traps = 0
+    frozen_interaction_checks = 0
+    frozen_interaction_risks = 0
     turn = 0
 
     while turn < max_turns and len(board.snakes) > 1:
@@ -115,6 +122,20 @@ def _run_one(
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             if snake_id == "snake-0":
                 latencies.append(elapsed_ms)
+                record = getattr(strategy, "last_decision_record", None)
+                if isinstance(record, dict):
+                    fallback_count += 1 if record.get("fallback_reason") else 0
+                    deepening = record.get("deepening", {})
+                    status = deepening.get("status") if isinstance(deepening, dict) else None
+                    deepening_completed += 1 if status == "completed" else 0
+                    deepening_timeout_fallbacks += 1 if status == "timeout_depth1_fallback" else 0
+                    deepening_depth1_fallbacks += 1 if status == "depth1_fallback" else 0
+                    deepening_refused_traps += int(deepening.get("refused_traps", 0)) if isinstance(deepening, dict) else 0
+                    for candidate in record.get("candidates", []):
+                        candidate_deepening = candidate.get("deepening", {})
+                        risk = candidate_deepening.get("frozen_interaction_risk", {}) if isinstance(candidate_deepening, dict) else {}
+                        frozen_interaction_checks += int(risk.get("checked", 0))
+                        frozen_interaction_risks += len(risk.get("risky", []))
             moves[snake_id] = _move_value(move)
 
         before = set(board.snakes)
@@ -136,6 +157,15 @@ def _run_one(
         "turn_score": turn / max_turns,
         "death_cause": death_cause,
         "latency_ms": latencies,
+        "telemetry": {
+            "fallback_count": fallback_count,
+            "deepening_completed": deepening_completed,
+            "deepening_timeout_fallbacks": deepening_timeout_fallbacks,
+            "deepening_depth1_fallbacks": deepening_depth1_fallbacks,
+            "deepening_refused_traps": deepening_refused_traps,
+            "frozen_interaction_checks": frozen_interaction_checks,
+            "frozen_interaction_risks": frozen_interaction_risks,
+        },
     }
 
 
@@ -144,6 +174,7 @@ def _summarize_side(games: list[dict[str, Any]], max_turns: int, latency_budget_
     death_causes = Counter(game["death_cause"] for game in games)
     latencies = [sample for game in games for sample in game["latency_ms"]]
     timeout_rate = sum(1 for sample in latencies if sample > latency_budget_ms) / len(latencies) if latencies else 0.0
+    telemetry = _summarize_telemetry(games)
     placement_score = mean(game["placement_score"] for game in games)
     turn_score = mean(game["turn_score"] for game in games)
     death_penalty = mean(DEATH_PENALTY.get(game["death_cause"], DEATH_PENALTY["unknown"]) for game in games)
@@ -171,6 +202,7 @@ def _summarize_side(games: list[dict[str, Any]], max_turns: int, latency_budget_
             "p99": _percentile(latencies, 99),
             "count": len(latencies),
         },
+        "telemetry": telemetry,
         "max_turns": max_turns,
     }
 
@@ -197,6 +229,7 @@ def format_summary(report: dict[str, Any]) -> str:
             f"candidate objective={candidate['objective']:.4f} placement_score={candidate['placement_score']:.4f} latency_p95={candidate['latency_ms']['p95']:.3f} gate={candidate['latency_gate_passed']}",
             f"baseline  objective={baseline['objective']:.4f} placement_score={baseline['placement_score']:.4f} latency_p95={baseline['latency_ms']['p95']:.3f} gate={baseline['latency_gate_passed']}",
             f"paired mean_placement_delta={paired['mean_placement_delta']:.3f} score_delta={paired['mean_placement_score_delta']:.4f}",
+            f"candidate deepening={candidate['telemetry']} baseline deepening={baseline['telemetry']}",
             f"candidate placements={candidate['placements']} deaths={candidate['death_causes']}",
             f"baseline placements={baseline['placements']} deaths={baseline['death_causes']}",
         ]
@@ -247,6 +280,24 @@ def _classify_move_death(move: str) -> str:
     # The local runner only sees post-resolution state. Keep v1 death labels
     # conservative; #20 live telemetry provides richer ladder death causes.
     return "unknown" if move else "unknown"
+
+
+def _summarize_telemetry(games: list[dict[str, Any]]) -> dict[str, Any]:
+    totals = Counter()
+    for game in games:
+        totals.update(game.get("telemetry", {}))
+    checks = int(totals.get("frozen_interaction_checks", 0))
+    risks = int(totals.get("frozen_interaction_risks", 0))
+    return {
+        "fallback_count": int(totals.get("fallback_count", 0)),
+        "deepening_completed": int(totals.get("deepening_completed", 0)),
+        "deepening_timeout_fallbacks": int(totals.get("deepening_timeout_fallbacks", 0)),
+        "deepening_depth1_fallbacks": int(totals.get("deepening_depth1_fallbacks", 0)),
+        "deepening_refused_traps": int(totals.get("deepening_refused_traps", 0)),
+        "frozen_interaction_checks": checks,
+        "frozen_interaction_risks": risks,
+        "frozen_interaction_risk_rate": risks / checks if checks else 0.0,
+    }
 
 
 def _move_value(move: object) -> str:
