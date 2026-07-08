@@ -767,6 +767,8 @@ typedef struct {
     bool tt_enabled;
     bool root_best_valid;
     MoveDirection root_best_move;
+    bool root_move_score_valid[4];
+    double root_move_scores[4];
     MoveDirection principal_variation[CORE_MINIMAX_MAX_DEPTH + 1];
     MoveDirection killer_moves[CORE_MINIMAX_MAX_DEPTH + 1][2];
     int history_scores[4];
@@ -1013,6 +1015,178 @@ static int core_cached_reachable_after_move(
         reachable_spaces[index] = core_reachable_after_move(board, snake_id, move);
     }
     return reachable_spaces[index];
+}
+
+typedef struct {
+    int immediate_exits;
+    int forced_steps;
+    int reachable;
+} CoreCorridorMoveMetrics;
+
+static int core_open_neighbor_count(
+    const Board* board,
+    const unsigned char* blocked,
+    int current,
+    int previous,
+    int* out_next
+) {
+    int count = 0;
+    int next_index = -1;
+    int x = current % board->width;
+    int y = current / board->width;
+    int neighbors[4];
+    int neighbor_count = 0;
+
+    if (y + 1 < board->height) {
+        neighbors[neighbor_count++] = current + board->width;
+    }
+    if (y > 0) {
+        neighbors[neighbor_count++] = current - board->width;
+    }
+    if (x > 0) {
+        neighbors[neighbor_count++] = current - 1;
+    }
+    if (x + 1 < board->width) {
+        neighbors[neighbor_count++] = current + 1;
+    }
+
+    for (int i = 0; i < neighbor_count; i++) {
+        int neighbor = neighbors[i];
+        if (neighbor == previous || blocked[neighbor]) {
+            continue;
+        }
+        count++;
+        next_index = neighbor;
+    }
+
+    if (out_next != NULL) {
+        *out_next = next_index;
+    }
+    return count;
+}
+
+static bool core_corridor_metrics_after_move(
+    const Board* board,
+    const char* snake_id,
+    MoveDirection move,
+    CoreCorridorMoveMetrics* out_metrics
+) {
+    if (board == NULL || snake_id == NULL || out_metrics == NULL || !core_valid_move_direction(move)) {
+        return false;
+    }
+
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    size_t cell_count = 0;
+    if (snake == NULL || snake->body_len == 0 || !core_cell_count(board, &cell_count)) {
+        return false;
+    }
+
+    Coord head = SnakeHead(snake);
+    Coord target = MoveStep(head, move);
+    if (!BoardInBounds(board, target)) {
+        return false;
+    }
+
+    unsigned char* blocked = (unsigned char*)calloc(cell_count, sizeof(unsigned char));
+    if (blocked == NULL) {
+        return false;
+    }
+
+    core_fill_movement_blocks(board, snake_id, blocked);
+    int target_index = core_coord_index(board, target);
+    if (blocked[target_index]) {
+        free(blocked);
+        return false;
+    }
+
+    int previous = core_coord_index(board, head);
+    /* After taking the candidate move, the old head is the neck and cannot be
+     * treated as an escape branch while walking the forced corridor. */
+    blocked[previous] = 1;
+    int current = target_index;
+    int next = -1;
+    int exits = core_open_neighbor_count(board, blocked, current, previous, &next);
+    int immediate_exits = exits;
+    int forced_steps = 0;
+    int max_steps = core_snake_length(snake) + 4;
+    while (exits == 1 && forced_steps < max_steps) {
+        int old_current = current;
+        current = next;
+        previous = old_current;
+        forced_steps++;
+        exits = core_open_neighbor_count(board, blocked, current, previous, &next);
+    }
+
+    free(blocked);
+
+    out_metrics->immediate_exits = immediate_exits;
+    out_metrics->forced_steps = forced_steps;
+    out_metrics->reachable = core_reachable_after_move(board, snake_id, move);
+    return true;
+}
+
+static bool core_corridor_metrics_are_better(
+    const CoreCorridorMoveMetrics* candidate,
+    const CoreCorridorMoveMetrics* current
+) {
+    if (candidate->immediate_exits != current->immediate_exits) {
+        return candidate->immediate_exits > current->immediate_exits;
+    }
+    if (candidate->forced_steps != current->forced_steps) {
+        return candidate->forced_steps < current->forced_steps;
+    }
+    return candidate->reachable > current->reachable;
+}
+
+static bool core_constrained_root_corridor_move(
+    const Board* board,
+    const char* snake_id,
+    const MoveDirection* moves,
+    int move_count,
+    MoveDirection* out_move
+) {
+    if (board == NULL || snake_id == NULL || moves == NULL || out_move == NULL || move_count < 2) {
+        return false;
+    }
+
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0 || core_snake_length(snake) < 12) {
+        return false;
+    }
+
+    int current_reachable = 0;
+    if (CoreReachableSpace(board, SnakeHead(snake), snake_id, &current_reachable) != CORE_OK) {
+        return false;
+    }
+    if (current_reachable >= core_snake_length(snake)) {
+        return false;
+    }
+
+    CoreCorridorMoveMetrics best_metrics = {0, 0, 0};
+    MoveDirection best_move = MOVE_INVALID;
+    bool has_best = false;
+    bool has_forced_corridor = false;
+    for (int i = 0; i < move_count; i++) {
+        CoreCorridorMoveMetrics metrics;
+        if (!core_corridor_metrics_after_move(board, snake_id, moves[i], &metrics)) {
+            continue;
+        }
+        if (metrics.immediate_exits <= 1 && metrics.forced_steps >= 3 && metrics.reachable <= core_snake_length(snake)) {
+            has_forced_corridor = true;
+        }
+        if (!has_best || core_corridor_metrics_are_better(&metrics, &best_metrics)) {
+            has_best = true;
+            best_metrics = metrics;
+            best_move = moves[i];
+        }
+    }
+
+    if (!has_best || !has_forced_corridor || best_metrics.immediate_exits < 2 || !core_valid_move_direction(best_move)) {
+        return false;
+    }
+
+    *out_move = best_move;
+    return true;
 }
 
 static bool core_equal_score_move_is_better(
@@ -1349,6 +1523,11 @@ static CoreStatus core_minimax_search(
             break;
         }
 
+        if (ply == 0 && core_valid_move_direction(own_move)) {
+            context->root_move_score_valid[(int)own_move] = true;
+            context->root_move_scores[(int)own_move] = worst_reply;
+        }
+
         if (
             worst_reply > best_score ||
             (
@@ -1437,7 +1616,7 @@ CoreStatus CoreMinimaxMoveWithStats(
 
     MoveDirection safe_moves[4];
     stats->safe_move_calls++;
-    core_safe_moves_or_all(board, snake_id, safe_moves);
+    int safe_move_count = core_safe_moves_or_all(board, snake_id, safe_moves);
     MoveDirection completed_best = safe_moves[0];
     MoveDirection preferred_move = MOVE_INVALID;
     CoreSearchContext context;
@@ -1476,6 +1655,8 @@ CoreStatus CoreMinimaxMoveWithStats(
     int completed_depth = 0;
     double completed_score = 0.0;
     bool timed_out = false;
+    bool completed_root_move_score_valid[4] = {false, false, false, false};
+    double completed_root_move_scores[4] = {0.0, 0.0, 0.0, 0.0};
     struct timespec start;
     struct timespec end;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1485,6 +1666,10 @@ CoreStatus CoreMinimaxMoveWithStats(
         double score = 0.0;
         MoveDirection candidate = completed_best;
         stats->max_depth_started = depth;
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            context.root_move_score_valid[move] = false;
+            context.root_move_scores[move] = 0.0;
+        }
         CoreStatus status = core_minimax_search(
             board,
             snake_id,
@@ -1523,6 +1708,10 @@ CoreStatus CoreMinimaxMoveWithStats(
         }
         completed_depth = depth;
         completed_score = score;
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            completed_root_move_score_valid[move] = context.root_move_score_valid[move];
+            completed_root_move_scores[move] = context.root_move_scores[move];
+        }
         if (!fixed_depth_requested && (score >= 999999.0 || score <= -999999.0 || core_search_timed_out(&context.timer))) {
             break;
         }
@@ -1535,6 +1724,17 @@ CoreStatus CoreMinimaxMoveWithStats(
     stats->completed_depth = completed_depth;
     stats->timed_out = timed_out;
     stats->score = completed_score;
+    MoveDirection corridor_guard_move = MOVE_INVALID;
+    if (
+        !core_score_is_terminal_loss_band(&context.config.weights, completed_score) &&
+        !core_score_is_terminal_win_band(&context.config.weights, completed_score) &&
+        core_constrained_root_corridor_move(board, snake_id, safe_moves, safe_move_count, &corridor_guard_move) &&
+        completed_root_move_score_valid[(int)corridor_guard_move]
+    ) {
+        completed_best = corridor_guard_move;
+        completed_score = completed_root_move_scores[(int)corridor_guard_move];
+        stats->score = completed_score;
+    }
     stats->move = completed_best;
     stats->elapsed_ms = core_elapsed_ms(start, end);
     *out_move = completed_best;
