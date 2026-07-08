@@ -114,8 +114,31 @@ def test_strategy_model_prior_is_only_a_prior_and_hard_gates_still_apply(
     assert strategy.decide(board, "me") != "right"
 
 
-def test_model_prior_is_not_registered_as_dev_variant_after_no_go() -> None:
+def test_standard_v1_dev_variant_uses_model_prior() -> None:
     from battlesnake.main import STANDARD_VARIANTS
 
     assert "standard-v1-model-prior" not in STANDARD_VARIANTS
-    assert isinstance(StrategyStandard(opponent_prior="model"), StrategyStandard)
+    strategy = STANDARD_VARIANTS["standard-v1"]()
+    assert isinstance(strategy, StrategyStandard)
+    assert strategy.opponent_prior == "model"
+
+
+def test_standard_v1_decision_record_uses_model_prior_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    from battlesnake.main import STANDARD_VARIANTS
+
+    monkeypatch.setattr("battlesnake.opponent_model_prior._load_model", lambda _path: object())
+
+    def fake_positive_probabilities(_model: object, rows: list[dict[str, object]]) -> dict[str, float]:
+        return {str(row["feature_candidate_move"]): 10.0 if row["feature_candidate_move"] == "up" else 1.0 for row in rows}
+
+    monkeypatch.setattr("battlesnake.opponent_model_prior._positive_probabilities", fake_positive_probabilities)
+
+    strategy = STANDARD_VARIANTS["standard-v1"]()
+    _move, record = strategy.explain_decision(sample_board(), "me")
+
+    assert record["opponent_prior_status"]["status"] == "model"
+    assert record["opponent_prior_status"]["source"] == "model"
+    assert any(
+        len({round(item["probability"], 6) for item in moves}) > 1
+        for moves in record["opponent_priors"].values()
+    )

@@ -57,13 +57,25 @@ DEFAULT_SEARCH_BUDGET_MS = 400
 # snake variants register here; duel/royale/constrictor routing is unaffected.
 def _standard_v1_strategy() -> Strategy:
     theta_path = Path(__file__).resolve().parent.parent / "configs" / "evaluation_weights" / "standard-ffa-v1-tuned.json"
-    return StrategyStandard(theta=json.loads(theta_path.read_text(encoding="utf-8")))
+    return StrategyStandard(theta=json.loads(theta_path.read_text(encoding="utf-8")), opponent_prior="model")
 
 
 STANDARD_VARIANTS: dict[str, Callable[[], Strategy]] = {
     "first-safe": StrategyFirstSafe,
     "standard-v1": _standard_v1_strategy,
 }
+
+
+def _preload_configured_standard_prior() -> None:
+    if os.environ.get("STRATEGY_VARIANT", DEFAULT_STRATEGY_VARIANT).strip() != "standard-v1":
+        return
+    if os.environ.get("STANDARD_OPPONENT_MODEL_PRELOAD", "1").strip().lower() in {"0", "false", "no"}:
+        return
+    strategy = _standard_v1_strategy()
+    model_prior = getattr(strategy, "_model_prior", None)
+    if model_prior is not None and not model_prior.preload():
+        logger.warning("standard-v1 opponent model preload failed; moves will use uniform-safe fallback")
+
 
 _decide_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="decide")
 
@@ -89,6 +101,7 @@ def _detect_git_revision() -> str:
 
 
 GIT_REVISION = _detect_git_revision()
+_preload_configured_standard_prior()
 
 
 def strategy_variant() -> str:

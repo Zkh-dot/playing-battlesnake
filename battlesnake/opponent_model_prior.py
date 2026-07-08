@@ -106,7 +106,8 @@ class LightGBMOpponentPrior:
 
     def preload(self) -> bool:
         try:
-            _load_model(self.model_path)
+            model = _load_model(self.model_path)
+            _positive_probabilities(model, _warmup_rows())
         except Exception:
             self.last_status = "preload_error"
             return False
@@ -186,6 +187,29 @@ def _positive_probabilities(model: Any, rows: list[dict[str, Any]]) -> dict[str,
         str(move): float(probability)
         for move, probability in zip(moves, probabilities)
     }
+
+
+def _warmup_rows() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for move in MOVES:
+        row = {column: 0.0 for column in MODEL_FEATURE_COLUMNS}
+        row.update(
+            {
+                "feature_candidate_move": move,
+                "board_width": 7.0,
+                "board_height": 7.0,
+                "alive_snakes": 3.0,
+                "snake_health": 100.0,
+                "snake_length": 3.0,
+                "safe_moves_count": 4.0,
+                "candidate_is_safe": 1.0,
+                "candidate_in_bounds": 1.0,
+                "candidate_center_distance": 3.0,
+                "candidate_reachable_space": 20.0,
+            }
+        )
+        rows.append(row)
+    return rows
 
 
 def _feature_column_name(name: str) -> str:

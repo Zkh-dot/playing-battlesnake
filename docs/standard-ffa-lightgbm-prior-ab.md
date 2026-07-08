@@ -3,6 +3,11 @@
 Issue #23 tested the trained LightGBM opponent prior against the deterministic
 uniform-safe prior at the root of `StrategyStandard`.
 
+Current wiring note: this historical no-go was superseded when `standard-v1`
+was changed to use `opponent_prior="model"` directly. Missing artifacts,
+missing ML dependencies, inference errors, and prior timeouts still fall back to
+the uniform-safe prior.
+
 ## Runtime
 
 The committed artifact `ai-artifacts/opponent-model/gbdt_lightgbm.joblib.gz`

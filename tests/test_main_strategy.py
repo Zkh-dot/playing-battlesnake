@@ -43,6 +43,7 @@ class StrategySelectionTests(unittest.TestCase):
             strategy = select_strategy(make_state("standard", 3))
 
         self.assertIsInstance(strategy, StrategyStandard)
+        self.assertEqual(strategy.opponent_prior, "model")
         self.assertAlmostEqual(strategy.theta["w_pocket"], 606.598196752109)
         self.assertAlmostEqual(strategy.theta["w_food_on_cell"], 299.49531231126576)
 
