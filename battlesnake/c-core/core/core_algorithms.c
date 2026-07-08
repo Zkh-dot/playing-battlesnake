@@ -15,6 +15,7 @@
 #include <time.h>
 
 #define CORE_MINIMAX_MAX_DEPTH CORE_SEARCH_MAX_DEPTH
+#define CORE_TERMINAL_SURVIVAL_MAX_STEP 1000.0
 
 const char* CoreNotImplementedMessage(void) {
     return "core algorithm unavailable";
@@ -908,6 +909,57 @@ static bool core_minimax_is_terminal(const Board* board, const char* snake_id) {
     return snake == NULL || snake->body_len == 0 || board->snake_count <= 1;
 }
 
+static double core_terminal_survival_step(const CoreEvaluationWeights* weights) {
+    double gap = weights->terminal_win - weights->terminal_loss;
+    if (!(gap > 0.0)) {
+        return 0.0;
+    }
+
+    double bounded_step = gap / (4.0 * (double)(CORE_MINIMAX_MAX_DEPTH + 1));
+    return bounded_step < CORE_TERMINAL_SURVIVAL_MAX_STEP ?
+        bounded_step :
+        CORE_TERMINAL_SURVIVAL_MAX_STEP;
+}
+
+static bool core_score_is_terminal_loss_band(const CoreEvaluationWeights* weights, double score) {
+    double step = core_terminal_survival_step(weights);
+    if (!(step > 0.0)) {
+        return false;
+    }
+
+    double band = step * (double)(CORE_MINIMAX_MAX_DEPTH + 1);
+    return score <= weights->terminal_loss + band;
+}
+
+static bool core_score_is_terminal_win_band(const CoreEvaluationWeights* weights, double score) {
+    double step = core_terminal_survival_step(weights);
+    if (!(step > 0.0)) {
+        return false;
+    }
+
+    double band = step * (double)(CORE_MINIMAX_MAX_DEPTH + 1);
+    return score >= weights->terminal_win - band;
+}
+
+static double core_adjust_terminal_child_score(const CoreEvaluationWeights* weights, double score) {
+    double step = core_terminal_survival_step(weights);
+    if (!(step > 0.0)) {
+        return score;
+    }
+
+    if (core_score_is_terminal_win_band(weights, score)) {
+        double floor = weights->terminal_win - step * (double)CORE_MINIMAX_MAX_DEPTH;
+        double adjusted = score - step;
+        return adjusted < floor ? floor : adjusted;
+    }
+    if (core_score_is_terminal_loss_band(weights, score)) {
+        double ceiling = weights->terminal_loss + step * (double)CORE_MINIMAX_MAX_DEPTH;
+        double adjusted = score + step;
+        return adjusted > ceiling ? ceiling : adjusted;
+    }
+    return score;
+}
+
 static int core_reachable_after_move(
     const Board* board,
     const char* snake_id,
@@ -921,6 +973,28 @@ static int core_reachable_after_move(
     int reachable = 0;
     (void)CoreReachableSpace(board, MoveStep(SnakeHead(snake), move), snake_id, &reachable);
     return reachable;
+}
+
+static int core_tail_path_after_move(
+    const Board* board,
+    const char* snake_id,
+    MoveDirection move
+) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len <= 1 || !core_valid_move_direction(move)) {
+        return 0;
+    }
+
+    Coord* path = NULL;
+    int path_count = 0;
+    Coord start = MoveStep(SnakeHead(snake), move);
+    Coord tail = snake->body[snake->body_len - 1];
+    CoreStatus status = CoreShortestPath(board, start, tail, snake_id, &path, &path_count);
+    free(path);
+    if (status != CORE_OK || path_count <= 0) {
+        return 0;
+    }
+    return path_count;
 }
 
 static int core_cached_reachable_after_move(
@@ -951,6 +1025,20 @@ static bool core_equal_score_move_is_better(
     MoveDirection current_best,
     MoveDirection preferred
 ) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    size_t cell_count = board != NULL && board->width > 0 && board->height > 0 ?
+        (size_t)board->width * (size_t)board->height :
+        0;
+    int length = snake != NULL ? core_snake_length(snake) : 0;
+    bool constrained_endgame = length >= 12 && cell_count > 0 && (size_t)length * 3 >= cell_count;
+    if (constrained_endgame) {
+        int candidate_tail_path = core_tail_path_after_move(board, snake_id, candidate);
+        int current_best_tail_path = core_tail_path_after_move(board, snake_id, current_best);
+        if (candidate_tail_path != current_best_tail_path) {
+            return candidate_tail_path > current_best_tail_path;
+        }
+    }
+
     bool preferred_valid = core_valid_move_direction(preferred);
     if (preferred_valid && candidate == preferred && current_best != preferred) {
         return true;
@@ -1229,6 +1317,7 @@ static CoreStatus core_minimax_search(
                     return status;
                 }
             }
+            score = core_adjust_terminal_child_score(&context->config.weights, score);
 
             if (score < worst_reply) {
                 worst_reply = score;
