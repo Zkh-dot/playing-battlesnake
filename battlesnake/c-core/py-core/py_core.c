@@ -1,6 +1,7 @@
 #include "py_core.h"
 
 #include "../core/core_algorithms.h"
+#include "../core/standard_ffa.h"
 #include "../core/zobrist.h"
 #include "../py-datatypes/py_datatypes.h"
 
@@ -181,6 +182,60 @@ static int parse_evaluation_weights(PyObject* weights_obj, CoreEvaluationWeights
         return -1;
     }
 
+    return 0;
+}
+
+static int parse_standard_ffa_config(PyObject* theta_obj, CoreStandardFfaConfig* config) {
+    if (theta_obj == NULL || theta_obj == Py_None) {
+        return 0;
+    }
+    if (!PyDict_Check(theta_obj)) {
+        PyErr_SetString(PyExc_TypeError, "theta must be a dict");
+        return -1;
+    }
+
+    if (parse_optional_weight(theta_obj, "terminal_win", &config->evaluation.terminal_win) < 0 ||
+        parse_optional_weight(theta_obj, "terminal_loss", &config->evaluation.terminal_loss) < 0 ||
+        parse_optional_weight(theta_obj, "base", &config->evaluation.base) < 0 ||
+        parse_optional_weight(theta_obj, "health", &config->evaluation.health) < 0 ||
+        parse_optional_weight(theta_obj, "length", &config->evaluation.length) < 0 ||
+        parse_optional_weight(theta_obj, "reachable_space", &config->evaluation.reachable_space) < 0 ||
+        parse_optional_weight(theta_obj, "safe_moves", &config->evaluation.safe_moves) < 0 ||
+        parse_optional_weight(theta_obj, "center", &config->evaluation.center) < 0 ||
+        parse_optional_weight(theta_obj, "food", &config->evaluation.food) < 0 ||
+        parse_optional_weight(theta_obj, "low_health_food", &config->evaluation.low_health_food) < 0 ||
+        parse_optional_weight(theta_obj, "low_health_threshold", &config->evaluation.low_health_threshold) < 0 ||
+        parse_optional_weight(theta_obj, "hazard_damage", &config->evaluation.hazard_damage) < 0 ||
+        parse_optional_weight(theta_obj, "hazard", &config->evaluation.hazard) < 0 ||
+        parse_optional_weight(theta_obj, "length_advantage", &config->evaluation.length_advantage) < 0 ||
+        parse_optional_weight(theta_obj, "adjacent_equal_or_longer_penalty", &config->evaluation.adjacent_equal_or_longer_penalty) < 0 ||
+        parse_optional_weight(theta_obj, "adjacent_shorter_bonus", &config->evaluation.adjacent_shorter_bonus) < 0 ||
+        parse_optional_weight(theta_obj, "opponent_reachable_space", &config->evaluation.opponent_reachable_space) < 0 ||
+        parse_optional_weight(theta_obj, "territory_delta", &config->evaluation.territory_delta) < 0 ||
+        parse_optional_weight(theta_obj, "opponent_safe_moves", &config->evaluation.opponent_safe_moves) < 0 ||
+        parse_optional_weight(theta_obj, "opponent_low_health_food_denial", &config->evaluation.opponent_low_health_food_denial) < 0 ||
+        parse_optional_weight(theta_obj, "w_expected", &config->w_expected) < 0 ||
+        parse_optional_weight(theta_obj, "w_worst", &config->w_worst) < 0 ||
+        parse_optional_weight(theta_obj, "w_space_log", &config->w_space_log) < 0 ||
+        parse_optional_weight(theta_obj, "w_space_ratio", &config->w_space_ratio) < 0 ||
+        parse_optional_weight(theta_obj, "w_escape", &config->w_escape) < 0 ||
+        parse_optional_weight(theta_obj, "w_zero_escape", &config->w_zero_escape) < 0 ||
+        parse_optional_weight(theta_obj, "w_losing_h2h", &config->w_losing_h2h) < 0 ||
+        parse_optional_weight(theta_obj, "w_winning_h2h", &config->w_winning_h2h) < 0 ||
+        parse_optional_weight(theta_obj, "w_food_on_cell", &config->w_food_on_cell) < 0 ||
+        parse_optional_weight(theta_obj, "w_food_route", &config->w_food_route) < 0 ||
+        parse_optional_weight(theta_obj, "w_contested_food", &config->w_contested_food) < 0 ||
+        parse_optional_weight(theta_obj, "w_pocket", &config->w_pocket) < 0 ||
+        parse_optional_weight(theta_obj, "food_urgency_health", &config->food_urgency_health) < 0 ||
+        parse_optional_weight(theta_obj, "pocket_space_per_length", &config->pocket_space_per_length) < 0 ||
+        parse_optional_weight(theta_obj, "nearby_opponent_distance", &config->nearby_opponent_distance) < 0 ||
+        parse_optional_weight(theta_obj, "deepening_enabled", &config->deepening_enabled) < 0 ||
+        parse_optional_weight(theta_obj, "deepening_depth", &config->deepening_depth) < 0 ||
+        parse_optional_weight(theta_obj, "deepening_top_candidates", &config->deepening_top_candidates) < 0 ||
+        parse_optional_weight(theta_obj, "deepening_interaction_radius", &config->deepening_interaction_radius) < 0 ||
+        parse_optional_weight(theta_obj, "deepening_trap_penalty", &config->deepening_trap_penalty) < 0) {
+        return -1;
+    }
     return 0;
 }
 
@@ -501,6 +556,35 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     return result;
 }
 
+static PyObject* py_standard_ffa_move(PyObject* self, PyObject* args, PyObject* kwds) {
+    (void)self;
+    static char* kwlist[] = {"board", "snake_id", "time_budget_ms", "theta", NULL};
+    PyObject* board_obj = NULL;
+    PyObject* theta_obj = NULL;
+    const char* snake_id = NULL;
+    int time_budget_ms = 80;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Os|iO", kwlist, &board_obj, &snake_id, &time_budget_ms, &theta_obj)) {
+        return NULL;
+    }
+
+    Board* board = board_from_pyobject(board_obj);
+    if (board == NULL) {
+        return NULL;
+    }
+
+    CoreStandardFfaConfig config = CoreStandardFfaConfigDefault(time_budget_ms);
+    if (parse_standard_ffa_config(theta_obj, &config) < 0) {
+        return NULL;
+    }
+
+    MoveDirection out_move = MOVE_INVALID;
+    CoreStatus status = CoreStandardFfaMove(board, snake_id, &config, &out_move);
+    if (status != CORE_OK) {
+        return raise_for_status(status);
+    }
+    return PyUnicode_FromString(MoveDirectionToString(out_move));
+}
+
 static PyObject* py_choke_points(PyObject* self, PyObject* args) {
     (void)self;
     PyObject* board_obj = NULL;
@@ -620,6 +704,7 @@ PyMethodDef PyCoreMethods[] = {
     {"voronoi_territory", py_voronoi_territory, METH_VARARGS, "Compute multi-source BFS territory control."},
     {"minimax_move", (PyCFunction)py_minimax_move, METH_VARARGS | METH_KEYWORDS, "Choose a move with simultaneous-move minimax heuristics."},
     {"minimax_diagnostics", (PyCFunction)py_minimax_diagnostics, METH_VARARGS | METH_KEYWORDS, "Choose a move and return minimax search diagnostics."},
+    {"standard_ffa_move", (PyCFunction)py_standard_ffa_move, METH_VARARGS | METH_KEYWORDS, "Choose a move with the native Standard FFA strategy."},
     {"choke_points", py_choke_points, METH_VARARGS, "Detect articulation-point choke cells."},
     {"edge_trap_move", py_edge_trap_move, METH_VARARGS, "Choose an optional edge-trapping move."},
     {"predict_hazards", (PyCFunction)py_predict_hazards, METH_VARARGS | METH_KEYWORDS, "Predict Royale hazard cells."},

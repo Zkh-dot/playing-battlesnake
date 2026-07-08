@@ -28,6 +28,7 @@ build/tests/test_battlesnake_json
   battlesnake/c-core/datatypes/snake.c \
   battlesnake/c-core/datatypes/board.c \
   battlesnake/c-core/core/core_algorithms.c \
+  battlesnake/c-core/core/standard_ffa.c \
   battlesnake/c-core/core/position_eval.c \
   battlesnake/c-core/core/search_stats.c \
   battlesnake/c-core/core/search_workspace.c \
@@ -49,6 +50,7 @@ build/tests/test_battlesnake_strategy
   battlesnake/c-core/datatypes/snake.c \
   battlesnake/c-core/datatypes/board.c \
   battlesnake/c-core/core/core_algorithms.c \
+  battlesnake/c-core/core/standard_ffa.c \
   battlesnake/c-core/core/position_eval.c \
   battlesnake/c-core/core/search_stats.c \
   battlesnake/c-core/core/search_workspace.c \

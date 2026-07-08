@@ -69,8 +69,7 @@ BsStrategyStatus BsChooseMove(
 
     /* Minimax search is applied to 1v1 duels. Battlesnake ladder duels are
      * delivered as standard ruleset games with two snakes, while local duel
-     * tooling may use solo. Other rulesets and multi-snake games intentionally
-     * use the safe fallback move. */
+     * tooling may use solo. */
     if (board->ruleset_name != 0 &&
         (strcmp(board->ruleset_name, "solo") == 0 || strcmp(board->ruleset_name, "standard") == 0) &&
         board->snake_count == 2) {

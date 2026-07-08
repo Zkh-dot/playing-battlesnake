@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from battlesnake.main import select_strategy
 from battlesnake.strategies.duel import StrategyDuel
 from battlesnake.strategies.first_safe import StrategyFirstSafe
+from battlesnake.strategies.standard import StrategyStandard
 from battlesnake.types import BoardState, Coord, Game, GameState, Ruleset, Snake
 
 
@@ -35,6 +37,14 @@ class StrategySelectionTests(unittest.TestCase):
 
     def test_standard_multi_snake_game_uses_default_variant(self) -> None:
         self.assertIsInstance(select_strategy(make_state("standard", 3)), StrategyFirstSafe)
+
+    def test_standard_v1_variant_uses_tuned_theta(self) -> None:
+        with patch.dict("os.environ", {"STRATEGY_VARIANT": "standard-v1"}):
+            strategy = select_strategy(make_state("standard", 3))
+
+        self.assertIsInstance(strategy, StrategyStandard)
+        self.assertAlmostEqual(strategy.theta["w_pocket"], 606.598196752109)
+        self.assertAlmostEqual(strategy.theta["w_food_on_cell"], 299.49531231126576)
 
 
 if __name__ == "__main__":
