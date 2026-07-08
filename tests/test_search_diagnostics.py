@@ -38,6 +38,7 @@ EXPECTED_DIAGNOSTIC_KEYS = {
 
 ISSUE_11_SNAKE_ID = "gs_XyxHhq8f9MqXJkwSYdh37XbY"
 ISSUE_30_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "issue_30_endgame_positions.json"
+ISSUE_33_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "issue_33_corridor_positions.json"
 ISSUE_30_EXPECTED_DEPTH_SCORE = {
     ("257c41ab-54c8-44e9-b589-70d2d0ff76a2", 481): (8, -992000.0),
     ("e1ca2e3f-a84a-4c83-83f4-8483f45fb564", 421): (9, -991000.0),
@@ -136,6 +137,10 @@ def _board_from_issue_30_fixture(raw: dict[str, object]) -> Board:
 
 def _issue_30_positions() -> list[dict[str, object]]:
     return json.loads(ISSUE_30_FIXTURE_PATH.read_text())["positions"]
+
+
+def _issue_33_positions() -> list[dict[str, object]]:
+    return json.loads(ISSUE_33_FIXTURE_PATH.read_text())["positions"]
 
 
 def _adjust_terminal_child_score(score: float) -> float:
@@ -263,6 +268,31 @@ class SearchDiagnosticsTests(unittest.TestCase):
                 self.assertEqual(selected_score, max(root_scores.values()))
                 self.assertTrue(alternative_scores)
                 self.assertGreater(selected_score, max(alternative_scores))
+
+    def test_issue_33_turn_280_rejects_one_way_lower_corridor(self) -> None:
+        raw = next(item for item in _issue_33_positions() if int(item["turn"]) == 280)
+        board = _board_from_issue_30_fixture(raw)
+        snake_id = str(raw["snake_id"])
+
+        result = minimax_diagnostics(board, snake_id, time_budget_ms=5000, fixed_depth=14)
+        root_scores = _issue_30_root_worst_scores(board, snake_id, 14)
+
+        self.assertEqual(board.safe_moves(snake_id), ["down", "left"])
+        self.assertEqual(result["completed_depth"], 14)
+        self.assertEqual(result["move"], raw["expected_move"])
+        self.assertNotEqual(result["move"], raw["bad_move"])
+        self.assertEqual(result["score"], root_scores[str(result["move"])])
+
+    def test_issue_33_turn_291_late_forced_loss_stays_visible(self) -> None:
+        raw = next(item for item in _issue_33_positions() if int(item["turn"]) == 291)
+        board = _board_from_issue_30_fixture(raw)
+        snake_id = str(raw["snake_id"])
+
+        result = minimax_diagnostics(board, snake_id, time_budget_ms=5000, fixed_depth=10)
+
+        self.assertEqual(result["completed_depth"], 10)
+        self.assertEqual(result["move"], raw["expected_move"])
+        self.assertEqual(result["score"], -996000.0)
 
     def test_terminal_survival_band_does_not_swallow_narrow_weight_heuristics(self) -> None:
         board = Board(
