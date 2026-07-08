@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 
 from battlesnake.battlesnake_native import Board, Coord, Snake, evaluate, minimax_diagnostics, minimax_move
 from battlesnake.core.evaluation import WEIGHTS
@@ -35,6 +37,17 @@ EXPECTED_DIAGNOSTIC_KEYS = {
 
 
 ISSUE_11_SNAKE_ID = "gs_XyxHhq8f9MqXJkwSYdh37XbY"
+ISSUE_30_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "issue_30_endgame_positions.json"
+ISSUE_30_EXPECTED_DEPTH_SCORE = {
+    ("257c41ab-54c8-44e9-b589-70d2d0ff76a2", 481): (8, -992000.0),
+    ("e1ca2e3f-a84a-4c83-83f4-8483f45fb564", 421): (9, -991000.0),
+    ("978a236d-028c-4201-adb6-6950d755939a", 407): (5, -995000.0),
+    ("cf5dd965-8afe-4cc1-a66e-76dffa72c39b", 360): (7, -993000.0),
+}
+TERMINAL_LOSS = -1000000.0
+TERMINAL_WIN = 1000000.0
+TERMINAL_SURVIVAL_STEP = 1000.0
+TERMINAL_BAND = TERMINAL_SURVIVAL_STEP * 33
 
 
 def _issue_11_turn_113_board() -> Board:
@@ -100,6 +113,66 @@ def _issue_11_turn_113_board() -> Board:
     )
 
 
+def _board_from_issue_30_fixture(raw: dict[str, object]) -> Board:
+    snakes = {
+        str(snake["id"]): Snake(
+            str(snake["id"]),
+            str(snake["name"]),
+            int(snake["health"]),
+            [Coord(int(x), int(y)) for x, y in snake["body"]],
+        )
+        for snake in raw["snakes"]
+    }
+    return Board(
+        width=int(raw["width"]),
+        height=int(raw["height"]),
+        snakes=snakes,
+        food=[Coord(int(x), int(y)) for x, y in raw["food"]],
+        hazards=[Coord(int(x), int(y)) for x, y in raw["hazards"]],
+        ruleset_name=str(raw["ruleset_name"]),
+        hazard_damage=int(raw["hazard_damage"]),
+    )
+
+
+def _issue_30_positions() -> list[dict[str, object]]:
+    return json.loads(ISSUE_30_FIXTURE_PATH.read_text())["positions"]
+
+
+def _adjust_terminal_child_score(score: float) -> float:
+    if score >= TERMINAL_WIN - TERMINAL_BAND:
+        return max(TERMINAL_WIN - TERMINAL_SURVIVAL_STEP * 32, score - TERMINAL_SURVIVAL_STEP)
+    if score <= TERMINAL_LOSS + TERMINAL_BAND:
+        return min(TERMINAL_LOSS + TERMINAL_SURVIVAL_STEP * 32, score + TERMINAL_SURVIVAL_STEP)
+    return score
+
+
+def _issue_30_root_worst_scores(board: Board, snake_id: str, depth: int) -> dict[str, float]:
+    opponent_ids = [candidate for candidate in board.snakes if candidate != snake_id]
+    if len(opponent_ids) != 1:
+        raise AssertionError(f"expected one opponent, got {opponent_ids!r}")
+
+    opponent_id = opponent_ids[0]
+    scores: dict[str, float] = {}
+    for own_move in board.safe_moves(snake_id):
+        worst_reply = float("inf")
+        for opponent_move in ("up", "down", "left", "right"):
+            child = board.clone_and_apply({snake_id: own_move, opponent_id: opponent_move})
+            if snake_id not in child.snakes or len(child.snakes) <= 1:
+                child_score = float(evaluate(child, snake_id))
+            else:
+                child_score = float(
+                    minimax_diagnostics(
+                        child,
+                        snake_id,
+                        time_budget_ms=5000,
+                        fixed_depth=max(depth - 1, 0),
+                    )["score"]
+                )
+            worst_reply = min(worst_reply, _adjust_terminal_child_score(child_score))
+        scores[own_move] = worst_reply
+    return scores
+
+
 class SearchDiagnosticsTests(unittest.TestCase):
     def test_minimax_diagnostics_shape(self) -> None:
         scenario = get_scenario("duel_open_7x7")
@@ -153,6 +226,77 @@ class SearchDiagnosticsTests(unittest.TestCase):
 
         self.assertEqual(result["completed_depth"], 11)
         self.assertEqual(result["move"], "up")
+
+    def test_issue_30_forced_losses_keep_survival_horizon_in_score(self) -> None:
+        for raw in _issue_30_positions():
+            key = (str(raw["game_id"]), int(raw["turn"]))
+            depth, expected_score = ISSUE_30_EXPECTED_DEPTH_SCORE[key]
+            with self.subTest(game_id=key[0], turn=key[1]):
+                board = _board_from_issue_30_fixture(raw)
+                result = minimax_diagnostics(
+                    board,
+                    str(raw["snake_id"]),
+                    time_budget_ms=5000,
+                    fixed_depth=depth,
+                )
+
+                self.assertEqual(result["completed_depth"], depth)
+                self.assertEqual(result["score"], expected_score)
+                self.assertGreater(result["score"], TERMINAL_LOSS)
+
+    def test_issue_30_selected_root_move_has_best_forced_loss_survival(self) -> None:
+        for raw in _issue_30_positions():
+            key = (str(raw["game_id"]), int(raw["turn"]))
+            depth, _expected_score = ISSUE_30_EXPECTED_DEPTH_SCORE[key]
+            with self.subTest(game_id=key[0], turn=key[1]):
+                board = _board_from_issue_30_fixture(raw)
+                snake_id = str(raw["snake_id"])
+                result = minimax_diagnostics(board, snake_id, time_budget_ms=5000, fixed_depth=depth)
+                root_scores = _issue_30_root_worst_scores(board, snake_id, depth)
+                selected_score = root_scores[str(result["move"])]
+                alternative_scores = [
+                    score
+                    for move, score in root_scores.items()
+                    if move != result["move"]
+                ]
+
+                self.assertEqual(selected_score, max(root_scores.values()))
+                self.assertTrue(alternative_scores)
+                self.assertGreater(selected_score, max(alternative_scores))
+
+    def test_terminal_survival_band_does_not_swallow_narrow_weight_heuristics(self) -> None:
+        board = Board(
+            width=7,
+            height=7,
+            snakes={
+                "me": Snake("me", "me", 90, [Coord(1, 3), Coord(1, 2), Coord(1, 1)], length=3),
+                "you": Snake("you", "you", 90, [Coord(5, 3), Coord(5, 2), Coord(5, 1)], length=3),
+            },
+            food=[Coord(3, 3)],
+            ruleset_name="standard",
+            hazard_damage=0,
+        )
+        narrow_terminal = {"terminal_win": 10000.0, "terminal_loss": -10000.0}
+        wide_terminal = {"terminal_win": 1000000.0, "terminal_loss": -1000000.0}
+
+        narrow = minimax_diagnostics(
+            board,
+            "me",
+            time_budget_ms=1000,
+            fixed_depth=1,
+            weights=narrow_terminal,
+        )
+        wide = minimax_diagnostics(
+            board,
+            "me",
+            time_budget_ms=1000,
+            fixed_depth=1,
+            weights=wide_terminal,
+        )
+
+        self.assertEqual(narrow["completed_depth"], 1)
+        self.assertEqual(narrow["move"], wide["move"])
+        self.assertAlmostEqual(float(narrow["score"]), float(wide["score"]), places=6)
 
     def test_opponent_pressure_weight_overrides_change_score(self) -> None:
         scenario = get_scenario("duel_open_7x7")
