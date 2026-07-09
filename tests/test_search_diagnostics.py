@@ -305,6 +305,19 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertNotEqual(result["move"], raw["bad_move"])
         self.assertEqual(result["score"], root_scores[str(result["move"])])
 
+    def test_issue_33_turn_280_terminal_loss_corridor_guard_keeps_score_coherent(self) -> None:
+        raw = next(item for item in _issue_33_positions() if int(item["turn"]) == 280)
+        board = _board_from_issue_30_fixture(raw)
+        snake_id = str(raw["snake_id"])
+
+        result = minimax_diagnostics(board, snake_id, time_budget_ms=5000, fixed_depth=14)
+        root_scores = result["root_move_scores"]
+
+        self.assertEqual(result["move"], raw["expected_move"])
+        self.assertLessEqual(max(root_scores.values()), TERMINAL_LOSS + TERMINAL_BAND)
+        self.assertLess(root_scores[str(result["move"])], root_scores[str(raw["bad_move"])])
+        self.assertEqual(result["score"], root_scores[str(result["move"])])
+
     def test_issue_33_turn_291_late_forced_loss_stays_visible(self) -> None:
         raw = next(item for item in _issue_33_positions() if int(item["turn"]) == 291)
         board = _board_from_issue_30_fixture(raw)
@@ -315,6 +328,19 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result["completed_depth"], 10)
         self.assertEqual(result["move"], raw["expected_move"])
         self.assertEqual(result["score"], -996000.0)
+
+    def test_issue_33_turn_291_terminal_loss_tie_continues_heading(self) -> None:
+        raw = next(item for item in _issue_33_positions() if int(item["turn"]) == 291)
+        board = _board_from_issue_30_fixture(raw)
+        snake_id = str(raw["snake_id"])
+
+        result = minimax_diagnostics(board, snake_id, time_budget_ms=5000, fixed_depth=10)
+        root_scores = result["root_move_scores"]
+
+        self.assertEqual(root_scores["up"], root_scores["right"])
+        self.assertLessEqual(result["score"], TERMINAL_LOSS + TERMINAL_BAND)
+        self.assertEqual(result["move"], "right")
+        self.assertEqual(result["score"], root_scores["right"])
 
     def test_terminal_survival_band_does_not_swallow_narrow_weight_heuristics(self) -> None:
         board = Board(

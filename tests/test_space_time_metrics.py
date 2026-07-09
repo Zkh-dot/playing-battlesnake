@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from battlesnake.battlesnake_native import Board, Coord, Snake, space_time_metrics
+from battlesnake.battlesnake_native import Board, Coord, Snake, evaluate, space_time_metrics
+
+
+TERMINAL_LOSS = -1000000.0
+SURVIVAL_STEP = 1000.0
+LOSS_BAND_CEILING = TERMINAL_LOSS + SURVIVAL_STEP * 33
 
 
 def _board(width: int, height: int, snakes: list[Snake], food: list[Coord] | None = None) -> Board:
@@ -106,6 +111,48 @@ class SpaceTimeMetricsTests(unittest.TestCase):
         free = space_time_metrics(_board(7, 7, [me, short_opponent]), "me")
 
         self.assertLess(contested["reachable_cells"], free["reachable_cells"])
+
+
+class DeadRegionEvaluationTests(unittest.TestCase):
+    def _dead_pocket_board(self) -> Board:
+        me = _snake(
+            "me",
+            [
+                (1, 0), (2, 0), (2, 1), (1, 1), (0, 1), (0, 2), (1, 2),
+                (2, 2), (3, 2), (4, 2), (4, 1), (4, 0), (5, 0),
+            ],
+        )
+        return _board(11, 11, [me, _snake("you", [(9, 9), (9, 8), (9, 7)])])
+
+    def test_dead_pocket_scores_in_terminal_loss_band(self) -> None:
+        score = evaluate(self._dead_pocket_board(), "me")
+
+        self.assertLessEqual(score, LOSS_BAND_CEILING)
+        self.assertGreater(score, TERMINAL_LOSS)
+        # max_arrival is 1 for this pocket -> exactly one survival step.
+        self.assertEqual(score, TERMINAL_LOSS + SURVIVAL_STEP * 1)
+
+    def test_alive_pocket_scores_normally(self) -> None:
+        me = _snake("me", [(1, 0), (2, 0), (2, 1), (1, 1), (0, 1), (0, 2)])
+        board = _board(11, 11, [me, _snake("you", [(9, 9), (9, 8), (9, 7)])])
+
+        score = evaluate(board, "me")
+
+        self.assertGreater(score, LOSS_BAND_CEILING)
+
+    def test_deeper_pocket_outranks_shallow_pocket(self) -> None:
+        # A dead region with more survivable turns must score strictly higher,
+        # so minimax prefers the longer survival line among forced losses.
+        shallow = evaluate(self._dead_pocket_board(), "me")
+        me = _snake("me", [(6, 2), (6, 1), (5, 1), (5, 2), (4, 2)])
+        opponent = _snake("you", [(4, 3), (4, 4), (3, 4), (3, 3), (2, 3)])
+        deeper_board = _board(7, 7, [me, opponent])
+        deeper_metrics = space_time_metrics(deeper_board, "me")
+        deeper = evaluate(deeper_board, "me")
+
+        self.assertTrue(deeper_metrics["dead"])
+        self.assertGreater(deeper_metrics["max_arrival"], 1)
+        self.assertLess(shallow, deeper)
 
 
 if __name__ == "__main__":

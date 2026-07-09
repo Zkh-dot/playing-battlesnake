@@ -1322,6 +1322,29 @@ static int core_tail_path_after_move(
     return path_count;
 }
 
+static MoveDirection core_current_heading(const Board* board, const char* snake_id) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len < 2) {
+        return MOVE_INVALID;
+    }
+
+    Coord head = SnakeHead(snake);
+    Coord neck = snake->body[1];
+    if (head.x == neck.x + 1 && head.y == neck.y) {
+        return MOVE_RIGHT;
+    }
+    if (head.x == neck.x - 1 && head.y == neck.y) {
+        return MOVE_LEFT;
+    }
+    if (head.x == neck.x && head.y == neck.y + 1) {
+        return MOVE_UP;
+    }
+    if (head.x == neck.x && head.y == neck.y - 1) {
+        return MOVE_DOWN;
+    }
+    return MOVE_INVALID;
+}
+
 static int core_cached_reachable_after_move(
     const Board* board,
     const char* snake_id,
@@ -1520,7 +1543,8 @@ static bool core_equal_score_move_is_better(
     int* reachable_spaces,
     MoveDirection candidate,
     MoveDirection current_best,
-    MoveDirection preferred
+    MoveDirection preferred,
+    bool terminal_loss_tie
 ) {
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     size_t cell_count = board != NULL && board->width > 0 && board->height > 0 ?
@@ -1528,11 +1552,29 @@ static bool core_equal_score_move_is_better(
         0;
     int length = snake != NULL ? core_snake_length(snake) : 0;
     bool constrained_endgame = length >= 12 && cell_count > 0 && (size_t)length * 3 >= cell_count;
+    if (!constrained_endgame && terminal_loss_tie && snake != NULL && length >= 12) {
+        int current_reachable = 0;
+        if (CoreReachableSpace(board, SnakeHead(snake), snake_id, &current_reachable) == CORE_OK &&
+            current_reachable < length) {
+            constrained_endgame = true;
+        }
+    }
     if (constrained_endgame) {
         int candidate_tail_path = core_tail_path_after_move(board, snake_id, candidate);
         int current_best_tail_path = core_tail_path_after_move(board, snake_id, current_best);
         if (candidate_tail_path != current_best_tail_path) {
             return candidate_tail_path > current_best_tail_path;
+        }
+        if (terminal_loss_tie) {
+            MoveDirection heading = core_current_heading(board, snake_id);
+            if (core_valid_move_direction(heading)) {
+                if (candidate == heading && current_best != heading) {
+                    return true;
+                }
+                if (current_best == heading && candidate != heading) {
+                    return false;
+                }
+            }
         }
     }
 
@@ -1822,7 +1864,7 @@ static CoreStatus core_minimax_search(
             if (worst_reply <= alpha) {
                 if (stats != NULL) {
                     stats->beta_cutoffs++;
-                    if (order == 0) {
+                    if (context->config.enable_move_ordering && order == 0) {
                         stats->move_order_first_choice_cutoffs++;
                     }
                 }
@@ -1863,7 +1905,8 @@ static CoreStatus core_minimax_search(
                     original_reachable_spaces,
                     own_move,
                     best_move,
-                    tie_preferred
+                    tie_preferred,
+                    core_score_is_terminal_loss_band(&context->config.weights, worst_reply)
                 )
             )
         ) {
@@ -2052,15 +2095,40 @@ CoreStatus CoreMinimaxMoveWithStats(
         stats->root_move_scores[move] = completed_root_move_scores[move];
     }
     MoveDirection corridor_guard_move = MOVE_INVALID;
+    bool completed_score_is_terminal_loss = core_score_is_terminal_loss_band(&context.config.weights, completed_score);
+    bool completed_score_is_terminal_win = core_score_is_terminal_win_band(&context.config.weights, completed_score);
     if (
-        !core_score_is_terminal_loss_band(&context.config.weights, completed_score) &&
-        !core_score_is_terminal_win_band(&context.config.weights, completed_score) &&
+        !completed_score_is_terminal_win &&
         core_constrained_root_corridor_move(board, snake_id, safe_moves, safe_move_count, &corridor_guard_move) &&
         completed_root_move_score_valid[(int)corridor_guard_move]
     ) {
-        completed_best = corridor_guard_move;
-        completed_score = completed_root_move_scores[(int)corridor_guard_move];
-        stats->score = completed_score;
+        bool apply_corridor_guard = false;
+        if (!completed_score_is_terminal_loss) {
+            apply_corridor_guard = true;
+        } else {
+            CoreCorridorMoveMetrics guard_metrics;
+            CoreCorridorMoveMetrics completed_metrics;
+            if (
+                core_corridor_metrics_after_move(board, snake_id, corridor_guard_move, &guard_metrics) &&
+                core_corridor_metrics_after_move(board, snake_id, completed_best, &completed_metrics) &&
+                completed_metrics.immediate_exits <= 1 &&
+                guard_metrics.immediate_exits >= 2 &&
+                completed_metrics.forced_steps - guard_metrics.forced_steps >= 4
+            ) {
+                apply_corridor_guard = true;
+            }
+        }
+
+        /*
+         * Dead-region leaves can enter the terminal-loss band before a true
+         * terminal; keep the issue-33 long-corridor invariant without
+         * overriding ordinary forced-loss survival ordering.
+         */
+        if (apply_corridor_guard) {
+            completed_best = corridor_guard_move;
+            completed_score = completed_root_move_scores[(int)corridor_guard_move];
+            stats->score = completed_score;
+        }
     }
     stats->move = completed_best;
     stats->elapsed_ms = core_elapsed_ms(start, end);
@@ -2365,11 +2433,26 @@ CoreStatus CoreEvaluateWithWeights(
     }
 
     Coord head = SnakeHead(snake);
-    int reachable = 0;
-    CoreStatus status = CoreReachableSpace(board, head, snake_id, &reachable);
+    CoreSpaceTimeMetrics space_time;
+    CoreStatus status = CoreSpaceTimeCompute(board, snake_id, &space_time);
     if (status != CORE_OK) {
         return status;
     }
+
+    /* The terminal-loss-band shortcut is a duel leaf policy; FFA scoring keeps
+     * its layered heuristic terms while still using time-aware reachable space. */
+    if (board->snake_count == 2 && space_time.dead) {
+        double step = core_terminal_survival_step(weights);
+        int survivable = space_time.max_arrival;
+        if (survivable > CORE_MINIMAX_MAX_DEPTH) {
+            survivable = CORE_MINIMAX_MAX_DEPTH;
+        }
+        /* Compose dead-region leaves into the PR #31 survival-step terminal-loss band. */
+        *out_score = weights->terminal_loss + step * (double)survivable;
+        return CORE_OK;
+    }
+
+    int reachable = space_time.reachable_cells;
 
     MoveDirection safe_moves[4];
     int safe_count = BoardSafeMoves(board, snake_id, safe_moves);
