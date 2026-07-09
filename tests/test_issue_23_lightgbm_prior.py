@@ -77,10 +77,10 @@ def test_model_prior_smooths_and_keeps_only_safe_moves(monkeypatch: pytest.Monke
     board = sample_board()
     prior = LightGBMOpponentPrior(model=object(), epsilon=0.10, timeout_ms=80)
 
-    def fake_positive_probabilities(_model: object, rows: list[dict[str, object]]) -> dict[str, float]:
-        return {str(row["feature_candidate_move"]): 10.0 if row["feature_candidate_move"] == "up" else 1.0 for row in rows}
+    def fake_positive_probability_values(_model: object, rows: list[dict[str, object]]) -> list[float]:
+        return [10.0 if row["feature_candidate_move"] == "up" else 1.0 for row in rows]
 
-    monkeypatch.setattr("battlesnake.opponent_model_prior._positive_probabilities", fake_positive_probabilities)
+    monkeypatch.setattr("battlesnake.opponent_model_prior._positive_probability_values", fake_positive_probability_values)
 
     priors = prior.priors(board, "me", turn=12)
 
@@ -128,10 +128,10 @@ def test_standard_v1_decision_record_uses_model_prior_when_available(monkeypatch
 
     monkeypatch.setattr("battlesnake.opponent_model_prior._load_model", lambda _path: object())
 
-    def fake_positive_probabilities(_model: object, rows: list[dict[str, object]]) -> dict[str, float]:
-        return {str(row["feature_candidate_move"]): 10.0 if row["feature_candidate_move"] == "up" else 1.0 for row in rows}
+    def fake_positive_probability_values(_model: object, rows: list[dict[str, object]]) -> list[float]:
+        return [10.0 if row["feature_candidate_move"] == "up" else 1.0 for row in rows]
 
-    monkeypatch.setattr("battlesnake.opponent_model_prior._positive_probabilities", fake_positive_probabilities)
+    monkeypatch.setattr("battlesnake.opponent_model_prior._positive_probability_values", fake_positive_probability_values)
 
     strategy = STANDARD_VARIANTS["standard-v1"]()
     _move, record = strategy.explain_decision(sample_board(), "me")
