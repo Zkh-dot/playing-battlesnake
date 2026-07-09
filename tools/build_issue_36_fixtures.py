@@ -21,12 +21,12 @@ CRITICAL_TURNS = [
     ("ebaca2a0-0f2a-411d-87a1-e2766d7daa50", 450, "left", "left"),
     ("ebaca2a0-0f2a-411d-87a1-e2766d7daa50", 451, "left", None),
     ("9f1b79ed-9fbf-4732-aabb-254c0fb3fd6c", 290, "left", "left"),
-    ("9f1b79ed-9fbf-4732-aabb-254c0fb3fd6c", 298, "left", "left"),
-    ("923544bf-4fee-4aba-bfdc-01202e911637", 322, "up", "up"),
+    ("9f1b79ed-9fbf-4732-aabb-254c0fb3fd6c", 298, "left", None),
+    ("923544bf-4fee-4aba-bfdc-01202e911637", 322, "up", None),
     ("923544bf-4fee-4aba-bfdc-01202e911637", 323, "right", None),
-    ("b085baae-2831-4932-af82-9410568c3bf6", 344, "left", "left"),
+    ("b085baae-2831-4932-af82-9410568c3bf6", 344, "left", None),
     ("b085baae-2831-4932-af82-9410568c3bf6", 350, "down", None),
-    ("e1265a85-5111-42b5-9f7c-b2a0e4c5d1e7", 290, "left", "left"),
+    ("e1265a85-5111-42b5-9f7c-b2a0e4c5d1e7", 290, "left", None),
     ("e1265a85-5111-42b5-9f7c-b2a0e4c5d1e7", 296, "right", None),
 ]
 

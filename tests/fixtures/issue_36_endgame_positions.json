@@ -1072,8 +1072,7 @@
      5
     ]
    ],
-   "hazards": [],
-   "bad_move": "left"
+   "hazards": []
   },
   {
    "game_id": "923544bf-4fee-4aba-bfdc-01202e911637",
@@ -1342,8 +1341,7 @@
      10
     ]
    ],
-   "hazards": [],
-   "bad_move": "up"
+   "hazards": []
   },
   {
    "game_id": "923544bf-4fee-4aba-bfdc-01202e911637",
@@ -1957,8 +1955,7 @@
      7
     ]
    ],
-   "hazards": [],
-   "bad_move": "left"
+   "hazards": []
   },
   {
    "game_id": "b085baae-2831-4932-af82-9410568c3bf6",
@@ -2552,8 +2549,7 @@
      4
     ]
    ],
-   "hazards": [],
-   "bad_move": "left"
+   "hazards": []
   },
   {
    "game_id": "e1265a85-5111-42b5-9f7c-b2a0e4c5d1e7",

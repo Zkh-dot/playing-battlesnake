@@ -1560,6 +1560,19 @@ static bool core_equal_score_move_is_better(
         }
     }
     if (constrained_endgame) {
+        if (terminal_loss_tie) {
+            CoreCorridorMoveMetrics candidate_metrics;
+            CoreCorridorMoveMetrics current_best_metrics;
+            if (core_corridor_metrics_after_move(board, snake_id, candidate, &candidate_metrics) &&
+                core_corridor_metrics_after_move(board, snake_id, current_best, &current_best_metrics) &&
+                (
+                    candidate_metrics.immediate_exits != current_best_metrics.immediate_exits ||
+                    candidate_metrics.forced_steps != current_best_metrics.forced_steps ||
+                    candidate_metrics.reachable != current_best_metrics.reachable
+                )) {
+                return core_corridor_metrics_are_better(&candidate_metrics, &current_best_metrics);
+            }
+        }
         int candidate_tail_path = core_tail_path_after_move(board, snake_id, candidate);
         int current_best_tail_path = core_tail_path_after_move(board, snake_id, current_best);
         if (candidate_tail_path != current_best_tail_path) {
@@ -2103,8 +2116,9 @@ CoreStatus CoreMinimaxMoveWithStats(
         completed_root_move_score_valid[(int)corridor_guard_move]
     ) {
         bool apply_corridor_guard = false;
+        double corridor_guard_score = completed_root_move_scores[(int)corridor_guard_move];
         if (!completed_score_is_terminal_loss) {
-            apply_corridor_guard = true;
+            apply_corridor_guard = !core_score_is_terminal_loss_band(&context.config.weights, corridor_guard_score);
         } else {
             CoreCorridorMoveMetrics guard_metrics;
             CoreCorridorMoveMetrics completed_metrics;
@@ -2126,7 +2140,7 @@ CoreStatus CoreMinimaxMoveWithStats(
          */
         if (apply_corridor_guard) {
             completed_best = corridor_guard_move;
-            completed_score = completed_root_move_scores[(int)corridor_guard_move];
+            completed_score = corridor_guard_score;
             stats->score = completed_score;
         }
     }
