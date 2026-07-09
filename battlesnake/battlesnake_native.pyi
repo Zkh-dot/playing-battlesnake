@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, TypedDict
 
 
 class Coord:
@@ -62,9 +62,36 @@ DOWN: str
 LEFT: str
 RIGHT: str
 
+class MinimaxDiagnostics(TypedDict):
+    move: str
+    score: float
+    root_move_scores: dict[str, float]
+    elapsed_ms: float
+    parallel_mode: int
+    parallel_workers_used: int
+    completed_depth: int
+    max_depth_started: int
+    timed_out: bool
+    nodes: int
+    leaf_evals: int
+    clone_calls: int
+    board_allocations: int
+    safe_move_calls: int
+    beta_cutoffs: int
+    move_order_first_choice_cutoffs: int
+    tt_probes: int
+    tt_hits: int
+    tt_exact_hits: int
+    tt_lower_hits: int
+    tt_upper_hits: int
+    tt_cutoffs: int
+    tt_stores: int
+    tt_collisions: int
+
 def reachable_space(board: Board, start: Coord, snake_id: str) -> int: ...
 def shortest_path(board: Board, start: Coord, goal: Coord, snake_id: str) -> list[Coord]: ...
 def voronoi_territory(board: Board) -> dict[str, set[Coord]]: ...
+def space_time_metrics(board: Board, snake_id: str) -> dict[str, int | bool]: ...
 def minimax_move(
     board: Board,
     snake_id: str,
@@ -81,7 +108,7 @@ def minimax_diagnostics(
     enable_make_unmake: bool = True,
     weights: dict[str, float] | None = None,
     parallel_mode: str = "serial",
-) -> dict[str, object]: ...
+) -> MinimaxDiagnostics: ...
 def standard_ffa_move(
     board: Board,
     snake_id: str,

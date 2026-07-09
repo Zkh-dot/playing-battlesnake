@@ -16,6 +16,7 @@
 
 #define CORE_MINIMAX_MAX_DEPTH CORE_SEARCH_MAX_DEPTH
 #define CORE_TERMINAL_SURVIVAL_MAX_STEP 1000.0
+#define CORE_SPACE_TIME_NEVER (INT_MAX / 2)
 
 const char* CoreNotImplementedMessage(void) {
     return "core algorithm unavailable";
@@ -118,11 +119,19 @@ static int core_command_moves(const Board* board, const char* snake_id, MoveDire
         return 0;
     }
 
-    out_moves[0] = MOVE_UP;
-    out_moves[1] = MOVE_DOWN;
-    out_moves[2] = MOVE_LEFT;
-    out_moves[3] = MOVE_RIGHT;
-    return 4;
+    Coord head = SnakeHead(snake);
+    bool neck_is_vacating_tail = snake->body_len == 2 &&
+        !core_is_constrictor(board) &&
+        !core_coord_in_array(board->food, board->food_count, snake->body[1]);
+    int count = 0;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        Coord next = MoveStep(head, (MoveDirection)move);
+        if (snake->body_len > 1 && !neck_is_vacating_tail && CoordEquals(next, snake->body[1])) {
+            continue;
+        }
+        out_moves[count++] = (MoveDirection)move;
+    }
+    return count;
 }
 
 static void core_fill_movement_blocks(const Board* board, const char* snake_id, unsigned char* blocked) {
@@ -753,6 +762,410 @@ CoreStatus CoreVoronoiTerritory(const Board* board, void** out_territory) {
     return CORE_OK;
 }
 
+static void core_fill_vacate_times(const Board* board, const char* snake_id, int* vacate) {
+    bool constrictor = core_is_constrictor(board);
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* snake = &board->snakes[i];
+        if (snake->body_len <= 0) {
+            continue;
+        }
+
+        int delay = 0;
+        if (constrictor) {
+            delay = CORE_SPACE_TIME_NEVER;
+        } else if (strcmp(snake->id, snake_id) == 0) {
+            Coord tail = snake->body[snake->body_len - 1];
+            if (core_coord_in_array(board->food, board->food_count, tail)) {
+                delay = 1;
+            }
+        } else if (core_snake_can_eat_next_turn(board, snake)) {
+            delay = 1;
+        }
+
+        for (int j = 0; j < snake->body_len; j++) {
+            Coord body = snake->body[j];
+            if (!BoardInBounds(board, body)) {
+                continue;
+            }
+
+            int vacate_time = CORE_SPACE_TIME_NEVER;
+            if (delay < CORE_SPACE_TIME_NEVER) {
+                vacate_time = snake->body_len - j + delay;
+                if (vacate_time > CORE_SPACE_TIME_NEVER) {
+                    vacate_time = CORE_SPACE_TIME_NEVER;
+                }
+            }
+
+            int index = core_coord_index(board, body);
+            if (vacate_time > vacate[index]) {
+                vacate[index] = vacate_time;
+            }
+        }
+    }
+}
+
+static bool core_fill_opponent_arrival(
+    const Board* board,
+    const char* snake_id,
+    int own_length,
+    const int* vacate,
+    int* opponent_arrival,
+    unsigned int* seen,
+    unsigned int seen_stamp,
+    size_t* queue,
+    size_t cell_count,
+    int max_time
+) {
+    for (size_t i = 0; i < cell_count; i++) {
+        opponent_arrival[i] = CORE_SPACE_TIME_NEVER;
+    }
+
+    size_t state_layers = (size_t)max_time + 1;
+    if (cell_count != 0 && state_layers > ((size_t)-1) / cell_count) {
+        return false;
+    }
+    if (seen == NULL || seen_stamp == 0 || queue == NULL) {
+        return false;
+    }
+
+    size_t head = 0;
+    size_t tail = 0;
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* snake = &board->snakes[i];
+        if (snake->body_len == 0 || strcmp(snake->id, snake_id) == 0 || core_snake_length(snake) < own_length) {
+            continue;
+        }
+
+        Coord snake_head = SnakeHead(snake);
+        if (!BoardInBounds(board, snake_head)) {
+            continue;
+        }
+
+        int index = core_coord_index(board, snake_head);
+        if (opponent_arrival[index] > 0) {
+            opponent_arrival[index] = 0;
+            seen[index] = seen_stamp;
+            queue[tail++] = (size_t)index;
+        }
+    }
+
+    while (head < tail) {
+        size_t state = queue[head++];
+        int current = (int)(state % cell_count);
+        int current_time = (int)(state / cell_count);
+        if (current_time >= max_time) {
+            continue;
+        }
+
+        int next_time = current_time + 1;
+        int x = current % board->width;
+        int y = current / board->width;
+        int neighbors[4];
+        int neighbor_count = 0;
+        if (y + 1 < board->height) {
+            neighbors[neighbor_count++] = current + board->width;
+        }
+        if (y > 0) {
+            neighbors[neighbor_count++] = current - board->width;
+        }
+        if (x > 0) {
+            neighbors[neighbor_count++] = current - 1;
+        }
+        if (x + 1 < board->width) {
+            neighbors[neighbor_count++] = current + 1;
+        }
+
+        for (int i = 0; i < neighbor_count; i++) {
+            int neighbor = neighbors[i];
+            if (next_time < vacate[neighbor]) {
+                continue;
+            }
+
+            size_t next_state = (size_t)next_time * cell_count + (size_t)neighbor;
+            if (seen[next_state] == seen_stamp) {
+                continue;
+            }
+
+            seen[next_state] = seen_stamp;
+            queue[tail++] = next_state;
+            if (opponent_arrival[neighbor] > next_time) {
+                opponent_arrival[neighbor] = next_time;
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool core_has_equal_or_longer_opponent(const Board* board, const char* snake_id, int own_length) {
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* snake = &board->snakes[i];
+        if (snake->body_len == 0 || strcmp(snake->id, snake_id) == 0) {
+            continue;
+        }
+        if (core_snake_length(snake) >= own_length) {
+            return true;
+        }
+    }
+    return false;
+}
+
+typedef struct {
+    int* vacate;
+    int* opponent_arrival;
+    int* own_arrival;
+    unsigned int* opponent_seen;
+    unsigned int* own_seen;
+    size_t* opponent_queue;
+    size_t* own_queue;
+    size_t cell_capacity;
+    size_t state_capacity;
+    unsigned int opponent_stamp;
+    unsigned int own_stamp;
+} CoreSpaceTimeScratch;
+
+static _Thread_local CoreSpaceTimeScratch core_space_time_scratch;
+
+static bool core_space_time_resize(void** target, size_t byte_count) {
+    void* next = realloc(*target, byte_count);
+    if (next == NULL) {
+        return false;
+    }
+    *target = next;
+    return true;
+}
+
+static bool core_space_time_ensure_scratch(size_t cell_count, size_t state_count, CoreSpaceTimeScratch** out_scratch) {
+    CoreSpaceTimeScratch* scratch = &core_space_time_scratch;
+    if (cell_count > scratch->cell_capacity) {
+        if (cell_count > ((size_t)-1) / sizeof(int)) {
+            return false;
+        }
+        size_t int_bytes = cell_count * sizeof(int);
+        if (!core_space_time_resize((void**)&scratch->vacate, int_bytes) ||
+            !core_space_time_resize((void**)&scratch->opponent_arrival, int_bytes) ||
+            !core_space_time_resize((void**)&scratch->own_arrival, int_bytes)) {
+            return false;
+        }
+        scratch->cell_capacity = cell_count;
+    }
+    if (state_count > scratch->state_capacity) {
+        if (state_count > ((size_t)-1) / sizeof(size_t)) {
+            return false;
+        }
+        if (!core_space_time_resize((void**)&scratch->opponent_seen, state_count * sizeof(unsigned int)) ||
+            !core_space_time_resize((void**)&scratch->own_seen, state_count * sizeof(unsigned int)) ||
+            !core_space_time_resize((void**)&scratch->opponent_queue, state_count * sizeof(size_t)) ||
+            !core_space_time_resize((void**)&scratch->own_queue, state_count * sizeof(size_t))) {
+            return false;
+        }
+        memset(scratch->opponent_seen, 0, state_count * sizeof(unsigned int));
+        memset(scratch->own_seen, 0, state_count * sizeof(unsigned int));
+        scratch->state_capacity = state_count;
+    }
+    *out_scratch = scratch;
+    return true;
+}
+
+static unsigned int core_space_time_next_stamp(
+    unsigned int* stamp,
+    unsigned int* seen,
+    size_t state_count
+) {
+    if (*stamp == UINT_MAX) {
+        memset(seen, 0, state_count * sizeof(unsigned int));
+        *stamp = 0;
+    }
+    (*stamp)++;
+    return *stamp;
+}
+
+CoreStatus CoreSpaceTimeCompute(
+    const Board* board,
+    const char* snake_id,
+    CoreSpaceTimeMetrics* out_metrics
+) {
+    if (board == NULL || snake_id == NULL || out_metrics == NULL || board->width <= 0 || board->height <= 0) {
+        return CORE_ERROR;
+    }
+
+    memset(out_metrics, 0, sizeof(*out_metrics));
+
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        return CORE_OK;
+    }
+
+    Coord head_coord = SnakeHead(snake);
+    if (!BoardInBounds(board, head_coord)) {
+        return CORE_OK;
+    }
+
+    size_t cell_count = 0;
+    if (!core_cell_count(board, &cell_count)) {
+        return CORE_ERROR;
+    }
+
+    size_t max_cell_count = cell_count;
+    if (max_cell_count > (size_t)INT_MAX) {
+        return CORE_ERROR;
+    }
+
+    CoreSpaceTimeScratch* scratch = NULL;
+    if (!core_space_time_ensure_scratch(max_cell_count, 0, &scratch)) {
+        return CORE_ERROR;
+    }
+
+    int* vacate = scratch->vacate;
+    memset(vacate, 0, cell_count * sizeof(int));
+    core_fill_vacate_times(board, snake_id, vacate);
+
+    if (snake->health <= board->hazard_damage + 1) {
+        for (int i = 0; i < board->hazard_count; i++) {
+            Coord hazard = board->hazards[i];
+            if (BoardInBounds(board, hazard)) {
+                vacate[core_coord_index(board, hazard)] = CORE_SPACE_TIME_NEVER;
+            }
+        }
+    }
+
+    int max_vacate = 0;
+    for (size_t i = 0; i < cell_count; i++) {
+        if (vacate[i] < CORE_SPACE_TIME_NEVER && vacate[i] > max_vacate) {
+            max_vacate = vacate[i];
+        }
+    }
+    if (cell_count > (size_t)(INT_MAX - max_vacate - 2)) {
+        return CORE_ERROR;
+    }
+    int max_time = max_vacate + (int)cell_count + 2;
+
+    size_t state_layers = (size_t)max_time + 1;
+    if (cell_count != 0 && state_layers > ((size_t)-1) / cell_count) {
+        return CORE_ERROR;
+    }
+    size_t state_count = state_layers * cell_count;
+
+    if (!core_space_time_ensure_scratch(max_cell_count, state_count, &scratch)) {
+        return CORE_ERROR;
+    }
+    int* opponent_arrival = scratch->opponent_arrival;
+    int* own_arrival = scratch->own_arrival;
+
+    int own_length = core_snake_length(snake);
+    if (core_has_equal_or_longer_opponent(board, snake_id, own_length)) {
+        unsigned int opponent_stamp = core_space_time_next_stamp(
+            &scratch->opponent_stamp,
+            scratch->opponent_seen,
+            state_count
+        );
+        if (!core_fill_opponent_arrival(
+            board,
+            snake_id,
+            own_length,
+            vacate,
+            opponent_arrival,
+            scratch->opponent_seen,
+            opponent_stamp,
+            scratch->opponent_queue,
+            cell_count,
+            max_time
+        )) {
+            return CORE_ERROR;
+        }
+    } else {
+        for (size_t i = 0; i < cell_count; i++) {
+            opponent_arrival[i] = CORE_SPACE_TIME_NEVER;
+        }
+    }
+
+    unsigned int* own_seen = scratch->own_seen;
+    unsigned int own_stamp = core_space_time_next_stamp(&scratch->own_stamp, own_seen, state_count);
+    size_t* queue = scratch->own_queue;
+
+    for (size_t i = 0; i < cell_count; i++) {
+        own_arrival[i] = CORE_SPACE_TIME_NEVER;
+    }
+
+    size_t head = 0;
+    size_t tail = 0;
+    int head_index = core_coord_index(board, head_coord);
+    own_arrival[head_index] = 0;
+    own_seen[head_index] = own_stamp;
+    queue[tail++] = (size_t)head_index;
+
+    int own_tail_index = -1;
+    if (snake->body_len > 0) {
+        Coord own_tail = snake->body[snake->body_len - 1];
+        if (BoardInBounds(board, own_tail)) {
+            own_tail_index = core_coord_index(board, own_tail);
+        }
+    }
+
+    while (head < tail) {
+        size_t state = queue[head++];
+        int current = (int)(state % cell_count);
+        int current_time = (int)(state / cell_count);
+        if (current_time >= max_time) {
+            continue;
+        }
+
+        int next_time = current_time + 1;
+        int x = current % board->width;
+        int y = current / board->width;
+        int neighbors[4];
+        int neighbor_count = 0;
+        if (y + 1 < board->height) {
+            neighbors[neighbor_count++] = current + board->width;
+        }
+        if (y > 0) {
+            neighbors[neighbor_count++] = current - board->width;
+        }
+        if (x > 0) {
+            neighbors[neighbor_count++] = current - 1;
+        }
+        if (x + 1 < board->width) {
+            neighbors[neighbor_count++] = current + 1;
+        }
+
+        for (int i = 0; i < neighbor_count; i++) {
+            int neighbor = neighbors[i];
+            if (next_time < vacate[neighbor] ||
+                opponent_arrival[neighbor] <= next_time) {
+                continue;
+            }
+
+            size_t next_state = (size_t)next_time * cell_count + (size_t)neighbor;
+            if (own_seen[next_state] == own_stamp) {
+                continue;
+            }
+
+            own_seen[next_state] = own_stamp;
+            queue[tail++] = next_state;
+            if (own_arrival[neighbor] > next_time) {
+                own_arrival[neighbor] = next_time;
+            }
+            if (neighbor != head_index && own_arrival[neighbor] == next_time) {
+                out_metrics->reachable_cells++;
+                if (next_time > out_metrics->max_arrival) {
+                    out_metrics->max_arrival = next_time;
+                }
+            }
+            if (neighbor == own_tail_index && next_time >= vacate[neighbor]) {
+                out_metrics->tail_reachable = true;
+            }
+            if ((size_t)out_metrics->reachable_cells + 1 >= cell_count) {
+                head = tail;
+                break;
+            }
+        }
+    }
+
+    out_metrics->dead = !out_metrics->tail_reachable && out_metrics->reachable_cells < own_length;
+
+    return CORE_OK;
+}
+
 typedef struct {
     struct timespec deadline;
 } CoreSearchTimer;
@@ -999,6 +1412,29 @@ static int core_tail_path_after_move(
     return path_count;
 }
 
+static MoveDirection core_current_heading(const Board* board, const char* snake_id) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len < 2) {
+        return MOVE_INVALID;
+    }
+
+    Coord head = SnakeHead(snake);
+    Coord neck = snake->body[1];
+    if (head.x == neck.x + 1 && head.y == neck.y) {
+        return MOVE_RIGHT;
+    }
+    if (head.x == neck.x - 1 && head.y == neck.y) {
+        return MOVE_LEFT;
+    }
+    if (head.x == neck.x && head.y == neck.y + 1) {
+        return MOVE_UP;
+    }
+    if (head.x == neck.x && head.y == neck.y - 1) {
+        return MOVE_DOWN;
+    }
+    return MOVE_INVALID;
+}
+
 static int core_cached_reachable_after_move(
     const Board* board,
     const char* snake_id,
@@ -1197,7 +1633,8 @@ static bool core_equal_score_move_is_better(
     int* reachable_spaces,
     MoveDirection candidate,
     MoveDirection current_best,
-    MoveDirection preferred
+    MoveDirection preferred,
+    bool terminal_loss_tie
 ) {
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     size_t cell_count = board != NULL && board->width > 0 && board->height > 0 ?
@@ -1205,11 +1642,42 @@ static bool core_equal_score_move_is_better(
         0;
     int length = snake != NULL ? core_snake_length(snake) : 0;
     bool constrained_endgame = length >= 12 && cell_count > 0 && (size_t)length * 3 >= cell_count;
+    if (!constrained_endgame && terminal_loss_tie && snake != NULL && length >= 12) {
+        int current_reachable = 0;
+        if (CoreReachableSpace(board, SnakeHead(snake), snake_id, &current_reachable) == CORE_OK &&
+            current_reachable < length) {
+            constrained_endgame = true;
+        }
+    }
     if (constrained_endgame) {
+        if (terminal_loss_tie) {
+            CoreCorridorMoveMetrics candidate_metrics;
+            CoreCorridorMoveMetrics current_best_metrics;
+            if (core_corridor_metrics_after_move(board, snake_id, candidate, &candidate_metrics) &&
+                core_corridor_metrics_after_move(board, snake_id, current_best, &current_best_metrics) &&
+                (
+                    candidate_metrics.immediate_exits != current_best_metrics.immediate_exits ||
+                    candidate_metrics.forced_steps != current_best_metrics.forced_steps ||
+                    candidate_metrics.reachable != current_best_metrics.reachable
+                )) {
+                return core_corridor_metrics_are_better(&candidate_metrics, &current_best_metrics);
+            }
+        }
         int candidate_tail_path = core_tail_path_after_move(board, snake_id, candidate);
         int current_best_tail_path = core_tail_path_after_move(board, snake_id, current_best);
         if (candidate_tail_path != current_best_tail_path) {
             return candidate_tail_path > current_best_tail_path;
+        }
+        if (terminal_loss_tie) {
+            MoveDirection heading = core_current_heading(board, snake_id);
+            if (core_valid_move_direction(heading)) {
+                if (candidate == heading && current_best != heading) {
+                    return true;
+                }
+                if (current_best == heading && candidate != heading) {
+                    return false;
+                }
+            }
         }
     }
 
@@ -1499,7 +1967,7 @@ static CoreStatus core_minimax_search(
             if (worst_reply <= alpha) {
                 if (stats != NULL) {
                     stats->beta_cutoffs++;
-                    if (order == 0) {
+                    if (context->config.enable_move_ordering && order == 0) {
                         stats->move_order_first_choice_cutoffs++;
                     }
                 }
@@ -1540,7 +2008,8 @@ static CoreStatus core_minimax_search(
                     original_reachable_spaces,
                     own_move,
                     best_move,
-                    tie_preferred
+                    tie_preferred,
+                    core_score_is_terminal_loss_band(&context->config.weights, worst_reply)
                 )
             )
         ) {
@@ -1724,16 +2193,54 @@ CoreStatus CoreMinimaxMoveWithStats(
     stats->completed_depth = completed_depth;
     stats->timed_out = timed_out;
     stats->score = completed_score;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        stats->root_move_score_valid[move] = completed_root_move_score_valid[move];
+        stats->root_move_scores[move] = completed_root_move_scores[move];
+    }
     MoveDirection corridor_guard_move = MOVE_INVALID;
+    bool completed_score_is_terminal_loss = core_score_is_terminal_loss_band(&context.config.weights, completed_score);
+    bool completed_score_is_terminal_win = core_score_is_terminal_win_band(&context.config.weights, completed_score);
     if (
-        !core_score_is_terminal_loss_band(&context.config.weights, completed_score) &&
-        !core_score_is_terminal_win_band(&context.config.weights, completed_score) &&
+        !completed_score_is_terminal_win &&
         core_constrained_root_corridor_move(board, snake_id, safe_moves, safe_move_count, &corridor_guard_move) &&
         completed_root_move_score_valid[(int)corridor_guard_move]
     ) {
-        completed_best = corridor_guard_move;
-        completed_score = completed_root_move_scores[(int)corridor_guard_move];
-        stats->score = completed_score;
+        bool apply_corridor_guard = false;
+        double corridor_guard_score = completed_root_move_scores[(int)corridor_guard_move];
+        if (!completed_score_is_terminal_loss) {
+            apply_corridor_guard = !core_score_is_terminal_loss_band(&context.config.weights, corridor_guard_score);
+        } else {
+            CoreCorridorMoveMetrics guard_metrics;
+            CoreCorridorMoveMetrics completed_metrics;
+            if (
+                core_corridor_metrics_after_move(board, snake_id, corridor_guard_move, &guard_metrics) &&
+                core_corridor_metrics_after_move(board, snake_id, completed_best, &completed_metrics) &&
+                /*
+                 * Compatibility guard for the issue-33/36 terminal-loss tie
+                 * fixtures: prefer the corridor guard only when it opens a
+                 * real side-exit choice over a much longer single-file line.
+                 * These thresholds are regression-derived, not a complete
+                 * territory model; revisit alongside issue #32 if a new
+                 * terminal-band tie shape needs different geometry.
+                 */
+                completed_metrics.immediate_exits <= 1 &&
+                guard_metrics.immediate_exits >= 2 &&
+                completed_metrics.forced_steps - guard_metrics.forced_steps >= 4
+            ) {
+                apply_corridor_guard = true;
+            }
+        }
+
+        /*
+         * Dead-region leaves can enter the terminal-loss band before a true
+         * terminal; keep the issue-33 long-corridor invariant without
+         * overriding ordinary forced-loss survival ordering.
+         */
+        if (apply_corridor_guard) {
+            completed_best = corridor_guard_move;
+            completed_score = corridor_guard_score;
+            stats->score = completed_score;
+        }
     }
     stats->move = completed_best;
     stats->elapsed_ms = core_elapsed_ms(start, end);
@@ -2038,11 +2545,26 @@ CoreStatus CoreEvaluateWithWeights(
     }
 
     Coord head = SnakeHead(snake);
-    int reachable = 0;
-    CoreStatus status = CoreReachableSpace(board, head, snake_id, &reachable);
+    CoreSpaceTimeMetrics space_time;
+    CoreStatus status = CoreSpaceTimeCompute(board, snake_id, &space_time);
     if (status != CORE_OK) {
         return status;
     }
+
+    /* The terminal-loss-band shortcut is a duel leaf policy; FFA scoring keeps
+     * its layered heuristic terms while still using time-aware reachable space. */
+    if (board->snake_count == 2 && space_time.dead) {
+        double step = core_terminal_survival_step(weights);
+        int survivable = space_time.max_arrival;
+        if (survivable > CORE_MINIMAX_MAX_DEPTH) {
+            survivable = CORE_MINIMAX_MAX_DEPTH;
+        }
+        /* Compose dead-region leaves into the PR #31 survival-step terminal-loss band. */
+        *out_score = weights->terminal_loss + step * (double)survivable;
+        return CORE_OK;
+    }
+
+    int reachable = space_time.reachable_cells;
 
     MoveDirection safe_moves[4];
     int safe_count = BoardSafeMoves(board, snake_id, safe_moves);

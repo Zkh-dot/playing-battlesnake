@@ -553,6 +553,66 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         return NULL;
     }
 
+    PyObject* root_scores = PyDict_New();
+    if (root_scores == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if (!stats.root_move_score_valid[move]) {
+            continue;
+        }
+        PyObject* value = PyFloat_FromDouble(stats.root_move_scores[move]);
+        if (value == NULL ||
+            PyDict_SetItemString(root_scores, MoveDirectionToString((MoveDirection)move), value) < 0) {
+            Py_XDECREF(value);
+            Py_DECREF(root_scores);
+            Py_DECREF(result);
+            return NULL;
+        }
+        Py_DECREF(value);
+    }
+    if (PyDict_SetItemString(result, "root_move_scores", root_scores) < 0) {
+        Py_DECREF(root_scores);
+        Py_DECREF(result);
+        return NULL;
+    }
+    Py_DECREF(root_scores);
+
+    return result;
+}
+
+static PyObject* py_space_time_metrics(PyObject* self, PyObject* args, PyObject* kwds) {
+    (void)self;
+    static char* kwlist[] = {"board", "snake_id", NULL};
+    PyObject* board_obj = NULL;
+    const char* snake_id = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Os", kwlist, &board_obj, &snake_id)) {
+        return NULL;
+    }
+
+    Board* board = board_from_pyobject(board_obj);
+    if (board == NULL) {
+        return NULL;
+    }
+
+    CoreSpaceTimeMetrics metrics;
+    CoreStatus status = CoreSpaceTimeCompute(board, snake_id, &metrics);
+    if (status != CORE_OK) {
+        return raise_for_status(status);
+    }
+
+    PyObject* result = PyDict_New();
+    if (result == NULL) {
+        return NULL;
+    }
+    if (dict_set_int(result, "reachable_cells", metrics.reachable_cells) < 0 ||
+        dict_set_int(result, "max_arrival", metrics.max_arrival) < 0 ||
+        dict_set_bool(result, "tail_reachable", metrics.tail_reachable) < 0 ||
+        dict_set_bool(result, "dead", metrics.dead) < 0) {
+        Py_DECREF(result);
+        return NULL;
+    }
     return result;
 }
 
@@ -704,6 +764,7 @@ PyMethodDef PyCoreMethods[] = {
     {"voronoi_territory", py_voronoi_territory, METH_VARARGS, "Compute multi-source BFS territory control."},
     {"minimax_move", (PyCFunction)py_minimax_move, METH_VARARGS | METH_KEYWORDS, "Choose a move with simultaneous-move minimax heuristics."},
     {"minimax_diagnostics", (PyCFunction)py_minimax_diagnostics, METH_VARARGS | METH_KEYWORDS, "Choose a move and return minimax search diagnostics."},
+    {"space_time_metrics", (PyCFunction)py_space_time_metrics, METH_VARARGS | METH_KEYWORDS, "Time-aware reachable-region metrics for a snake."},
     {"standard_ffa_move", (PyCFunction)py_standard_ffa_move, METH_VARARGS | METH_KEYWORDS, "Choose a move with the native Standard FFA strategy."},
     {"choke_points", py_choke_points, METH_VARARGS, "Detect articulation-point choke cells."},
     {"edge_trap_move", py_edge_trap_move, METH_VARARGS, "Choose an optional edge-trapping move."},

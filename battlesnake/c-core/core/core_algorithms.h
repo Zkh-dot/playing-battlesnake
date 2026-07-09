@@ -28,6 +28,19 @@ void CoreTerritoryFree(CoreTerritory* territory);
 
 CoreStatus CoreReachableSpace(const Board* board, Coord start, const char* snake_id, int* out_count);
 
+typedef struct {
+    int reachable_cells;
+    int max_arrival;
+    bool tail_reachable;
+    bool dead;
+} CoreSpaceTimeMetrics;
+
+CoreStatus CoreSpaceTimeCompute(
+    const Board* board,
+    const char* snake_id,
+    CoreSpaceTimeMetrics* out_metrics
+);
+
 CoreStatus CoreShortestPath(
     const Board* board,
     Coord start,
