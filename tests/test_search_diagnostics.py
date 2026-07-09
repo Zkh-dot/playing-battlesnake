@@ -50,6 +50,8 @@ TERMINAL_LOSS = -1000000.0
 TERMINAL_WIN = 1000000.0
 TERMINAL_SURVIVAL_STEP = 1000.0
 TERMINAL_BAND = TERMINAL_SURVIVAL_STEP * 33
+# Pre-prune baseline on 2026-07-09: 21942 nodes.
+PRUNED_NODES_CEILING = 18650
 
 
 def _issue_11_turn_113_board() -> Board:
@@ -219,6 +221,22 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertIn(diagnostics["move"], root_scores)
         self.assertEqual(diagnostics["score"], root_scores[diagnostics["move"]])
         self.assertEqual(diagnostics["score"], max(root_scores.values()))
+
+    def test_opponent_reverse_command_is_pruned_from_search(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        board = build_board(scenario)
+
+        diagnostics = minimax_diagnostics(
+            board,
+            scenario.snake_id,
+            time_budget_ms=30000,
+            fixed_depth=6,
+            enable_tt=0,
+            enable_move_ordering=0,
+        )
+
+        self.assertEqual(diagnostics["completed_depth"], 6)
+        self.assertLess(diagnostics["nodes"], PRUNED_NODES_CEILING)
 
     def test_minimax_diagnostics_accepts_weight_overrides(self) -> None:
         scenario = get_scenario("duel_open_7x7")

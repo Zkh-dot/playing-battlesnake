@@ -119,11 +119,16 @@ static int core_command_moves(const Board* board, const char* snake_id, MoveDire
         return 0;
     }
 
-    out_moves[0] = MOVE_UP;
-    out_moves[1] = MOVE_DOWN;
-    out_moves[2] = MOVE_LEFT;
-    out_moves[3] = MOVE_RIGHT;
-    return 4;
+    Coord head = SnakeHead(snake);
+    int count = 0;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        Coord next = MoveStep(head, (MoveDirection)move);
+        if (snake->body_len > 1 && CoordEquals(next, snake->body[1])) {
+            continue;
+        }
+        out_moves[count++] = (MoveDirection)move;
+    }
+    return count;
 }
 
 static void core_fill_movement_blocks(const Board* board, const char* snake_id, unsigned char* blocked) {
@@ -802,6 +807,9 @@ static bool core_fill_opponent_arrival(
     int own_length,
     const int* vacate,
     int* opponent_arrival,
+    unsigned int* seen,
+    unsigned int seen_stamp,
+    size_t* queue,
     size_t cell_count,
     int max_time
 ) {
@@ -813,16 +821,7 @@ static bool core_fill_opponent_arrival(
     if (cell_count != 0 && state_layers > ((size_t)-1) / cell_count) {
         return false;
     }
-    size_t state_count = state_layers * cell_count;
-    if (state_count > ((size_t)-1) / sizeof(size_t)) {
-        return false;
-    }
-
-    unsigned char* seen = (unsigned char*)calloc(state_count, sizeof(unsigned char));
-    size_t* queue = (size_t*)malloc(state_count * sizeof(size_t));
-    if (seen == NULL || queue == NULL) {
-        free(seen);
-        free(queue);
+    if (seen == NULL || seen_stamp == 0 || queue == NULL) {
         return false;
     }
 
@@ -842,7 +841,7 @@ static bool core_fill_opponent_arrival(
         int index = core_coord_index(board, snake_head);
         if (opponent_arrival[index] > 0) {
             opponent_arrival[index] = 0;
-            seen[index] = 1;
+            seen[index] = seen_stamp;
             queue[tail++] = (size_t)index;
         }
     }
@@ -880,11 +879,11 @@ static bool core_fill_opponent_arrival(
             }
 
             size_t next_state = (size_t)next_time * cell_count + (size_t)neighbor;
-            if (seen[next_state]) {
+            if (seen[next_state] == seen_stamp) {
                 continue;
             }
 
-            seen[next_state] = 1;
+            seen[next_state] = seen_stamp;
             queue[tail++] = next_state;
             if (opponent_arrival[neighbor] > next_time) {
                 opponent_arrival[neighbor] = next_time;
@@ -892,9 +891,90 @@ static bool core_fill_opponent_arrival(
         }
     }
 
-    free(seen);
-    free(queue);
     return true;
+}
+
+static bool core_has_equal_or_longer_opponent(const Board* board, const char* snake_id, int own_length) {
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* snake = &board->snakes[i];
+        if (snake->body_len == 0 || strcmp(snake->id, snake_id) == 0) {
+            continue;
+        }
+        if (core_snake_length(snake) >= own_length) {
+            return true;
+        }
+    }
+    return false;
+}
+
+typedef struct {
+    int* vacate;
+    int* opponent_arrival;
+    int* own_arrival;
+    unsigned int* opponent_seen;
+    unsigned int* own_seen;
+    size_t* opponent_queue;
+    size_t* own_queue;
+    size_t cell_capacity;
+    size_t state_capacity;
+    unsigned int opponent_stamp;
+    unsigned int own_stamp;
+} CoreSpaceTimeScratch;
+
+static _Thread_local CoreSpaceTimeScratch core_space_time_scratch;
+
+static bool core_space_time_resize(void** target, size_t byte_count) {
+    void* next = realloc(*target, byte_count);
+    if (next == NULL) {
+        return false;
+    }
+    *target = next;
+    return true;
+}
+
+static bool core_space_time_ensure_scratch(size_t cell_count, size_t state_count, CoreSpaceTimeScratch** out_scratch) {
+    CoreSpaceTimeScratch* scratch = &core_space_time_scratch;
+    if (cell_count > scratch->cell_capacity) {
+        if (cell_count > ((size_t)-1) / sizeof(int)) {
+            return false;
+        }
+        size_t int_bytes = cell_count * sizeof(int);
+        if (!core_space_time_resize((void**)&scratch->vacate, int_bytes) ||
+            !core_space_time_resize((void**)&scratch->opponent_arrival, int_bytes) ||
+            !core_space_time_resize((void**)&scratch->own_arrival, int_bytes)) {
+            return false;
+        }
+        scratch->cell_capacity = cell_count;
+    }
+    if (state_count > scratch->state_capacity) {
+        if (state_count > ((size_t)-1) / sizeof(size_t)) {
+            return false;
+        }
+        if (!core_space_time_resize((void**)&scratch->opponent_seen, state_count * sizeof(unsigned int)) ||
+            !core_space_time_resize((void**)&scratch->own_seen, state_count * sizeof(unsigned int)) ||
+            !core_space_time_resize((void**)&scratch->opponent_queue, state_count * sizeof(size_t)) ||
+            !core_space_time_resize((void**)&scratch->own_queue, state_count * sizeof(size_t))) {
+            return false;
+        }
+        memset(scratch->opponent_seen, 0, state_count * sizeof(unsigned int));
+        memset(scratch->own_seen, 0, state_count * sizeof(unsigned int));
+        scratch->state_capacity = state_count;
+    }
+    *out_scratch = scratch;
+    return true;
+}
+
+static unsigned int core_space_time_next_stamp(
+    unsigned int* stamp,
+    unsigned int* seen,
+    size_t state_count
+) {
+    if (*stamp == UINT_MAX) {
+        memset(seen, 0, state_count * sizeof(unsigned int));
+        *stamp = 0;
+    }
+    (*stamp)++;
+    return *stamp;
 }
 
 CoreStatus CoreSpaceTimeCompute(
@@ -923,16 +1003,18 @@ CoreStatus CoreSpaceTimeCompute(
         return CORE_ERROR;
     }
 
-    int* vacate = (int*)calloc(cell_count, sizeof(int));
-    int* opponent_arrival = (int*)malloc(cell_count * sizeof(int));
-    int* own_arrival = (int*)malloc(cell_count * sizeof(int));
-    if (vacate == NULL || opponent_arrival == NULL || own_arrival == NULL) {
-        free(vacate);
-        free(opponent_arrival);
-        free(own_arrival);
+    size_t max_cell_count = cell_count;
+    if (max_cell_count > (size_t)INT_MAX) {
         return CORE_ERROR;
     }
 
+    CoreSpaceTimeScratch* scratch = NULL;
+    if (!core_space_time_ensure_scratch(max_cell_count, 0, &scratch)) {
+        return CORE_ERROR;
+    }
+
+    int* vacate = scratch->vacate;
+    memset(vacate, 0, cell_count * sizeof(int));
     core_fill_vacate_times(board, snake_id, vacate);
 
     if (snake->health <= board->hazard_damage + 1) {
@@ -951,46 +1033,52 @@ CoreStatus CoreSpaceTimeCompute(
         }
     }
     if (cell_count > (size_t)(INT_MAX - max_vacate - 2)) {
-        free(vacate);
-        free(opponent_arrival);
-        free(own_arrival);
         return CORE_ERROR;
     }
     int max_time = max_vacate + (int)cell_count + 2;
 
-    int own_length = core_snake_length(snake);
-    if (!core_fill_opponent_arrival(board, snake_id, own_length, vacate, opponent_arrival, cell_count, max_time)) {
-        free(vacate);
-        free(opponent_arrival);
-        free(own_arrival);
-        return CORE_ERROR;
-    }
-
     size_t state_layers = (size_t)max_time + 1;
     if (cell_count != 0 && state_layers > ((size_t)-1) / cell_count) {
-        free(vacate);
-        free(opponent_arrival);
-        free(own_arrival);
         return CORE_ERROR;
     }
     size_t state_count = state_layers * cell_count;
-    if (state_count > ((size_t)-1) / sizeof(size_t)) {
-        free(vacate);
-        free(opponent_arrival);
-        free(own_arrival);
+
+    if (!core_space_time_ensure_scratch(max_cell_count, state_count, &scratch)) {
         return CORE_ERROR;
+    }
+    int* opponent_arrival = scratch->opponent_arrival;
+    int* own_arrival = scratch->own_arrival;
+
+    int own_length = core_snake_length(snake);
+    if (core_has_equal_or_longer_opponent(board, snake_id, own_length)) {
+        unsigned int opponent_stamp = core_space_time_next_stamp(
+            &scratch->opponent_stamp,
+            scratch->opponent_seen,
+            state_count
+        );
+        if (!core_fill_opponent_arrival(
+            board,
+            snake_id,
+            own_length,
+            vacate,
+            opponent_arrival,
+            scratch->opponent_seen,
+            opponent_stamp,
+            scratch->opponent_queue,
+            cell_count,
+            max_time
+        )) {
+            return CORE_ERROR;
+        }
+    } else {
+        for (size_t i = 0; i < cell_count; i++) {
+            opponent_arrival[i] = CORE_SPACE_TIME_NEVER;
+        }
     }
 
-    unsigned char* own_seen = (unsigned char*)calloc(state_count, sizeof(unsigned char));
-    size_t* queue = (size_t*)malloc(state_count * sizeof(size_t));
-    if (own_seen == NULL || queue == NULL) {
-        free(vacate);
-        free(opponent_arrival);
-        free(own_arrival);
-        free(own_seen);
-        free(queue);
-        return CORE_ERROR;
-    }
+    unsigned int* own_seen = scratch->own_seen;
+    unsigned int own_stamp = core_space_time_next_stamp(&scratch->own_stamp, own_seen, state_count);
+    size_t* queue = scratch->own_queue;
 
     for (size_t i = 0; i < cell_count; i++) {
         own_arrival[i] = CORE_SPACE_TIME_NEVER;
@@ -1000,7 +1088,7 @@ CoreStatus CoreSpaceTimeCompute(
     size_t tail = 0;
     int head_index = core_coord_index(board, head_coord);
     own_arrival[head_index] = 0;
-    own_seen[head_index] = 1;
+    own_seen[head_index] = own_stamp;
     queue[tail++] = (size_t)head_index;
 
     int own_tail_index = -1;
@@ -1045,11 +1133,11 @@ CoreStatus CoreSpaceTimeCompute(
             }
 
             size_t next_state = (size_t)next_time * cell_count + (size_t)neighbor;
-            if (own_seen[next_state]) {
+            if (own_seen[next_state] == own_stamp) {
                 continue;
             }
 
-            own_seen[next_state] = 1;
+            own_seen[next_state] = own_stamp;
             queue[tail++] = next_state;
             if (own_arrival[neighbor] > next_time) {
                 own_arrival[neighbor] = next_time;
@@ -1063,16 +1151,15 @@ CoreStatus CoreSpaceTimeCompute(
             if (neighbor == own_tail_index && next_time >= vacate[neighbor]) {
                 out_metrics->tail_reachable = true;
             }
+            if ((size_t)out_metrics->reachable_cells + 1 >= cell_count) {
+                head = tail;
+                break;
+            }
         }
     }
 
     out_metrics->dead = !out_metrics->tail_reachable && out_metrics->reachable_cells < own_length;
 
-    free(vacate);
-    free(opponent_arrival);
-    free(own_arrival);
-    free(own_seen);
-    free(queue);
     return CORE_OK;
 }
 

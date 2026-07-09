@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import statistics
 import unittest
 from pathlib import Path
 
@@ -79,6 +80,24 @@ class Issue36EndgameTests(unittest.TestCase):
         self.assertEqual(root_scores["up"], root_scores["left"])
         self.assertEqual(result["move"], "up")
         self.assertNotEqual(result["move"], "left")
+
+
+class Issue36DepthBudgetTests(unittest.TestCase):
+    def test_production_budget_keeps_search_depth(self) -> None:
+        depths = []
+        for raw in _positions():
+            board = _board_from_issue_30_fixture(raw)
+            result = minimax_diagnostics(
+                board,
+                str(raw["snake_id"]),
+                time_budget_ms=300,
+            )
+            depths.append(int(result["completed_depth"]))
+
+        # Issue #36 baseline at 300ms: min 10, median 11. Allow slack for
+        # slower CI machines but catch order-of-magnitude regressions.
+        self.assertGreaterEqual(min(depths), 8)
+        self.assertGreaterEqual(statistics.median(depths), 10)
 
 
 if __name__ == "__main__":
