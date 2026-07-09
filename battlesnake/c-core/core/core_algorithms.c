@@ -16,6 +16,7 @@
 
 #define CORE_MINIMAX_MAX_DEPTH CORE_SEARCH_MAX_DEPTH
 #define CORE_TERMINAL_SURVIVAL_MAX_STEP 1000.0
+#define CORE_SPACE_TIME_NEVER (INT_MAX / 2)
 
 const char* CoreNotImplementedMessage(void) {
     return "core algorithm unavailable";
@@ -750,6 +751,328 @@ CoreStatus CoreVoronoiTerritory(const Board* board, void** out_territory) {
     free(distance);
     free(queue);
     *out_territory = territory;
+    return CORE_OK;
+}
+
+static void core_fill_vacate_times(const Board* board, const char* snake_id, int* vacate) {
+    bool constrictor = core_is_constrictor(board);
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* snake = &board->snakes[i];
+        if (snake->body_len <= 0) {
+            continue;
+        }
+
+        int delay = 0;
+        if (constrictor) {
+            delay = CORE_SPACE_TIME_NEVER;
+        } else if (strcmp(snake->id, snake_id) == 0) {
+            Coord tail = snake->body[snake->body_len - 1];
+            if (core_coord_in_array(board->food, board->food_count, tail)) {
+                delay = 1;
+            }
+        } else if (core_snake_can_eat_next_turn(board, snake)) {
+            delay = 1;
+        }
+
+        for (int j = 0; j < snake->body_len; j++) {
+            Coord body = snake->body[j];
+            if (!BoardInBounds(board, body)) {
+                continue;
+            }
+
+            int vacate_time = CORE_SPACE_TIME_NEVER;
+            if (delay < CORE_SPACE_TIME_NEVER) {
+                vacate_time = snake->body_len - j + delay;
+                if (vacate_time > CORE_SPACE_TIME_NEVER) {
+                    vacate_time = CORE_SPACE_TIME_NEVER;
+                }
+            }
+
+            int index = core_coord_index(board, body);
+            if (vacate_time > vacate[index]) {
+                vacate[index] = vacate_time;
+            }
+        }
+    }
+}
+
+static bool core_fill_opponent_arrival(
+    const Board* board,
+    const char* snake_id,
+    int own_length,
+    const int* vacate,
+    int* opponent_arrival,
+    size_t cell_count,
+    int max_time
+) {
+    for (size_t i = 0; i < cell_count; i++) {
+        opponent_arrival[i] = CORE_SPACE_TIME_NEVER;
+    }
+
+    size_t state_layers = (size_t)max_time + 1;
+    if (cell_count != 0 && state_layers > ((size_t)-1) / cell_count) {
+        return false;
+    }
+    size_t state_count = state_layers * cell_count;
+    if (state_count > ((size_t)-1) / sizeof(size_t)) {
+        return false;
+    }
+
+    unsigned char* seen = (unsigned char*)calloc(state_count, sizeof(unsigned char));
+    size_t* queue = (size_t*)malloc(state_count * sizeof(size_t));
+    if (seen == NULL || queue == NULL) {
+        free(seen);
+        free(queue);
+        return false;
+    }
+
+    size_t head = 0;
+    size_t tail = 0;
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* snake = &board->snakes[i];
+        if (snake->body_len == 0 || strcmp(snake->id, snake_id) == 0 || core_snake_length(snake) < own_length) {
+            continue;
+        }
+
+        Coord snake_head = SnakeHead(snake);
+        if (!BoardInBounds(board, snake_head)) {
+            continue;
+        }
+
+        int index = core_coord_index(board, snake_head);
+        if (opponent_arrival[index] > 0) {
+            opponent_arrival[index] = 0;
+            seen[index] = 1;
+            queue[tail++] = (size_t)index;
+        }
+    }
+
+    while (head < tail) {
+        size_t state = queue[head++];
+        int current = (int)(state % cell_count);
+        int current_time = (int)(state / cell_count);
+        if (current_time >= max_time) {
+            continue;
+        }
+
+        int next_time = current_time + 1;
+        int x = current % board->width;
+        int y = current / board->width;
+        int neighbors[4];
+        int neighbor_count = 0;
+        if (y + 1 < board->height) {
+            neighbors[neighbor_count++] = current + board->width;
+        }
+        if (y > 0) {
+            neighbors[neighbor_count++] = current - board->width;
+        }
+        if (x > 0) {
+            neighbors[neighbor_count++] = current - 1;
+        }
+        if (x + 1 < board->width) {
+            neighbors[neighbor_count++] = current + 1;
+        }
+
+        for (int i = 0; i < neighbor_count; i++) {
+            int neighbor = neighbors[i];
+            if (next_time < vacate[neighbor]) {
+                continue;
+            }
+
+            size_t next_state = (size_t)next_time * cell_count + (size_t)neighbor;
+            if (seen[next_state]) {
+                continue;
+            }
+
+            seen[next_state] = 1;
+            queue[tail++] = next_state;
+            if (opponent_arrival[neighbor] > next_time) {
+                opponent_arrival[neighbor] = next_time;
+            }
+        }
+    }
+
+    free(seen);
+    free(queue);
+    return true;
+}
+
+CoreStatus CoreSpaceTimeCompute(
+    const Board* board,
+    const char* snake_id,
+    CoreSpaceTimeMetrics* out_metrics
+) {
+    if (board == NULL || snake_id == NULL || out_metrics == NULL || board->width <= 0 || board->height <= 0) {
+        return CORE_ERROR;
+    }
+
+    memset(out_metrics, 0, sizeof(*out_metrics));
+
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        return CORE_OK;
+    }
+
+    Coord head_coord = SnakeHead(snake);
+    if (!BoardInBounds(board, head_coord)) {
+        return CORE_OK;
+    }
+
+    size_t cell_count = 0;
+    if (!core_cell_count(board, &cell_count)) {
+        return CORE_ERROR;
+    }
+
+    int* vacate = (int*)calloc(cell_count, sizeof(int));
+    int* opponent_arrival = (int*)malloc(cell_count * sizeof(int));
+    int* own_arrival = (int*)malloc(cell_count * sizeof(int));
+    if (vacate == NULL || opponent_arrival == NULL || own_arrival == NULL) {
+        free(vacate);
+        free(opponent_arrival);
+        free(own_arrival);
+        return CORE_ERROR;
+    }
+
+    core_fill_vacate_times(board, snake_id, vacate);
+
+    if (snake->health <= board->hazard_damage + 1) {
+        for (int i = 0; i < board->hazard_count; i++) {
+            Coord hazard = board->hazards[i];
+            if (BoardInBounds(board, hazard)) {
+                vacate[core_coord_index(board, hazard)] = CORE_SPACE_TIME_NEVER;
+            }
+        }
+    }
+
+    int max_vacate = 0;
+    for (size_t i = 0; i < cell_count; i++) {
+        if (vacate[i] < CORE_SPACE_TIME_NEVER && vacate[i] > max_vacate) {
+            max_vacate = vacate[i];
+        }
+    }
+    if (cell_count > (size_t)(INT_MAX - max_vacate - 2)) {
+        free(vacate);
+        free(opponent_arrival);
+        free(own_arrival);
+        return CORE_ERROR;
+    }
+    int max_time = max_vacate + (int)cell_count + 2;
+
+    int own_length = core_snake_length(snake);
+    if (!core_fill_opponent_arrival(board, snake_id, own_length, vacate, opponent_arrival, cell_count, max_time)) {
+        free(vacate);
+        free(opponent_arrival);
+        free(own_arrival);
+        return CORE_ERROR;
+    }
+
+    size_t state_layers = (size_t)max_time + 1;
+    if (cell_count != 0 && state_layers > ((size_t)-1) / cell_count) {
+        free(vacate);
+        free(opponent_arrival);
+        free(own_arrival);
+        return CORE_ERROR;
+    }
+    size_t state_count = state_layers * cell_count;
+    if (state_count > ((size_t)-1) / sizeof(size_t)) {
+        free(vacate);
+        free(opponent_arrival);
+        free(own_arrival);
+        return CORE_ERROR;
+    }
+
+    unsigned char* own_seen = (unsigned char*)calloc(state_count, sizeof(unsigned char));
+    size_t* queue = (size_t*)malloc(state_count * sizeof(size_t));
+    if (own_seen == NULL || queue == NULL) {
+        free(vacate);
+        free(opponent_arrival);
+        free(own_arrival);
+        free(own_seen);
+        free(queue);
+        return CORE_ERROR;
+    }
+
+    for (size_t i = 0; i < cell_count; i++) {
+        own_arrival[i] = CORE_SPACE_TIME_NEVER;
+    }
+
+    size_t head = 0;
+    size_t tail = 0;
+    int head_index = core_coord_index(board, head_coord);
+    own_arrival[head_index] = 0;
+    own_seen[head_index] = 1;
+    queue[tail++] = (size_t)head_index;
+
+    int own_tail_index = -1;
+    if (snake->body_len > 0) {
+        Coord own_tail = snake->body[snake->body_len - 1];
+        if (BoardInBounds(board, own_tail)) {
+            own_tail_index = core_coord_index(board, own_tail);
+        }
+    }
+
+    while (head < tail) {
+        size_t state = queue[head++];
+        int current = (int)(state % cell_count);
+        int current_time = (int)(state / cell_count);
+        if (current_time >= max_time) {
+            continue;
+        }
+
+        int next_time = current_time + 1;
+        int x = current % board->width;
+        int y = current / board->width;
+        int neighbors[4];
+        int neighbor_count = 0;
+        if (y + 1 < board->height) {
+            neighbors[neighbor_count++] = current + board->width;
+        }
+        if (y > 0) {
+            neighbors[neighbor_count++] = current - board->width;
+        }
+        if (x > 0) {
+            neighbors[neighbor_count++] = current - 1;
+        }
+        if (x + 1 < board->width) {
+            neighbors[neighbor_count++] = current + 1;
+        }
+
+        for (int i = 0; i < neighbor_count; i++) {
+            int neighbor = neighbors[i];
+            if (next_time < vacate[neighbor] ||
+                opponent_arrival[neighbor] <= next_time) {
+                continue;
+            }
+
+            size_t next_state = (size_t)next_time * cell_count + (size_t)neighbor;
+            if (own_seen[next_state]) {
+                continue;
+            }
+
+            own_seen[next_state] = 1;
+            queue[tail++] = next_state;
+            if (own_arrival[neighbor] > next_time) {
+                own_arrival[neighbor] = next_time;
+            }
+            if (neighbor != head_index && own_arrival[neighbor] == next_time) {
+                out_metrics->reachable_cells++;
+                if (next_time > out_metrics->max_arrival) {
+                    out_metrics->max_arrival = next_time;
+                }
+            }
+            if (neighbor == own_tail_index && next_time >= vacate[neighbor]) {
+                out_metrics->tail_reachable = true;
+            }
+        }
+    }
+
+    out_metrics->dead = !out_metrics->tail_reachable && out_metrics->reachable_cells < own_length;
+
+    free(vacate);
+    free(opponent_arrival);
+    free(own_arrival);
+    free(own_seen);
+    free(queue);
     return CORE_OK;
 }
 
