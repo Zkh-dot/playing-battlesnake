@@ -40,6 +40,8 @@ typedef struct {
     int parallel_mode;
     int parallel_workers_used;
     MoveDirection move;
+    bool root_move_score_valid[4];
+    double root_move_scores[4];
 } CoreSearchStats;
 
 typedef struct {

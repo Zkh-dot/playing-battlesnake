@@ -1724,6 +1724,10 @@ CoreStatus CoreMinimaxMoveWithStats(
     stats->completed_depth = completed_depth;
     stats->timed_out = timed_out;
     stats->score = completed_score;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        stats->root_move_score_valid[move] = completed_root_move_score_valid[move];
+        stats->root_move_scores[move] = completed_root_move_scores[move];
+    }
     MoveDirection corridor_guard_move = MOVE_INVALID;
     if (
         !core_score_is_terminal_loss_band(&context.config.weights, completed_score) &&

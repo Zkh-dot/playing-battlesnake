@@ -12,6 +12,7 @@ from benchmarks.scenarios import build_board, get_scenario
 EXPECTED_DIAGNOSTIC_KEYS = {
     "move",
     "score",
+    "root_move_scores",
     "elapsed_ms",
     "parallel_mode",
     "parallel_workers_used",
@@ -197,6 +198,27 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertGreaterEqual(diagnostics["beta_cutoffs"], 0)
         self.assertGreaterEqual(diagnostics["elapsed_ms"], 0)
         self.assertIn(diagnostics["timed_out"], {True, False})
+
+    def test_minimax_diagnostics_reports_root_move_scores(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        board = build_board(scenario)
+
+        diagnostics = minimax_diagnostics(
+            board,
+            scenario.snake_id,
+            time_budget_ms=5000,
+            fixed_depth=4,
+        )
+
+        root_scores = diagnostics["root_move_scores"]
+        self.assertIsInstance(root_scores, dict)
+        self.assertGreaterEqual(len(root_scores), 1)
+        for move, score in root_scores.items():
+            self.assertIn(move, {"up", "down", "left", "right"})
+            self.assertIsInstance(score, float)
+        self.assertIn(diagnostics["move"], root_scores)
+        self.assertEqual(diagnostics["score"], root_scores[diagnostics["move"]])
+        self.assertEqual(diagnostics["score"], max(root_scores.values()))
 
     def test_minimax_diagnostics_accepts_weight_overrides(self) -> None:
         scenario = get_scenario("duel_open_7x7")

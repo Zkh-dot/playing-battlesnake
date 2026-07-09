@@ -553,6 +553,32 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         return NULL;
     }
 
+    PyObject* root_scores = PyDict_New();
+    if (root_scores == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if (!stats.root_move_score_valid[move]) {
+            continue;
+        }
+        PyObject* value = PyFloat_FromDouble(stats.root_move_scores[move]);
+        if (value == NULL ||
+            PyDict_SetItemString(root_scores, MoveDirectionToString((MoveDirection)move), value) < 0) {
+            Py_XDECREF(value);
+            Py_DECREF(root_scores);
+            Py_DECREF(result);
+            return NULL;
+        }
+        Py_DECREF(value);
+    }
+    if (PyDict_SetItemString(result, "root_move_scores", root_scores) < 0) {
+        Py_DECREF(root_scores);
+        Py_DECREF(result);
+        return NULL;
+    }
+    Py_DECREF(root_scores);
+
     return result;
 }
 
