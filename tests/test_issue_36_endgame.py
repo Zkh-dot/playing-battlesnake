@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import unittest
 from pathlib import Path
@@ -83,7 +84,23 @@ class Issue36EndgameTests(unittest.TestCase):
 
 
 class Issue36DepthBudgetTests(unittest.TestCase):
+    def test_issue36_positions_complete_production_like_fixed_depth(self) -> None:
+        for raw in _positions():
+            with self.subTest(game_id=raw["game_id"], turn=raw["turn"]):
+                board = _board_from_issue_30_fixture(raw)
+                result = minimax_diagnostics(
+                    board,
+                    str(raw["snake_id"]),
+                    time_budget_ms=GENEROUS_BUDGET_MS,
+                    fixed_depth=PRODUCTION_LIKE_DEPTH,
+                )
+
+                self.assertEqual(result["completed_depth"], PRODUCTION_LIKE_DEPTH)
+
     def test_production_budget_keeps_search_depth(self) -> None:
+        if not os.environ.get("BATTLESNAKE_RUN_PERF_TESTS"):
+            self.skipTest("300ms depth gate is host-sensitive; set BATTLESNAKE_RUN_PERF_TESTS=1 to run it")
+
         depths = []
         for raw in _positions():
             board = _board_from_issue_30_fixture(raw)

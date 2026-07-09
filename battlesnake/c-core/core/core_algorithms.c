@@ -2215,6 +2215,14 @@ CoreStatus CoreMinimaxMoveWithStats(
             if (
                 core_corridor_metrics_after_move(board, snake_id, corridor_guard_move, &guard_metrics) &&
                 core_corridor_metrics_after_move(board, snake_id, completed_best, &completed_metrics) &&
+                /*
+                 * Compatibility guard for the issue-33/36 terminal-loss tie
+                 * fixtures: prefer the corridor guard only when it opens a
+                 * real side-exit choice over a much longer single-file line.
+                 * These thresholds are regression-derived, not a complete
+                 * territory model; revisit alongside issue #32 if a new
+                 * terminal-band tie shape needs different geometry.
+                 */
                 completed_metrics.immediate_exits <= 1 &&
                 guard_metrics.immediate_exits >= 2 &&
                 completed_metrics.forced_steps - guard_metrics.forced_steps >= 4

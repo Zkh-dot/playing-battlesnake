@@ -50,8 +50,8 @@ TERMINAL_LOSS = -1000000.0
 TERMINAL_WIN = 1000000.0
 TERMINAL_SURVIVAL_STEP = 1000.0
 TERMINAL_BAND = TERMINAL_SURVIVAL_STEP * 33
-# Pre-prune baseline on 2026-07-09: 21942 nodes.
-PRUNED_NODES_CEILING = 18650
+OPPONENT_REVERSE_PRE_PRUNE_NODES = 21942
+OPPONENT_REVERSE_PRUNED_RATIO = 0.85
 
 
 def _issue_11_turn_113_board() -> Board:
@@ -236,7 +236,10 @@ class SearchDiagnosticsTests(unittest.TestCase):
         )
 
         self.assertEqual(diagnostics["completed_depth"], 6)
-        self.assertLess(diagnostics["nodes"], PRUNED_NODES_CEILING)
+        self.assertLess(
+            diagnostics["nodes"],
+            OPPONENT_REVERSE_PRE_PRUNE_NODES * OPPONENT_REVERSE_PRUNED_RATIO,
+        )
 
     def test_length_two_opponent_can_reverse_into_vacating_tail(self) -> None:
         board = Board(
