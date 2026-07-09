@@ -238,6 +238,45 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertEqual(diagnostics["completed_depth"], 6)
         self.assertLess(diagnostics["nodes"], PRUNED_NODES_CEILING)
 
+    def test_length_two_opponent_can_reverse_into_vacating_tail(self) -> None:
+        board = Board(
+            width=5,
+            height=5,
+            ruleset_name="standard",
+            hazard_damage=0,
+            snakes=[
+                Snake(
+                    id="me",
+                    name="me",
+                    health=90,
+                    body=[Coord(1, 0), Coord(1, 1), Coord(1, 2)],
+                    head=Coord(1, 0),
+                    length=3,
+                ),
+                Snake(
+                    id="opp",
+                    name="opp",
+                    health=90,
+                    body=[Coord(0, 0), Coord(0, 1)],
+                    head=Coord(0, 0),
+                    length=2,
+                ),
+            ],
+            food=[],
+            hazards=[],
+        )
+
+        diagnostics = minimax_diagnostics(
+            board,
+            "me",
+            time_budget_ms=30000,
+            fixed_depth=1,
+        )
+
+        self.assertEqual(diagnostics["completed_depth"], 1)
+        self.assertEqual(diagnostics["root_move_scores"]["right"], 791.3)
+        self.assertLess(diagnostics["root_move_scores"]["right"], TERMINAL_WIN)
+
     def test_minimax_diagnostics_accepts_weight_overrides(self) -> None:
         scenario = get_scenario("duel_open_7x7")
         diagnostics = minimax_diagnostics(

@@ -120,10 +120,13 @@ static int core_command_moves(const Board* board, const char* snake_id, MoveDire
     }
 
     Coord head = SnakeHead(snake);
+    bool neck_is_vacating_tail = snake->body_len == 2 &&
+        !core_is_constrictor(board) &&
+        !core_coord_in_array(board->food, board->food_count, snake->body[1]);
     int count = 0;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         Coord next = MoveStep(head, (MoveDirection)move);
-        if (snake->body_len > 1 && CoordEquals(next, snake->body[1])) {
+        if (snake->body_len > 1 && !neck_is_vacating_tail && CoordEquals(next, snake->body[1])) {
             continue;
         }
         out_moves[count++] = (MoveDirection)move;
