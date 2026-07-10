@@ -413,22 +413,212 @@ static int parse_parallel_mode(const char* value, CoreSearchParallelMode* out_mo
     return -1;
 }
 
+static int parse_root_policy(const char* value, CoreRootPolicy* out_policy) {
+    if (strcmp(value, "strict_minimax") == 0) {
+        *out_policy = CORE_ROOT_POLICY_STRICT_MINIMAX;
+        return 0;
+    }
+    if (strcmp(value, "standard_ladder_opportunity") == 0) {
+        *out_policy = CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY;
+        return 0;
+    }
+    PyErr_Format(PyExc_ValueError, "unknown root_policy: %s", value);
+    return -1;
+}
+
+static const char* outcome_name(CoreOutcome outcome) {
+    switch (outcome) {
+        case CORE_OUTCOME_WIN: return "win";
+        case CORE_OUTCOME_DRAW: return "draw";
+        case CORE_OUTCOME_LOSS: return "loss";
+        default: return "unresolved";
+    }
+}
+
+static const char* bound_name(CoreValueBound bound) {
+    switch (bound) {
+        case CORE_VALUE_BOUND_LOWER: return "lower";
+        case CORE_VALUE_BOUND_UPPER: return "upper";
+        default: return "exact";
+    }
+}
+
+static const char* trap_status_name(CoreTrapStatus status) {
+    switch (status) {
+        case CORE_TRAP_IMMEDIATE_DEATH: return "immediate_death";
+        case CORE_TRAP_PROVEN_SELF_TRAP: return "proven_self_trap";
+        case CORE_TRAP_OPEN_BRANCH: return "open_branch";
+        case CORE_TRAP_SURVIVES_CYCLE: return "survives_cycle";
+        case CORE_TRAP_SURVIVES_HORIZON: return "survives_horizon";
+        case CORE_TRAP_UNKNOWN: return "unknown";
+        default: return "not_analyzed";
+    }
+}
+
+static const char* refutation_status_name(CoreRefutationStatus status) {
+    switch (status) {
+        case CORE_REFUTATION_PROVEN_REFUTABLE: return "proven_refutable";
+        case CORE_REFUTATION_NOT_REFUTABLE: return "not_refutable";
+        case CORE_REFUTATION_UNKNOWN: return "unknown";
+        default: return "not_analyzed";
+    }
+}
+
+static const char* rejection_reason_name(CoreRootRejectionReason reason) {
+    switch (reason) {
+        case CORE_ROOT_REJECTION_NO_SURVIVING_REPLY: return "no_surviving_reply";
+        case CORE_ROOT_REJECTION_PROVEN_SHORT_SELF_TRAP: return "proven_short_self_trap";
+        default: return "none";
+    }
+}
+
+static const char* root_policy_name(CoreRootPolicy policy) {
+    return policy == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY ?
+        "standard_ladder_opportunity" : "strict_minimax";
+}
+
+static const char* selection_reason_name(CoreSelectionReason reason) {
+    switch (reason) {
+        case CORE_SELECTION_TIMEOUT_BEST_SO_FAR: return "timeout_best_so_far";
+        case CORE_SELECTION_ALLOWED_FALLBACK: return "allowed_fallback";
+        case CORE_SELECTION_CORRIDOR_GUARD: return "corridor_guard";
+        default: return "minimax";
+    }
+}
+
+static PyObject* cause_list(uint32_t causes) {
+    static const struct {
+        uint32_t bit;
+        const char* name;
+    } names[] = {
+        {CORE_TERMINAL_CAUSE_WALL, "wall"},
+        {CORE_TERMINAL_CAUSE_SELF_BODY, "self_body"},
+        {CORE_TERMINAL_CAUSE_OTHER_BODY, "other_body"},
+        {CORE_TERMINAL_CAUSE_HEAD_TO_HEAD, "head_to_head"},
+        {CORE_TERMINAL_CAUSE_STARVATION, "starvation"},
+        {CORE_TERMINAL_CAUSE_HAZARD, "hazard"},
+        {CORE_TERMINAL_CAUSE_INVALID_COMMAND, "invalid_command"},
+        {CORE_TERMINAL_CAUSE_OPPONENT_ELIMINATED, "opponent_eliminated"},
+    };
+    PyObject* result = PyList_New(0);
+    if (result == NULL) {
+        return NULL;
+    }
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if ((causes & names[i].bit) == 0) {
+            continue;
+        }
+        PyObject* name = PyUnicode_FromString(names[i].name);
+        if (name == NULL || PyList_Append(result, name) < 0) {
+            Py_XDECREF(name);
+            Py_DECREF(result);
+            return NULL;
+        }
+        Py_DECREF(name);
+    }
+    return result;
+}
+
+static const char* reply_outcome_name(const CoreRootCandidateStats* candidate, int move) {
+    uint8_t bit = (uint8_t)(1u << move);
+    if ((candidate->win_reply_mask & bit) != 0) return "win";
+    if ((candidate->draw_reply_mask & bit) != 0) return "draw";
+    if ((candidate->loss_reply_mask & bit) != 0) return "loss";
+    if ((candidate->both_alive_reply_mask & bit) != 0) return "both_alive";
+    return NULL;
+}
+
+static PyObject* root_candidate_dict(const CoreRootCandidateStats* candidate) {
+    PyObject* result = PyDict_New();
+    PyObject* replies = PyDict_New();
+    PyObject* causes = cause_list(candidate->immediate_causes);
+    if (result == NULL || replies == NULL || causes == NULL) {
+        Py_XDECREF(result);
+        Py_XDECREF(replies);
+        Py_XDECREF(causes);
+        return NULL;
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        const char* outcome = reply_outcome_name(candidate, move);
+        if (outcome != NULL) {
+            PyObject* value = PyUnicode_FromString(outcome);
+            if (value == NULL || PyDict_SetItemString(replies, MoveDirectionToString((MoveDirection)move), value) < 0) {
+                Py_XDECREF(value);
+                Py_DECREF(result);
+                Py_DECREF(replies);
+                Py_DECREF(causes);
+                return NULL;
+            }
+            Py_DECREF(value);
+        }
+    }
+    int failed = dict_set_bool(result, "evaluated", candidate->evaluated) < 0 ||
+        dict_set_bool(result, "allowed", candidate->allowed) < 0 ||
+        dict_set_string(result, "rejection_reason", rejection_reason_name(candidate->rejection_reason)) < 0 ||
+        dict_set_bool(result, "safe_by_board_rules", candidate->safe_by_board_rules) < 0 ||
+        PyDict_SetItemString(result, "reply_outcomes", replies) < 0 ||
+        dict_set_int(result, "alive_reply_mask", candidate->alive_reply_mask) < 0 ||
+        dict_set_int(result, "alive_reply_count", candidate->alive_reply_count) < 0 ||
+        dict_set_int(result, "draw_reply_mask", candidate->draw_reply_mask) < 0 ||
+        PyDict_SetItemString(result, "immediate_causes", causes) < 0 ||
+        dict_set_string(result, "trap_status", trap_status_name(candidate->trap_status)) < 0 ||
+        dict_set_int(result, "trap_horizon", candidate->trap_horizon) < 0 ||
+        dict_set_int(result, "post_move_length", candidate->post_move_length) < 0 ||
+        dict_set_int(result, "relaxed_static_capacity", candidate->relaxed_static_capacity) < 0 ||
+        dict_set_string(result, "refutation_status", refutation_status_name(candidate->refutation_status)) < 0;
+    Py_DECREF(replies);
+    Py_DECREF(causes);
+    if (failed) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    if (candidate->minimax_value_valid) {
+        if (dict_set_double(result, "minimax_score", candidate->minimax_value.score) < 0 ||
+            dict_set_string(result, "minimax_outcome", outcome_name(candidate->minimax_value.outcome)) < 0 ||
+            dict_set_int(result, "minimax_terminal_distance", candidate->minimax_value.terminal_distance) < 0 ||
+            dict_set_string(result, "minimax_bound", bound_name(candidate->minimax_value.bound)) < 0) {
+            Py_DECREF(result);
+            return NULL;
+        }
+        PyObject* terminal_causes = cause_list(candidate->minimax_value.cause);
+        if (terminal_causes == NULL || PyDict_SetItemString(result, "minimax_cause", terminal_causes) < 0) {
+            Py_XDECREF(terminal_causes);
+            Py_DECREF(result);
+            return NULL;
+        }
+        Py_DECREF(terminal_causes);
+    } else {
+        const char* fields[] = {
+            "minimax_score", "minimax_outcome", "minimax_terminal_distance", "minimax_cause", "minimax_bound"
+        };
+        for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+            if (PyDict_SetItemString(result, fields[i], Py_None) < 0) {
+                Py_DECREF(result);
+                return NULL;
+            }
+        }
+    }
+    return result;
+}
+
 static PyObject* py_minimax_move(PyObject* self, PyObject* args, PyObject* kwds) {
     (void)self;
-    static char* kwlist[] = {"board", "snake_id", "time_budget_ms", "weights", NULL};
+    static char* kwlist[] = {"board", "snake_id", "time_budget_ms", "weights", "root_policy", NULL};
     PyObject* board_obj = NULL;
     PyObject* weights_obj = NULL;
     const char* snake_id = NULL;
     int time_budget_ms = 400;
+    const char* root_policy = "standard_ladder_opportunity";
     if (!PyArg_ParseTupleAndKeywords(
             args,
             kwds,
-            "Os|iO",
+            "Os|iOs",
             kwlist,
             &board_obj,
             &snake_id,
             &time_budget_ms,
-            &weights_obj
+            &weights_obj,
+            &root_policy
         )) {
         return NULL;
     }
@@ -440,6 +630,9 @@ static PyObject* py_minimax_move(PyObject* self, PyObject* args, PyObject* kwds)
 
     MoveDirection out_move = MOVE_INVALID;
     CoreSearchConfig config = CoreSearchConfigDefault(time_budget_ms);
+    if (parse_root_policy(root_policy, &config.root_policy) < 0) {
+        return NULL;
+    }
     if (parse_evaluation_weights(weights_obj, &config.weights) < 0) {
         return NULL;
     }
@@ -464,6 +657,7 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         "enable_make_unmake",
         "weights",
         "parallel_mode",
+        "root_policy",
         NULL,
     };
     PyObject* board_obj = NULL;
@@ -475,10 +669,11 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     int enable_move_ordering = 1;
     int enable_make_unmake = 1;
     const char* parallel_mode = "serial";
+    const char* root_policy = "standard_ladder_opportunity";
     if (!PyArg_ParseTupleAndKeywords(
             args,
             kwds,
-            "Os|iiiiiOs",
+            "Os|iiiiiOss",
             kwlist,
             &board_obj,
             &snake_id,
@@ -488,7 +683,8 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
             &enable_move_ordering,
             &enable_make_unmake,
             &weights_obj,
-            &parallel_mode
+            &parallel_mode,
+            &root_policy
         )) {
         return NULL;
     }
@@ -508,6 +704,9 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     config.enable_move_ordering = enable_move_ordering != 0;
     config.enable_make_unmake = enable_make_unmake != 0;
     if (parse_parallel_mode(parallel_mode, &config.parallel_mode) < 0) {
+        return NULL;
+    }
+    if (parse_root_policy(root_policy, &config.root_policy) < 0) {
         return NULL;
     }
     if (parse_evaluation_weights(weights_obj, &config.weights) < 0) {
@@ -548,7 +747,12 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         dict_set_u64(result, "tt_upper_hits", stats.tt_upper_hits) < 0 ||
         dict_set_u64(result, "tt_cutoffs", stats.tt_cutoffs) < 0 ||
         dict_set_u64(result, "tt_stores", stats.tt_stores) < 0 ||
-        dict_set_u64(result, "tt_collisions", stats.tt_collisions) < 0) {
+        dict_set_u64(result, "tt_collisions", stats.tt_collisions) < 0 ||
+        dict_set_int(result, "root_allowed_mask", stats.root_allowed_mask) < 0 ||
+        dict_set_string(result, "root_policy_applied", root_policy_name(stats.root_policy_applied)) < 0 ||
+        dict_set_string(result, "selection_reason", selection_reason_name(stats.selection_reason)) < 0 ||
+        dict_set_u64(result, "root_analysis_nodes", stats.root_analysis_nodes) < 0 ||
+        dict_set_double(result, "root_analysis_elapsed_ms", stats.root_analysis_elapsed_ms) < 0) {
         Py_DECREF(result);
         return NULL;
     }
@@ -579,6 +783,76 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     }
     Py_DECREF(root_scores);
 
+    PyObject* root_candidates = PyDict_New();
+    if (root_candidates == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        PyObject* candidate = root_candidate_dict(&stats.root_candidates[move]);
+        if (candidate == NULL ||
+            PyDict_SetItemString(root_candidates, MoveDirectionToString((MoveDirection)move), candidate) < 0) {
+            Py_XDECREF(candidate);
+            Py_DECREF(root_candidates);
+            Py_DECREF(result);
+            return NULL;
+        }
+        Py_DECREF(candidate);
+    }
+    if (PyDict_SetItemString(result, "root_candidates", root_candidates) < 0) {
+        Py_DECREF(root_candidates);
+        Py_DECREF(result);
+        return NULL;
+    }
+    Py_DECREF(root_candidates);
+
+    return result;
+}
+
+static PyObject* py_duel_root_profile(PyObject* self, PyObject* args, PyObject* kwds) {
+    (void)self;
+    static char* kwlist[] = {"board", "snake_id", NULL};
+    PyObject* board_obj = NULL;
+    const char* snake_id = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Os", kwlist, &board_obj, &snake_id)) {
+        return NULL;
+    }
+    Board* board = board_from_pyobject(board_obj);
+    if (board == NULL) {
+        return NULL;
+    }
+    CoreDuelRootProfileResult profile;
+    CoreStatus status = CoreDuelRootProfile(board, snake_id, &profile);
+    if (status != CORE_OK) {
+        return raise_for_status(status);
+    }
+    PyObject* result = PyDict_New();
+    if (result == NULL) {
+        return NULL;
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        const CoreDuelRootCommandProfile* source = &profile.commands[move];
+        CoreRootCandidateStats candidate;
+        memset(&candidate, 0, sizeof(candidate));
+        candidate.evaluated = source->evaluated;
+        candidate.allowed = true;
+        candidate.safe_by_board_rules = source->safe_by_board_rules;
+        candidate.opponent_reply_mask = source->opponent_reply_mask;
+        candidate.win_reply_mask = source->win_reply_mask;
+        candidate.draw_reply_mask = source->draw_reply_mask;
+        candidate.both_alive_reply_mask = source->both_alive_reply_mask;
+        candidate.loss_reply_mask = source->loss_reply_mask;
+        candidate.alive_reply_mask = source->alive_reply_mask;
+        candidate.alive_reply_count = source->alive_reply_count;
+        candidate.immediate_causes = source->immediate_causes;
+        PyObject* command = root_candidate_dict(&candidate);
+        if (command == NULL || PyDict_SetItemString(result, MoveDirectionToString((MoveDirection)move), command) < 0) {
+            Py_XDECREF(command);
+            Py_DECREF(result);
+            return NULL;
+        }
+        Py_DECREF(command);
+    }
     return result;
 }
 
@@ -764,6 +1038,7 @@ PyMethodDef PyCoreMethods[] = {
     {"voronoi_territory", py_voronoi_territory, METH_VARARGS, "Compute multi-source BFS territory control."},
     {"minimax_move", (PyCFunction)py_minimax_move, METH_VARARGS | METH_KEYWORDS, "Choose a move with simultaneous-move minimax heuristics."},
     {"minimax_diagnostics", (PyCFunction)py_minimax_diagnostics, METH_VARARGS | METH_KEYWORDS, "Choose a move and return minimax search diagnostics."},
+    {"duel_root_profile", (PyCFunction)py_duel_root_profile, METH_VARARGS | METH_KEYWORDS, "Classify all duel root command/reply pairs."},
     {"space_time_metrics", (PyCFunction)py_space_time_metrics, METH_VARARGS | METH_KEYWORDS, "Time-aware reachable-region metrics for a snake."},
     {"standard_ffa_move", (PyCFunction)py_standard_ffa_move, METH_VARARGS | METH_KEYWORDS, "Choose a move with the native Standard FFA strategy."},
     {"choke_points", py_choke_points, METH_VARARGS, "Detect articulation-point choke cells."},

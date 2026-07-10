@@ -14,6 +14,7 @@ def minimax_move(
     snake_id: str,
     time_budget_ms: int = 400,
     weights: EvaluationWeights | None = None,
+    root_policy: str = "standard_ladder_opportunity",
 ) -> Move:
     """Return the best move for snake_id under a time-limited minimax search.
 
@@ -28,4 +29,4 @@ def minimax_move(
     """
 
     # TODO: implement minimax with alpha-beta pruning in c-core/core/core_algorithms.c.
-    return Move(native_minimax_move(board, snake_id, time_budget_ms, weights))
+    return Move(native_minimax_move(board, snake_id, time_budget_ms, weights, root_policy))

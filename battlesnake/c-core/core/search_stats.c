@@ -35,6 +35,7 @@ CoreSearchConfig CoreSearchConfigDefault(int time_budget_ms) {
     config.enable_move_ordering = true;
     config.enable_make_unmake = true;
     config.parallel_mode = CORE_SEARCH_PARALLEL_SERIAL;
+    config.root_policy = CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY;
     config.weights = CoreEvaluationWeightsDefault();
     return config;
 }
@@ -48,4 +49,17 @@ void CoreSearchStatsInit(CoreSearchStats* stats) {
     stats->parallel_mode = CORE_SEARCH_PARALLEL_SERIAL;
     stats->parallel_workers_used = 1;
     stats->move = MOVE_INVALID;
+    stats->value.outcome = CORE_OUTCOME_UNRESOLVED;
+    stats->value.bound = CORE_VALUE_BOUND_EXACT;
+    stats->root_allowed_mask = 0x0f;
+    stats->root_policy_applied = CORE_ROOT_POLICY_STRICT_MINIMAX;
+    stats->selection_reason = CORE_SELECTION_ALLOWED_FALLBACK;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        stats->root_candidates[move].allowed = true;
+        stats->root_candidates[move].rejection_reason = CORE_ROOT_REJECTION_NONE;
+        stats->root_candidates[move].trap_status = CORE_TRAP_NOT_ANALYZED;
+        stats->root_candidates[move].refutation_status = CORE_REFUTATION_NOT_ANALYZED;
+        stats->root_candidates[move].minimax_value.outcome = CORE_OUTCOME_UNRESOLVED;
+        stats->root_candidates[move].minimax_value.bound = CORE_VALUE_BOUND_EXACT;
+    }
 }

@@ -1,4 +1,5 @@
 #include "../../battlesnake/c-core/server/battlesnake_strategy.h"
+#include "../../battlesnake/c-core/core/core_algorithms.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -235,6 +236,43 @@ static void test_effective_budget_allows_zero_margin(void) {
     assert(BsStrategyEffectiveBudgetMs(&config) == 400);
 }
 
+static void test_duel_root_profile_prefers_contingent_survival_over_terminal_moves(void) {
+    Board* board = BoardCreate(11, 11, "standard", 0);
+    Coord me_body[] = {{6, 10}, {7, 10}, {7, 9}, {6, 9}};
+    Coord you_body[] = {{5, 9}, {5, 8}, {5, 7}, {5, 6}};
+    Snake me = make_snake("me", me_body, 4, 96);
+    Snake you = make_snake("you", you_body, 4, 96);
+    CoreDuelRootProfileResult profile;
+    MoveDirection move = MOVE_INVALID;
+    BsStrategyConfig config = BsStrategyConfigDefault();
+
+    config.default_time_budget_ms = 50;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(BoardSafeMoves(board, "me", (MoveDirection[4]){MOVE_INVALID}) == 0);
+    assert(CoreDuelRootProfile(board, "me", &profile) == CORE_OK);
+    assert(profile.commands[MOVE_UP].alive_reply_count == 0);
+    assert((profile.commands[MOVE_UP].immediate_causes & CORE_TERMINAL_CAUSE_WALL) != 0);
+    assert(profile.commands[MOVE_RIGHT].alive_reply_count == 0);
+    assert((profile.commands[MOVE_RIGHT].immediate_causes & CORE_TERMINAL_CAUSE_SELF_BODY) != 0);
+    assert(profile.commands[MOVE_DOWN].alive_reply_count > 0 || profile.commands[MOVE_LEFT].alive_reply_count > 0);
+    assert(BsChooseMove(board, "me", &config, &move) == BS_STRATEGY_OK);
+    assert(move == MOVE_DOWN || move == MOVE_LEFT);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
+static void test_default_search_config_uses_ladder_policy(void) {
+    CoreSearchConfig config = CoreSearchConfigDefault(50);
+    CoreSearchConfig zeroed;
+    memset(&zeroed, 0, sizeof(zeroed));
+
+    assert(config.root_policy == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY);
+    assert(zeroed.root_policy == CORE_ROOT_POLICY_STRICT_MINIMAX);
+}
+
 int main(void) {
     test_single_snake_uses_safe_fallback();
     test_missing_snake_is_error();
@@ -250,5 +288,7 @@ int main(void) {
     test_effective_budget_preserves_smaller_env_budget();
     test_effective_budget_floors_tiny_request_timeout();
     test_effective_budget_allows_zero_margin();
+    test_duel_root_profile_prefers_contingent_survival_over_terminal_moves();
+    test_default_search_config_uses_ladder_policy();
     return 0;
 }

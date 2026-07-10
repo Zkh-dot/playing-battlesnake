@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include "../datatypes/board.h"
+#include "search_value.h"
 
 typedef struct {
     char* id;
@@ -29,11 +30,20 @@ typedef struct {
     Coord* new_heads;
     bool* dead;
     bool* moved_flags;
+    uint32_t* causes;
     int scratch_capacity;
 } CoreSearchState;
 
 bool CoreSearchStateInit(CoreSearchState* state, const Board* board);
 void CoreSearchStateFree(CoreSearchState* state);
 bool CoreSearchStateMakeMoves(CoreSearchState* state, const char** snake_ids, const MoveDirection* moves, int move_count);
+bool CoreSearchStateMakeMovesDetailed(
+    CoreSearchState* state,
+    const char** snake_ids,
+    const MoveDirection* moves,
+    int move_count,
+    uint32_t* out_causes,
+    int causes_capacity
+);
 bool CoreSearchStateUnmake(CoreSearchState* state);
 const Board* CoreSearchStateBoard(const CoreSearchState* state);

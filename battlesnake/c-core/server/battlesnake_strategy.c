@@ -22,9 +22,29 @@ static BsStrategyStatus fallback_move(const Board* board, const char* snake_id, 
     int count = BoardSafeMoves(board, snake_id, moves);
     if (count > 0) {
         *out_move = moves[0];
-    } else {
-        *out_move = MOVE_UP;
+        return BS_STRATEGY_FALLBACK_USED;
     }
+    if (board->snake_count == 2) {
+        CoreDuelRootProfileResult profile;
+        if (CoreDuelRootProfile(board, snake_id, &profile) != CORE_OK) {
+            return BS_STRATEGY_ERROR;
+        }
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            if (profile.commands[move].alive_reply_count > 0) {
+                *out_move = (MoveDirection)move;
+                return BS_STRATEGY_FALLBACK_USED;
+            }
+        }
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            const CoreDuelRootCommandProfile* command = &profile.commands[move];
+            if (command->opponent_reply_mask != 0 &&
+                command->draw_reply_mask == command->opponent_reply_mask) {
+                *out_move = (MoveDirection)move;
+                return BS_STRATEGY_FALLBACK_USED;
+            }
+        }
+    }
+    *out_move = MOVE_UP;
     return BS_STRATEGY_FALLBACK_USED;
 }
 
