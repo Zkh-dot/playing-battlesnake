@@ -763,24 +763,12 @@ static CoreStatus evaluate_node_pure_minimax(
 ) {
     context->result->nodes++;
 
-    const Snake* first = BoardFindSnakeConst(board, first_snake_id);
-    const Snake* second = BoardFindSnakeConst(board, second_snake_id);
-    bool first_alive = first != NULL && first->body_len > 0;
-    bool second_alive = second != NULL && second->body_len > 0;
-
-    if (first_alive && !second_alive) {
+    CoreOutcome outcome = CoreClassifyDuelOutcome(board, first_snake_id, second_snake_id);
+    if (outcome != CORE_OUTCOME_UNRESOLVED) {
         context->result->terminal_leaves++;
-        *out_value = position_eval_value(1.0, 1.0);
-        return CORE_OK;
-    }
-    if (!first_alive && second_alive) {
-        context->result->terminal_leaves++;
-        *out_value = position_eval_value(0.0, 1.0);
-        return CORE_OK;
-    }
-    if (!first_alive && !second_alive) {
-        context->result->terminal_leaves++;
-        *out_value = position_eval_value(0.5, 1.0);
+        double probability = outcome == CORE_OUTCOME_WIN ? 1.0 :
+            (outcome == CORE_OUTCOME_LOSS ? 0.0 : 0.5);
+        *out_value = position_eval_value(probability, 1.0);
         return CORE_OK;
     }
 
@@ -906,24 +894,12 @@ static CoreStatus evaluate_node_matrix(
 ) {
     context->result->nodes++;
 
-    const Snake* first = BoardFindSnakeConst(board, first_snake_id);
-    const Snake* second = BoardFindSnakeConst(board, second_snake_id);
-    bool first_alive = first != NULL && first->body_len > 0;
-    bool second_alive = second != NULL && second->body_len > 0;
-
-    if (first_alive && !second_alive) {
+    CoreOutcome outcome = CoreClassifyDuelOutcome(board, first_snake_id, second_snake_id);
+    if (outcome != CORE_OUTCOME_UNRESOLVED) {
         context->result->terminal_leaves++;
-        *out_value = position_eval_value(1.0, 1.0);
-        return CORE_OK;
-    }
-    if (!first_alive && second_alive) {
-        context->result->terminal_leaves++;
-        *out_value = position_eval_value(0.0, 1.0);
-        return CORE_OK;
-    }
-    if (!first_alive && !second_alive) {
-        context->result->terminal_leaves++;
-        *out_value = position_eval_value(0.5, 1.0);
+        double probability = outcome == CORE_OUTCOME_WIN ? 1.0 :
+            (outcome == CORE_OUTCOME_LOSS ? 0.0 : 0.5);
+        *out_value = position_eval_value(probability, 1.0);
         return CORE_OK;
     }
 

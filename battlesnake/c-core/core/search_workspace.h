@@ -11,6 +11,7 @@ typedef struct {
     size_t occupied_count;
     const char** snake_ids;
     MoveDirection* moves;
+    uint32_t* transition_causes;
     int* option_counts;
     MoveDirection (*options)[4];
     int snake_capacity;
@@ -35,6 +36,10 @@ static inline const char** CoreSearchWorkspaceSnakeIds(CoreSearchWorkspace* work
 
 static inline MoveDirection* CoreSearchWorkspaceMoves(CoreSearchWorkspace* workspace, int ply) {
     return workspace->moves + CoreSearchWorkspaceFrameOffset(workspace, ply);
+}
+
+static inline uint32_t* CoreSearchWorkspaceTransitionCauses(CoreSearchWorkspace* workspace, int ply) {
+    return workspace->transition_causes + CoreSearchWorkspaceFrameOffset(workspace, ply);
 }
 
 static inline int* CoreSearchWorkspaceOptionCounts(CoreSearchWorkspace* workspace, int ply) {

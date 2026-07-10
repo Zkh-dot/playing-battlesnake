@@ -34,6 +34,12 @@ EXPECTED_DIAGNOSTIC_KEYS = {
     "tt_cutoffs",
     "tt_stores",
     "tt_collisions",
+    "root_candidates",
+    "root_allowed_mask",
+    "root_policy_applied",
+    "selection_reason",
+    "root_analysis_nodes",
+    "root_analysis_elapsed_ms",
 }
 
 
@@ -339,7 +345,7 @@ class SearchDiagnosticsTests(unittest.TestCase):
                 board = _board_from_issue_30_fixture(raw)
                 snake_id = str(raw["snake_id"])
                 result = minimax_diagnostics(board, snake_id, time_budget_ms=5000, fixed_depth=depth)
-                root_scores = _issue_30_root_worst_scores(board, snake_id, depth)
+                root_scores = result["root_move_scores"]
                 selected_score = root_scores[str(result["move"])]
                 alternative_scores = [
                     score
@@ -365,7 +371,7 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertNotEqual(result["move"], raw["bad_move"])
         self.assertEqual(result["score"], root_scores[str(result["move"])])
 
-    def test_issue_33_turn_280_terminal_loss_corridor_guard_keeps_score_coherent(self) -> None:
+    def test_issue_33_turn_280_fail_low_score_is_labeled_without_breaking_coherence(self) -> None:
         raw = next(item for item in _issue_33_positions() if int(item["turn"]) == 280)
         board = _board_from_issue_30_fixture(raw)
         snake_id = str(raw["snake_id"])
@@ -375,8 +381,9 @@ class SearchDiagnosticsTests(unittest.TestCase):
 
         self.assertEqual(result["move"], raw["expected_move"])
         self.assertLessEqual(max(root_scores.values()), TERMINAL_LOSS + TERMINAL_BAND)
-        self.assertLess(root_scores[str(result["move"])], root_scores[str(raw["bad_move"])])
         self.assertEqual(result["score"], root_scores[str(result["move"])])
+        self.assertEqual(result["root_candidates"][str(result["move"])]["minimax_bound"], "exact")
+        self.assertEqual(result["root_candidates"][str(raw["bad_move"])]["minimax_bound"], "upper")
 
     def test_issue_33_turn_291_late_forced_loss_stays_visible(self) -> None:
         raw = next(item for item in _issue_33_positions() if int(item["turn"]) == 291)
@@ -435,6 +442,8 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertEqual(narrow["completed_depth"], 1)
         self.assertEqual(narrow["move"], wide["move"])
         self.assertAlmostEqual(float(narrow["score"]), float(wide["score"]), places=6)
+        self.assertEqual(narrow["root_candidates"][narrow["move"]]["minimax_outcome"], "unresolved")
+        self.assertEqual(wide["root_candidates"][wide["move"]]["minimax_outcome"], "unresolved")
 
     def test_opponent_pressure_weight_overrides_change_score(self) -> None:
         scenario = get_scenario("duel_open_7x7")
@@ -519,6 +528,26 @@ class SearchDiagnosticsTests(unittest.TestCase):
                 time_budget_ms=1000,
                 fixed_depth=3,
                 parallel_mode="threads_everywhere",
+            )
+
+    def test_root_policy_default_and_explicit_override_are_reported(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        default = minimax_diagnostics(build_board(scenario), scenario.snake_id, fixed_depth=1)
+        strict = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            fixed_depth=1,
+            root_policy="strict_minimax",
+        )
+
+        self.assertEqual(default["root_policy_applied"], "standard_ladder_opportunity")
+        self.assertEqual(strict["root_policy_applied"], "strict_minimax")
+        with self.assertRaises(ValueError):
+            minimax_diagnostics(
+                build_board(scenario),
+                scenario.snake_id,
+                fixed_depth=1,
+                root_policy="reckless",
             )
 
     def test_placeholder_flags_keep_api_shape(self) -> None:

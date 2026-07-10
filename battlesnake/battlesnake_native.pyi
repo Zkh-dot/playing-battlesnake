@@ -62,6 +62,27 @@ DOWN: str
 LEFT: str
 RIGHT: str
 
+class RootCandidateDiagnostics(TypedDict):
+    evaluated: bool
+    allowed: bool
+    rejection_reason: str
+    safe_by_board_rules: bool
+    reply_outcomes: dict[str, str]
+    alive_reply_mask: int
+    alive_reply_count: int
+    draw_reply_mask: int
+    immediate_causes: list[str]
+    trap_status: str
+    trap_horizon: int
+    post_move_length: int
+    relaxed_static_capacity: int
+    refutation_status: str
+    minimax_score: float | None
+    minimax_outcome: str | None
+    minimax_terminal_distance: int | None
+    minimax_cause: list[str] | None
+    minimax_bound: str | None
+
 class MinimaxDiagnostics(TypedDict):
     move: str
     score: float
@@ -87,6 +108,12 @@ class MinimaxDiagnostics(TypedDict):
     tt_cutoffs: int
     tt_stores: int
     tt_collisions: int
+    root_candidates: dict[str, RootCandidateDiagnostics]
+    root_allowed_mask: int
+    root_policy_applied: str
+    selection_reason: str
+    root_analysis_nodes: int
+    root_analysis_elapsed_ms: float
 
 def reachable_space(board: Board, start: Coord, snake_id: str) -> int: ...
 def shortest_path(board: Board, start: Coord, goal: Coord, snake_id: str) -> list[Coord]: ...
@@ -97,6 +124,7 @@ def minimax_move(
     snake_id: str,
     time_budget_ms: int = 400,
     weights: dict[str, float] | None = None,
+    root_policy: str = "standard_ladder_opportunity",
 ) -> str: ...
 def minimax_diagnostics(
     board: Board,
@@ -108,7 +136,9 @@ def minimax_diagnostics(
     enable_make_unmake: bool = True,
     weights: dict[str, float] | None = None,
     parallel_mode: str = "serial",
+    root_policy: str = "standard_ladder_opportunity",
 ) -> MinimaxDiagnostics: ...
+def duel_root_profile(board: Board, snake_id: str) -> dict[str, RootCandidateDiagnostics]: ...
 def standard_ffa_move(
     board: Board,
     snake_id: str,

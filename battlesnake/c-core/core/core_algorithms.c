@@ -1177,11 +1177,13 @@ typedef struct {
     CoreTranspositionTable tt;
     CoreSearchWorkspace workspace;
     CoreSearchState* state;
+    const char* opponent_id;
+    uint8_t root_allowed_mask;
     bool tt_enabled;
     bool root_best_valid;
     MoveDirection root_best_move;
-    bool root_move_score_valid[4];
-    double root_move_scores[4];
+    bool root_move_value_valid[4];
+    CoreSearchValue root_move_values[4];
     MoveDirection principal_variation[CORE_MINIMAX_MAX_DEPTH + 1];
     MoveDirection killer_moves[CORE_MINIMAX_MAX_DEPTH + 1][2];
     int history_scores[4];
@@ -1319,9 +1321,28 @@ static void core_order_moves(
     }
 }
 
-static bool core_minimax_is_terminal(const Board* board, const char* snake_id) {
+CoreOutcome CoreClassifyDuelOutcome(
+    const Board* board,
+    const char* snake_id,
+    const char* opponent_id
+) {
+    if (board == NULL || snake_id == NULL || opponent_id == NULL) {
+        return CORE_OUTCOME_UNRESOLVED;
+    }
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
-    return snake == NULL || snake->body_len == 0 || board->snake_count <= 1;
+    const Snake* opponent = BoardFindSnakeConst(board, opponent_id);
+    bool snake_alive = snake != NULL && snake->body_len > 0;
+    bool opponent_alive = opponent != NULL && opponent->body_len > 0;
+    if (snake_alive && opponent_alive) {
+        return CORE_OUTCOME_UNRESOLVED;
+    }
+    if (snake_alive) {
+        return CORE_OUTCOME_WIN;
+    }
+    if (opponent_alive) {
+        return CORE_OUTCOME_LOSS;
+    }
+    return CORE_OUTCOME_DRAW;
 }
 
 static double core_terminal_survival_step(const CoreEvaluationWeights* weights) {
@@ -1336,43 +1357,652 @@ static double core_terminal_survival_step(const CoreEvaluationWeights* weights) 
         CORE_TERMINAL_SURVIVAL_MAX_STEP;
 }
 
-static bool core_score_is_terminal_loss_band(const CoreEvaluationWeights* weights, double score) {
-    double step = core_terminal_survival_step(weights);
-    if (!(step > 0.0)) {
-        return false;
-    }
-
-    double band = step * (double)(CORE_MINIMAX_MAX_DEPTH + 1);
-    return score <= weights->terminal_loss + band;
+static CoreSearchValue core_unresolved_value(double score) {
+    CoreSearchValue value;
+    memset(&value, 0, sizeof(value));
+    value.score = score;
+    value.outcome = CORE_OUTCOME_UNRESOLVED;
+    value.bound = CORE_VALUE_BOUND_EXACT;
+    return value;
 }
 
-static bool core_score_is_terminal_win_band(const CoreEvaluationWeights* weights, double score) {
+static CoreSearchValue core_terminal_value(
+    const CoreEvaluationWeights* weights,
+    CoreOutcome outcome,
+    uint32_t cause,
+    uint16_t distance
+) {
+    CoreSearchValue value;
+    memset(&value, 0, sizeof(value));
+    value.outcome = outcome;
+    value.terminal_distance = distance;
+    value.cause = cause;
+    value.bound = CORE_VALUE_BOUND_EXACT;
     double step = core_terminal_survival_step(weights);
-    if (!(step > 0.0)) {
-        return false;
+    if (outcome == CORE_OUTCOME_WIN) {
+        value.score = weights->terminal_win - step * (double)distance;
+    } else if (outcome == CORE_OUTCOME_LOSS) {
+        value.score = weights->terminal_loss + step * (double)distance;
+    } else {
+        value.score = (weights->terminal_win + weights->terminal_loss) / 2.0;
     }
-
-    double band = step * (double)(CORE_MINIMAX_MAX_DEPTH + 1);
-    return score >= weights->terminal_win - band;
+    return value;
 }
 
-static double core_adjust_terminal_child_score(const CoreEvaluationWeights* weights, double score) {
-    double step = core_terminal_survival_step(weights);
-    if (!(step > 0.0)) {
-        return score;
+static CoreSearchValue core_backup_child_value(
+    const CoreEvaluationWeights* weights,
+    CoreSearchValue child
+) {
+    if (child.outcome == CORE_OUTCOME_UNRESOLVED) {
+        return child;
+    }
+    uint16_t distance = child.terminal_distance < UINT16_MAX ?
+        (uint16_t)(child.terminal_distance + 1) : UINT16_MAX;
+    CoreSearchValue value = core_terminal_value(weights, child.outcome, child.cause, distance);
+    value.bound = child.bound;
+    return value;
+}
+
+static int core_popcount4(uint8_t mask) {
+    int count = 0;
+    for (int bit = 0; bit < 4; bit++) {
+        if ((mask & (1u << bit)) != 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+CoreStatus CoreDuelRootProfile(
+    const Board* board,
+    const char* snake_id,
+    CoreDuelRootProfileResult* out_result
+) {
+    if (board == NULL || snake_id == NULL || out_result == NULL || board->snake_count != 2) {
+        return CORE_ERROR;
+    }
+    memset(out_result, 0, sizeof(*out_result));
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        return CORE_ERROR;
+    }
+    const char* opponent_id = NULL;
+    int snake_index = -1;
+    int opponent_index = -1;
+    for (int i = 0; i < board->snake_count; i++) {
+        if (strcmp(board->snakes[i].id, snake_id) == 0) {
+            snake_index = i;
+        } else {
+            opponent_id = board->snakes[i].id;
+            opponent_index = i;
+        }
+    }
+    if (snake_index < 0 || opponent_id == NULL || opponent_index < 0) {
+        return CORE_ERROR;
     }
 
-    if (core_score_is_terminal_win_band(weights, score)) {
-        double floor = weights->terminal_win - step * (double)CORE_MINIMAX_MAX_DEPTH;
-        double adjusted = score - step;
-        return adjusted < floor ? floor : adjusted;
+    MoveDirection opponent_moves[4];
+    int opponent_move_count = core_command_moves(board, opponent_id, opponent_moves);
+    if (opponent_move_count <= 0) {
+        return CORE_ERROR;
     }
-    if (core_score_is_terminal_loss_band(weights, score)) {
-        double ceiling = weights->terminal_loss + step * (double)CORE_MINIMAX_MAX_DEPTH;
-        double adjusted = score + step;
-        return adjusted > ceiling ? ceiling : adjusted;
+    for (int i = 0; i < opponent_move_count; i++) {
+        out_result->opponent_command_mask |= (uint8_t)(1u << opponent_moves[i]);
     }
-    return score;
+
+    MoveDirection safe_moves[4];
+    int safe_count = BoardSafeMoves(board, snake_id, safe_moves);
+    uint8_t safe_mask = 0;
+    for (int i = 0; i < safe_count; i++) {
+        safe_mask |= (uint8_t)(1u << safe_moves[i]);
+    }
+
+    CoreSearchState state;
+    if (!CoreSearchStateInit(&state, board)) {
+        return CORE_ERROR;
+    }
+    const char* ids[2] = {snake_id, opponent_id};
+    MoveDirection moves[2];
+    for (int own_move = MOVE_UP; own_move <= MOVE_RIGHT; own_move++) {
+        CoreDuelRootCommandProfile* command = &out_result->commands[own_move];
+        command->evaluated = true;
+        command->safe_by_board_rules = (safe_mask & (1u << own_move)) != 0;
+        moves[0] = (MoveDirection)own_move;
+        for (int reply = 0; reply < opponent_move_count; reply++) {
+            moves[1] = opponent_moves[reply];
+            uint32_t causes[2] = {0, 0};
+            if (!CoreSearchStateMakeMovesDetailed(&state, ids, moves, 2, causes, 2)) {
+                CoreSearchStateFree(&state);
+                return CORE_ERROR;
+            }
+            const Board* child = CoreSearchStateBoard(&state);
+            CoreOutcome outcome = CoreClassifyDuelOutcome(child, snake_id, opponent_id);
+            uint8_t reply_bit = (uint8_t)(1u << opponent_moves[reply]);
+            command->opponent_reply_mask |= reply_bit;
+            command->immediate_causes |= causes[snake_index];
+            if (outcome == CORE_OUTCOME_WIN) {
+                command->win_reply_mask |= reply_bit;
+            } else if (outcome == CORE_OUTCOME_DRAW) {
+                command->draw_reply_mask |= reply_bit;
+            } else if (outcome == CORE_OUTCOME_LOSS) {
+                command->loss_reply_mask |= reply_bit;
+            } else {
+                command->both_alive_reply_mask |= reply_bit;
+            }
+            if (!CoreSearchStateUnmake(&state)) {
+                CoreSearchStateFree(&state);
+                return CORE_ERROR;
+            }
+        }
+        command->alive_reply_mask = command->win_reply_mask | command->both_alive_reply_mask;
+        command->alive_reply_count = core_popcount4(command->alive_reply_mask);
+    }
+    CoreSearchStateFree(&state);
+    return CORE_OK;
+}
+
+static bool core_relaxed_root_state(
+    const Board* board,
+    const char* snake_id,
+    MoveDirection root_move,
+    CoreSearchState* out_state,
+    int* out_post_move_length,
+    uint32_t* out_cause
+) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        return false;
+    }
+    Board* relaxed = BoardCreate(board->width, board->height, "standard", 0);
+    if (relaxed == NULL || !BoardAddSnake(relaxed, snake)) {
+        BoardFree(relaxed);
+        return false;
+    }
+    relaxed->snakes[0].health = INT_MAX / 4;
+    Coord destination = MoveStep(SnakeHead(snake), root_move);
+    bool eats = core_coord_in_array(board->food, board->food_count, destination);
+    if (eats && !BoardAddFood(relaxed, destination)) {
+        BoardFree(relaxed);
+        return false;
+    }
+    *out_post_move_length = core_snake_length(snake) + (eats ? 1 : 0);
+    if (!CoreSearchStateInit(out_state, relaxed)) {
+        BoardFree(relaxed);
+        return false;
+    }
+    BoardFree(relaxed);
+    const char* ids[1] = {snake_id};
+    MoveDirection moves[1] = {root_move};
+    uint32_t causes[1] = {0};
+    if (!CoreSearchStateMakeMovesDetailed(out_state, ids, moves, 1, causes, 1)) {
+        CoreSearchStateFree(out_state);
+        return false;
+    }
+    out_state->board.food_count = 0;
+    *out_cause = causes[0];
+    const Snake* moved = BoardFindSnakeConst(CoreSearchStateBoard(out_state), snake_id);
+    if (moved != NULL) {
+        *out_post_move_length = core_snake_length(moved);
+    }
+    return true;
+}
+
+static int core_relaxed_static_capacity(const Board* board, const char* snake_id) {
+    const Snake* snake = BoardFindSnakeConst(board, snake_id);
+    size_t cell_count = 0;
+    if (snake == NULL || snake->body_len == 0 || !core_cell_count(board, &cell_count)) {
+        return 0;
+    }
+    unsigned char* blocked = (unsigned char*)calloc(cell_count, sizeof(unsigned char));
+    unsigned char* visited = (unsigned char*)calloc(cell_count, sizeof(unsigned char));
+    int* queue = (int*)malloc(cell_count * sizeof(int));
+    if (blocked == NULL || visited == NULL || queue == NULL) {
+        free(blocked);
+        free(visited);
+        free(queue);
+        return -1;
+    }
+    for (int i = 0; i < snake->body_len; i++) {
+        if (BoardInBounds(board, snake->body[i])) {
+            blocked[core_coord_index(board, snake->body[i])] = 1;
+        }
+    }
+    Coord head = SnakeHead(snake);
+    int start = core_coord_index(board, head);
+    blocked[start] = 0;
+    visited[start] = 1;
+    queue[0] = start;
+    int read = 0;
+    int write = 1;
+    while (read < write) {
+        int index = queue[read++];
+        Coord coord = {index % board->width, index / board->width};
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            Coord next = MoveStep(coord, (MoveDirection)move);
+            if (!BoardInBounds(board, next)) {
+                continue;
+            }
+            int next_index = core_coord_index(board, next);
+            if (!blocked[next_index] && !visited[next_index]) {
+                visited[next_index] = 1;
+                queue[write++] = next_index;
+            }
+        }
+    }
+    free(blocked);
+    free(visited);
+    free(queue);
+    return write;
+}
+
+static bool core_body_seen(const Coord* seen, int seen_count, int body_len, const Snake* snake) {
+    for (int state = 0; state < seen_count; state++) {
+        if (memcmp(seen + (size_t)state * (size_t)body_len, snake->body, (size_t)body_len * sizeof(Coord)) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void core_analyze_self_trap(
+    const Board* board,
+    const char* snake_id,
+    MoveDirection root_move,
+    const CoreSearchTimer* timer,
+    CoreRootCandidateStats* candidate,
+    uint64_t* analysis_nodes
+) {
+    CoreSearchState state;
+    memset(&state, 0, sizeof(state));
+    uint32_t root_cause = 0;
+    int post_move_length = 0;
+    if (!core_relaxed_root_state(
+        board,
+        snake_id,
+        root_move,
+        &state,
+        &post_move_length,
+        &root_cause
+    )) {
+        candidate->trap_status = CORE_TRAP_UNKNOWN;
+        return;
+    }
+    candidate->post_move_length = post_move_length;
+    const Snake* snake = BoardFindSnakeConst(CoreSearchStateBoard(&state), snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        candidate->trap_status = CORE_TRAP_IMMEDIATE_DEATH;
+        candidate->trap_horizon = 0;
+        candidate->immediate_causes |= root_cause;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    candidate->relaxed_static_capacity = core_relaxed_static_capacity(CoreSearchStateBoard(&state), snake_id);
+    if (candidate->relaxed_static_capacity < 0) {
+        candidate->trap_status = CORE_TRAP_UNKNOWN;
+        CoreSearchStateFree(&state);
+        return;
+    }
+
+    int proof_horizon = post_move_length - 1;
+    int horizon = 1;
+    candidate->trap_horizon = horizon;
+    if (horizon >= proof_horizon) {
+        candidate->trap_status = CORE_TRAP_SURVIVES_HORIZON;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    Coord* seen = (Coord*)malloc((size_t)proof_horizon * (size_t)post_move_length * sizeof(Coord));
+    if (seen == NULL) {
+        candidate->trap_status = CORE_TRAP_UNKNOWN;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    memcpy(seen, snake->body, (size_t)post_move_length * sizeof(Coord));
+    int seen_count = 1;
+    const char* ids[1] = {snake_id};
+
+    while (horizon < proof_horizon) {
+        if (core_search_timed_out(timer)) {
+            candidate->trap_status = CORE_TRAP_UNKNOWN;
+            break;
+        }
+        MoveDirection surviving_move = MOVE_INVALID;
+        int surviving_count = 0;
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            MoveDirection moves[1] = {(MoveDirection)move};
+            if (!CoreSearchStateMakeMoves(&state, ids, moves, 1)) {
+                candidate->trap_status = CORE_TRAP_UNKNOWN;
+                surviving_count = -1;
+                break;
+            }
+            (*analysis_nodes)++;
+            const Snake* child = BoardFindSnakeConst(CoreSearchStateBoard(&state), snake_id);
+            if (child != NULL && child->body_len > 0) {
+                surviving_move = (MoveDirection)move;
+                surviving_count++;
+            }
+            if (!CoreSearchStateUnmake(&state)) {
+                candidate->trap_status = CORE_TRAP_UNKNOWN;
+                surviving_count = -1;
+                break;
+            }
+        }
+        if (surviving_count < 0) {
+            break;
+        }
+        if (surviving_count == 0) {
+            candidate->trap_status = CORE_TRAP_PROVEN_SELF_TRAP;
+            candidate->trap_horizon = horizon;
+            break;
+        }
+        if (surviving_count > 1) {
+            candidate->trap_status = CORE_TRAP_OPEN_BRANCH;
+            candidate->trap_horizon = horizon;
+            break;
+        }
+        MoveDirection moves[1] = {surviving_move};
+        if (!CoreSearchStateMakeMoves(&state, ids, moves, 1)) {
+            candidate->trap_status = CORE_TRAP_UNKNOWN;
+            break;
+        }
+        (*analysis_nodes)++;
+        horizon++;
+        candidate->trap_horizon = horizon;
+        snake = BoardFindSnakeConst(CoreSearchStateBoard(&state), snake_id);
+        if (snake == NULL || snake->body_len != post_move_length) {
+            candidate->trap_status = CORE_TRAP_UNKNOWN;
+            break;
+        }
+        if (core_body_seen(seen, seen_count, post_move_length, snake)) {
+            candidate->trap_status = CORE_TRAP_SURVIVES_CYCLE;
+            break;
+        }
+        memcpy(
+            seen + (size_t)seen_count * (size_t)post_move_length,
+            snake->body,
+            (size_t)post_move_length * sizeof(Coord)
+        );
+        seen_count++;
+        if (horizon >= proof_horizon) {
+            candidate->trap_status = CORE_TRAP_SURVIVES_HORIZON;
+            break;
+        }
+    }
+    if (candidate->trap_status == CORE_TRAP_NOT_ANALYZED) {
+        candidate->trap_status = CORE_TRAP_SURVIVES_HORIZON;
+    }
+    free(seen);
+    CoreSearchStateFree(&state);
+}
+
+typedef enum {
+    CORE_FORCE_LOSS_PROVEN = 0,
+    CORE_FORCE_LOSS_NOT_PROVEN = 1,
+    CORE_FORCE_LOSS_UNKNOWN = 2,
+} CoreForceLossResult;
+
+#define CORE_REFUTATION_NODE_CAP 200000u
+
+static CoreForceLossResult core_forced_loss_node(
+    CoreSearchState* state,
+    const char* snake_id,
+    const char* opponent_id,
+    int depth_remaining,
+    const CoreSearchTimer* timer,
+    uint64_t* nodes
+) {
+    const Board* board = CoreSearchStateBoard(state);
+    CoreOutcome outcome = CoreClassifyDuelOutcome(board, snake_id, opponent_id);
+    if (outcome == CORE_OUTCOME_LOSS) {
+        return CORE_FORCE_LOSS_PROVEN;
+    }
+    if (outcome == CORE_OUTCOME_WIN || outcome == CORE_OUTCOME_DRAW) {
+        return CORE_FORCE_LOSS_NOT_PROVEN;
+    }
+    if (depth_remaining <= 0) {
+        return CORE_FORCE_LOSS_UNKNOWN;
+    }
+    if (*nodes >= CORE_REFUTATION_NODE_CAP || core_search_timed_out(timer)) {
+        return CORE_FORCE_LOSS_UNKNOWN;
+    }
+
+    MoveDirection opponent_moves[4];
+    int opponent_count = core_command_moves(board, opponent_id, opponent_moves);
+    if (opponent_count <= 0) {
+        return CORE_FORCE_LOSS_UNKNOWN;
+    }
+    const char* ids[2] = {snake_id, opponent_id};
+    bool any_unknown_own_move = false;
+    for (int own_move = MOVE_UP; own_move <= MOVE_RIGHT; own_move++) {
+        bool move_refuted = false;
+        bool move_unknown = false;
+        for (int reply = 0; reply < opponent_count; reply++) {
+            MoveDirection moves[2] = {(MoveDirection)own_move, opponent_moves[reply]};
+            if (!CoreSearchStateMakeMoves(state, ids, moves, 2)) {
+                return CORE_FORCE_LOSS_UNKNOWN;
+            }
+            (*nodes)++;
+            CoreForceLossResult child = core_forced_loss_node(
+                state,
+                snake_id,
+                opponent_id,
+                depth_remaining - 1,
+                timer,
+                nodes
+            );
+            if (!CoreSearchStateUnmake(state)) {
+                return CORE_FORCE_LOSS_UNKNOWN;
+            }
+            if (child == CORE_FORCE_LOSS_PROVEN) {
+                move_refuted = true;
+                break;
+            }
+            if (child == CORE_FORCE_LOSS_UNKNOWN) {
+                move_unknown = true;
+            }
+        }
+        if (!move_refuted && !move_unknown) {
+            return CORE_FORCE_LOSS_NOT_PROVEN;
+        }
+        if (!move_refuted) {
+            any_unknown_own_move = true;
+        }
+    }
+    return any_unknown_own_move ? CORE_FORCE_LOSS_UNKNOWN : CORE_FORCE_LOSS_PROVEN;
+}
+
+static CoreRefutationStatus core_refute_root_move(
+    const Board* board,
+    const char* snake_id,
+    const char* opponent_id,
+    MoveDirection root_move,
+    int trap_horizon,
+    const CoreSearchTimer* timer,
+    uint64_t* nodes
+) {
+    MoveDirection opponent_moves[4];
+    int opponent_count = core_command_moves(board, opponent_id, opponent_moves);
+    if (opponent_count <= 0) {
+        return CORE_REFUTATION_UNKNOWN;
+    }
+    CoreSearchState state;
+    if (!CoreSearchStateInit(&state, board)) {
+        return CORE_REFUTATION_UNKNOWN;
+    }
+    const char* ids[2] = {snake_id, opponent_id};
+    bool saw_unknown = false;
+    for (int reply = 0; reply < opponent_count; reply++) {
+        MoveDirection moves[2] = {root_move, opponent_moves[reply]};
+        if (!CoreSearchStateMakeMoves(&state, ids, moves, 2)) {
+            CoreSearchStateFree(&state);
+            return CORE_REFUTATION_UNKNOWN;
+        }
+        (*nodes)++;
+        CoreForceLossResult result = core_forced_loss_node(
+            &state,
+            snake_id,
+            opponent_id,
+            trap_horizon,
+            timer,
+            nodes
+        );
+        if (!CoreSearchStateUnmake(&state)) {
+            CoreSearchStateFree(&state);
+            return CORE_REFUTATION_UNKNOWN;
+        }
+        if (result == CORE_FORCE_LOSS_PROVEN) {
+            CoreSearchStateFree(&state);
+            return CORE_REFUTATION_PROVEN_REFUTABLE;
+        }
+        if (result == CORE_FORCE_LOSS_UNKNOWN) {
+            saw_unknown = true;
+        }
+    }
+    CoreSearchStateFree(&state);
+    return saw_unknown ? CORE_REFUTATION_UNKNOWN : CORE_REFUTATION_NOT_REFUTABLE;
+}
+
+static bool core_structural_alternative(
+    const CoreSearchStats* stats,
+    uint8_t allowed_mask,
+    MoveDirection excluded_move
+) {
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if (move == excluded_move || (allowed_mask & (1u << move)) == 0) {
+            continue;
+        }
+        const CoreRootCandidateStats* candidate = &stats->root_candidates[move];
+        bool structural_status = candidate->trap_status == CORE_TRAP_OPEN_BRANCH ||
+            candidate->trap_status == CORE_TRAP_SURVIVES_CYCLE ||
+            candidate->trap_status == CORE_TRAP_SURVIVES_HORIZON;
+        if (candidate->alive_reply_count > 0 && structural_status &&
+            candidate->relaxed_static_capacity >= candidate->post_move_length) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static CoreStatus core_prepare_root_policy(
+    const Board* board,
+    const char* snake_id,
+    CoreRootPolicy requested_policy,
+    const CoreSearchTimer* timer,
+    uint8_t strict_mask,
+    CoreSearchStats* stats,
+    uint8_t* out_allowed_mask
+) {
+    struct timespec start;
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    *out_allowed_mask = strict_mask;
+    bool standard_duel = board->snake_count == 2 && board->ruleset_name != NULL &&
+        strcmp(board->ruleset_name, "standard") == 0;
+    CoreRootPolicy effective_policy = standard_duel ? requested_policy : CORE_ROOT_POLICY_STRICT_MINIMAX;
+    stats->root_policy_applied = effective_policy;
+    if (!standard_duel) {
+        stats->root_allowed_mask = strict_mask;
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            stats->root_candidates[move].allowed = (strict_mask & (1u << move)) != 0;
+        }
+        return CORE_OK;
+    }
+
+    CoreDuelRootProfileResult profile;
+    CoreStatus profile_status = CoreDuelRootProfile(board, snake_id, &profile);
+    if (profile_status != CORE_OK) {
+        return profile_status;
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        CoreRootCandidateStats* candidate = &stats->root_candidates[move];
+        const CoreDuelRootCommandProfile* command = &profile.commands[move];
+        candidate->evaluated = command->evaluated;
+        candidate->safe_by_board_rules = command->safe_by_board_rules;
+        candidate->opponent_reply_mask = command->opponent_reply_mask;
+        candidate->win_reply_mask = command->win_reply_mask;
+        candidate->draw_reply_mask = command->draw_reply_mask;
+        candidate->both_alive_reply_mask = command->both_alive_reply_mask;
+        candidate->loss_reply_mask = command->loss_reply_mask;
+        candidate->alive_reply_mask = command->alive_reply_mask;
+        candidate->alive_reply_count = command->alive_reply_count;
+        candidate->immediate_causes = command->immediate_causes;
+        core_analyze_self_trap(
+            board,
+            snake_id,
+            (MoveDirection)move,
+            timer,
+            candidate,
+            &stats->root_analysis_nodes
+        );
+    }
+
+    uint8_t allowed_mask = strict_mask;
+    if (effective_policy == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY) {
+        allowed_mask = 0x0f;
+        bool any_surviving_reply = false;
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            if (stats->root_candidates[move].alive_reply_count > 0) {
+                any_surviving_reply = true;
+            }
+        }
+        if (any_surviving_reply) {
+            for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+                CoreRootCandidateStats* candidate = &stats->root_candidates[move];
+                if (candidate->alive_reply_count == 0 && candidate->loss_reply_mask != 0) {
+                    allowed_mask &= (uint8_t)~(1u << move);
+                    candidate->rejection_reason = CORE_ROOT_REJECTION_NO_SURVIVING_REPLY;
+                }
+            }
+        }
+
+        const char* opponent_id = NULL;
+        for (int i = 0; i < board->snake_count; i++) {
+            if (strcmp(board->snakes[i].id, snake_id) != 0) {
+                opponent_id = board->snakes[i].id;
+                break;
+            }
+        }
+        if (opponent_id == NULL) {
+            return CORE_ERROR;
+        }
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            CoreRootCandidateStats* candidate = &stats->root_candidates[move];
+            if ((allowed_mask & (1u << move)) == 0 ||
+                candidate->trap_status != CORE_TRAP_PROVEN_SELF_TRAP ||
+                candidate->trap_horizon >= candidate->post_move_length ||
+                candidate->relaxed_static_capacity >= candidate->post_move_length ||
+                !core_structural_alternative(stats, allowed_mask, (MoveDirection)move)) {
+                continue;
+            }
+            candidate->refutation_status = core_refute_root_move(
+                board,
+                snake_id,
+                opponent_id,
+                (MoveDirection)move,
+                candidate->trap_horizon,
+                timer,
+                &stats->root_analysis_nodes
+            );
+            if (candidate->refutation_status == CORE_REFUTATION_PROVEN_REFUTABLE) {
+                allowed_mask &= (uint8_t)~(1u << move);
+                candidate->rejection_reason = CORE_ROOT_REJECTION_PROVEN_SHORT_SELF_TRAP;
+            }
+        }
+    }
+    if (allowed_mask == 0) {
+        allowed_mask = strict_mask != 0 ? strict_mask : 0x0f;
+        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+            stats->root_candidates[move].rejection_reason = CORE_ROOT_REJECTION_NONE;
+        }
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        stats->root_candidates[move].allowed = (allowed_mask & (1u << move)) != 0;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    stats->root_analysis_elapsed_ms = core_elapsed_ms(start, end);
+    stats->root_allowed_mask = allowed_mask;
+    *out_allowed_mask = allowed_mask;
+    return CORE_OK;
 }
 
 static int core_reachable_after_move(
@@ -1713,6 +2343,29 @@ static bool core_equal_score_move_is_better(
         core_preferred_order_rank(original_moves, move_count, current_best, preferred);
 }
 
+static uint32_t core_transition_cause(
+    const char* snake_id,
+    const char* opponent_id,
+    const uint32_t* causes,
+    int snake_index,
+    int opponent_index,
+    const Board* after
+) {
+    uint32_t own_cause = snake_index >= 0 ? causes[snake_index] : CORE_TERMINAL_CAUSE_NONE;
+    uint32_t opponent_cause = opponent_index >= 0 ? causes[opponent_index] : CORE_TERMINAL_CAUSE_NONE;
+    CoreOutcome outcome = CoreClassifyDuelOutcome(after, snake_id, opponent_id);
+    if (outcome == CORE_OUTCOME_LOSS) {
+        return own_cause;
+    }
+    if (outcome == CORE_OUTCOME_WIN) {
+        return opponent_cause | CORE_TERMINAL_CAUSE_OPPONENT_ELIMINATED;
+    }
+    if (outcome == CORE_OUTCOME_DRAW) {
+        return own_cause | opponent_cause;
+    }
+    return CORE_TERMINAL_CAUSE_NONE;
+}
+
 static CoreStatus core_minimax_search(
     const Board* board,
     const char* snake_id,
@@ -1721,9 +2374,10 @@ static CoreStatus core_minimax_search(
     double alpha,
     double beta,
     MoveDirection preferred_move,
+    uint32_t incoming_cause,
     CoreSearchContext* context,
     bool* timed_out,
-    double* out_score,
+    CoreSearchValue* out_value,
     MoveDirection* out_best_move
 ) {
     if (core_search_timed_out(&context->timer)) {
@@ -1735,7 +2389,8 @@ static CoreStatus core_minimax_search(
         stats->nodes++;
     }
 
-    bool tt_node_enabled = context->tt_enabled && depth >= 2;
+    CoreOutcome terminal_outcome = CoreClassifyDuelOutcome(board, snake_id, context->opponent_id);
+    bool tt_node_enabled = context->tt_enabled && depth >= 2 && terminal_outcome == CORE_OUTCOME_UNRESOLVED;
     uint64_t hash = 0;
     double original_alpha = alpha;
     double original_beta = beta;
@@ -1746,7 +2401,7 @@ static CoreStatus core_minimax_search(
         if (stats != NULL) {
             stats->tt_probes++;
         }
-        double tt_score = 0.0;
+        CoreSearchValue tt_value = core_unresolved_value(0.0);
         bool tt_collision = false;
         CoreTtProbeResult tt_probe = CoreTtProbe(
             &context->tt,
@@ -1754,7 +2409,7 @@ static CoreStatus core_minimax_search(
             depth,
             alpha,
             beta,
-            &tt_score,
+            &tt_value,
             &tt_best_move,
             &tt_bound,
             &tt_collision
@@ -1778,7 +2433,7 @@ static CoreStatus core_minimax_search(
             if (stats != NULL) {
                 stats->tt_cutoffs++;
             }
-            *out_score = tt_score;
+            *out_value = tt_value;
             if (out_best_move != NULL) {
                 *out_best_move = tt_best_move;
             }
@@ -1786,14 +2441,26 @@ static CoreStatus core_minimax_search(
         }
     }
 
-    if (depth <= 0 || core_minimax_is_terminal(board, snake_id)) {
+    if (depth <= 0 || terminal_outcome != CORE_OUTCOME_UNRESOLVED) {
         if (stats != NULL) {
             stats->leaf_evals++;
         }
-        CoreStatus status = CoreEvaluateWithWeights(board, snake_id, &context->config.weights, out_score);
+        CoreStatus status = CORE_OK;
+        if (terminal_outcome != CORE_OUTCOME_UNRESOLVED) {
+            *out_value = core_terminal_value(
+                &context->config.weights,
+                terminal_outcome,
+                incoming_cause,
+                0
+            );
+        } else {
+            double score = 0.0;
+            status = CoreEvaluateWithWeights(board, snake_id, &context->config.weights, &score);
+            *out_value = core_unresolved_value(score);
+        }
         if (status == CORE_OK && tt_node_enabled) {
             bool tt_collision = false;
-            bool stored = CoreTtStore(&context->tt, hash, depth, *out_score, CORE_TT_EXACT, MOVE_INVALID, &tt_collision);
+            bool stored = CoreTtStore(&context->tt, hash, depth, *out_value, CORE_TT_EXACT, MOVE_INVALID, &tt_collision);
             if (stats != NULL && tt_collision) {
                 stats->tt_collisions++;
             }
@@ -1811,6 +2478,7 @@ static CoreStatus core_minimax_search(
     MoveDirection(*options)[4] = CoreSearchWorkspaceOptions(&context->workspace, ply);
 
     int own_index = -1;
+    int opponent_index = -1;
     MoveDirection own_moves[4];
     MoveDirection original_own_moves[4];
     int own_move_count = 0;
@@ -1821,8 +2489,19 @@ static CoreStatus core_minimax_search(
             if (stats != NULL) {
                 stats->safe_move_calls++;
             }
-            own_move_count = core_safe_moves_or_all(board, snake_id, own_moves);
+            if (ply == 0) {
+                for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+                    if ((context->root_allowed_mask & (1u << move)) != 0) {
+                        own_moves[own_move_count++] = (MoveDirection)move;
+                    }
+                }
+            } else {
+                own_move_count = core_safe_moves_or_all(board, snake_id, own_moves);
+            }
         } else {
+            if (strcmp(board->snakes[i].id, context->opponent_id) == 0) {
+                opponent_index = i;
+            }
             /*
              * Opponent nodes must model legal commands, not our strategic
              * "safe move" filter. BoardSafeMoves rejects aggressive legal
@@ -1841,10 +2520,12 @@ static CoreStatus core_minimax_search(
         if (stats != NULL) {
             stats->leaf_evals++;
         }
-        CoreStatus status = CoreEvaluateWithWeights(board, snake_id, &context->config.weights, out_score);
+        double score = 0.0;
+        CoreStatus status = CoreEvaluateWithWeights(board, snake_id, &context->config.weights, &score);
+        *out_value = core_unresolved_value(score);
         if (status == CORE_OK && tt_node_enabled) {
             bool tt_collision = false;
-            bool stored = CoreTtStore(&context->tt, hash, depth, *out_score, CORE_TT_EXACT, MOVE_INVALID, &tt_collision);
+            bool stored = CoreTtStore(&context->tt, hash, depth, *out_value, CORE_TT_EXACT, MOVE_INVALID, &tt_collision);
             if (stats != NULL && tt_collision) {
                 stats->tt_collisions++;
             }
@@ -1864,7 +2545,7 @@ static CoreStatus core_minimax_search(
     MoveDirection effective_preferred = core_valid_move_direction(tt_best_move) ? tt_best_move : preferred_move;
     MoveDirection tie_preferred = ply == 0 ? preferred_move : effective_preferred;
     core_order_moves(context, ply, own_moves, own_move_count, tt_best_move, preferred_move);
-    double best_score = -DBL_MAX;
+    CoreSearchValue best_value = core_unresolved_value(-DBL_MAX);
     MoveDirection best_move = own_moves[0];
 
     for (int order = 0; order < own_move_count; order++) {
@@ -1885,7 +2566,8 @@ static CoreStatus core_minimax_search(
             total *= option_counts[i];
         }
 
-        double worst_reply = DBL_MAX;
+        CoreSearchValue worst_reply = core_unresolved_value(DBL_MAX);
+        bool reply_cutoff = false;
         for (int combo = 0; combo < total; combo++) {
             if (core_search_timed_out(&context->timer)) {
                 *timed_out = true;
@@ -1899,8 +2581,10 @@ static CoreStatus core_minimax_search(
                 moves[i] = options[i][option_index];
             }
 
-            double score = 0.0;
-            double child_beta = worst_reply < beta ? worst_reply : beta;
+            CoreSearchValue value = core_unresolved_value(0.0);
+            double child_beta = worst_reply.score < beta ? worst_reply.score : beta;
+            uint32_t* transition_causes = CoreSearchWorkspaceTransitionCauses(&context->workspace, ply);
+            memset(transition_causes, 0, (size_t)snake_count * sizeof(uint32_t));
             if (context->config.enable_make_unmake && context->state != NULL) {
                 const Board* current = CoreSearchStateBoard(context->state);
                 if (current == NULL || current->snake_count != snake_count) {
@@ -1909,7 +2593,14 @@ static CoreStatus core_minimax_search(
                 for (int i = 0; i < snake_count; i++) {
                     ids[i] = current->snakes[i].id;
                 }
-                if (!CoreSearchStateMakeMoves(context->state, ids, moves, snake_count)) {
+                if (!CoreSearchStateMakeMovesDetailed(
+                    context->state,
+                    ids,
+                    moves,
+                    snake_count,
+                    transition_causes,
+                    snake_count
+                )) {
                     return CORE_ERROR;
                 }
                 const Board* next = CoreSearchStateBoard(context->state);
@@ -1921,9 +2612,17 @@ static CoreStatus core_minimax_search(
                     alpha,
                     child_beta,
                     MOVE_INVALID,
+                    core_transition_cause(
+                        snake_id,
+                        context->opponent_id,
+                        transition_causes,
+                        own_index,
+                        opponent_index,
+                        next
+                    ),
                     context,
                     timed_out,
-                    &score,
+                    &value,
                     NULL
                 );
                 if (!CoreSearchStateUnmake(context->state)) {
@@ -1937,10 +2636,21 @@ static CoreStatus core_minimax_search(
                     stats->clone_calls++;
                     stats->board_allocations++;
                 }
-                Board* next = BoardCloneAndApply(board, ids, moves, snake_count);
-                if (next == NULL) {
+                CoreSearchState cloned_state;
+                memset(&cloned_state, 0, sizeof(cloned_state));
+                if (!CoreSearchStateInit(&cloned_state, board) ||
+                    !CoreSearchStateMakeMovesDetailed(
+                        &cloned_state,
+                        ids,
+                        moves,
+                        snake_count,
+                        transition_causes,
+                        snake_count
+                    )) {
+                    CoreSearchStateFree(&cloned_state);
                     return CORE_ERROR;
                 }
+                const Board* next = CoreSearchStateBoard(&cloned_state);
                 CoreStatus status = core_minimax_search(
                     next,
                     snake_id,
@@ -1949,22 +2659,31 @@ static CoreStatus core_minimax_search(
                     alpha,
                     child_beta,
                     MOVE_INVALID,
+                    core_transition_cause(
+                        snake_id,
+                        context->opponent_id,
+                        transition_causes,
+                        own_index,
+                        opponent_index,
+                        next
+                    ),
                     context,
                     timed_out,
-                    &score,
+                    &value,
                     NULL
                 );
-                BoardFree(next);
+                CoreSearchStateFree(&cloned_state);
                 if (status != CORE_OK || *timed_out) {
                     return status;
                 }
             }
-            score = core_adjust_terminal_child_score(&context->config.weights, score);
+            value = core_backup_child_value(&context->config.weights, value);
 
-            if (score < worst_reply) {
-                worst_reply = score;
+            if (value.score < worst_reply.score) {
+                worst_reply = value;
             }
-            if (worst_reply <= alpha) {
+            if (worst_reply.score <= alpha) {
+                reply_cutoff = true;
                 if (stats != NULL) {
                     stats->beta_cutoffs++;
                     if (context->config.enable_move_ordering && order == 0) {
@@ -1992,14 +2711,15 @@ static CoreStatus core_minimax_search(
         }
 
         if (ply == 0 && core_valid_move_direction(own_move)) {
-            context->root_move_score_valid[(int)own_move] = true;
-            context->root_move_scores[(int)own_move] = worst_reply;
+            worst_reply.bound = reply_cutoff ? CORE_VALUE_BOUND_UPPER : CORE_VALUE_BOUND_EXACT;
+            context->root_move_value_valid[(int)own_move] = true;
+            context->root_move_values[(int)own_move] = worst_reply;
         }
 
         if (
-            worst_reply > best_score ||
+            worst_reply.score > best_value.score ||
             (
-                worst_reply == best_score &&
+                worst_reply.score == best_value.score &&
                 core_equal_score_move_is_better(
                     board,
                     snake_id,
@@ -2009,15 +2729,15 @@ static CoreStatus core_minimax_search(
                     own_move,
                     best_move,
                     tie_preferred,
-                    core_score_is_terminal_loss_band(&context->config.weights, worst_reply)
+                    worst_reply.outcome == CORE_OUTCOME_LOSS
                 )
             )
         ) {
-            best_score = worst_reply;
+            best_value = worst_reply;
             best_move = own_move;
         }
-        if (best_score > alpha) {
-            alpha = best_score;
+        if (best_value.score > alpha) {
+            alpha = best_value.score;
         }
         if (ply == 0 && core_valid_move_direction(best_move)) {
             context->root_best_valid = true;
@@ -2032,7 +2752,14 @@ static CoreStatus core_minimax_search(
         return CORE_OK;
     }
 
-    *out_score = best_score;
+    CoreTtBound bound = CORE_TT_EXACT;
+    if (best_value.score <= original_alpha) {
+        bound = CORE_TT_UPPER;
+    } else if (best_value.score >= original_beta) {
+        bound = CORE_TT_LOWER;
+    }
+    best_value.bound = bound;
+    *out_value = best_value;
     if (out_best_move != NULL) {
         *out_best_move = best_move;
     }
@@ -2040,14 +2767,8 @@ static CoreStatus core_minimax_search(
         context->principal_variation[ply] = best_move;
     }
     if (tt_node_enabled) {
-        CoreTtBound bound = CORE_TT_EXACT;
-        if (best_score <= original_alpha) {
-            bound = CORE_TT_UPPER;
-        } else if (best_score >= original_beta) {
-            bound = CORE_TT_LOWER;
-        }
         bool tt_collision = false;
-        bool stored = CoreTtStore(&context->tt, hash, depth, best_score, bound, best_move, &tt_collision);
+        bool stored = CoreTtStore(&context->tt, hash, depth, best_value, bound, best_move, &tt_collision);
         if (stats != NULL && tt_collision) {
             stats->tt_collisions++;
         }
@@ -2086,6 +2807,10 @@ CoreStatus CoreMinimaxMoveWithStats(
     MoveDirection safe_moves[4];
     stats->safe_move_calls++;
     int safe_move_count = core_safe_moves_or_all(board, snake_id, safe_moves);
+    uint8_t root_allowed_mask = 0;
+    for (int i = 0; i < safe_move_count; i++) {
+        root_allowed_mask |= (uint8_t)(1u << safe_moves[i]);
+    }
     MoveDirection completed_best = safe_moves[0];
     MoveDirection preferred_move = MOVE_INVALID;
     CoreSearchContext context;
@@ -2098,6 +2823,34 @@ CoreStatus CoreMinimaxMoveWithStats(
     context.timer = core_search_timer_start(config.time_budget_ms);
     context.config = config;
     context.stats = stats;
+    for (int i = 0; i < board->snake_count; i++) {
+        if (strcmp(board->snakes[i].id, snake_id) != 0) {
+            context.opponent_id = board->snakes[i].id;
+            break;
+        }
+    }
+    if (context.opponent_id == NULL) {
+        context.opponent_id = "__missing_duel_opponent__";
+    }
+    CoreStatus policy_status = core_prepare_root_policy(
+        board,
+        snake_id,
+        config.root_policy,
+        &context.timer,
+        root_allowed_mask,
+        stats,
+        &root_allowed_mask
+    );
+    if (policy_status != CORE_OK) {
+        return policy_status;
+    }
+    context.root_allowed_mask = root_allowed_mask;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((root_allowed_mask & (1u << move)) != 0) {
+            completed_best = (MoveDirection)move;
+            break;
+        }
+    }
     context.root_best_valid = true;
     context.root_best_move = completed_best;
     bool fixed_depth_requested = config.fixed_depth > 0;
@@ -2122,22 +2875,23 @@ CoreStatus CoreMinimaxMoveWithStats(
         context.state = &state;
     }
     int completed_depth = 0;
-    double completed_score = 0.0;
+    CoreSearchValue completed_value = core_unresolved_value(0.0);
     bool timed_out = false;
     bool completed_root_move_score_valid[4] = {false, false, false, false};
-    double completed_root_move_scores[4] = {0.0, 0.0, 0.0, 0.0};
+    CoreSearchValue completed_root_move_values[4];
+    memset(completed_root_move_values, 0, sizeof(completed_root_move_values));
     struct timespec start;
     struct timespec end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int depth = 1; depth <= max_depth; depth++) {
         bool iteration_timed_out = false;
-        double score = 0.0;
+        CoreSearchValue value = core_unresolved_value(0.0);
         MoveDirection candidate = completed_best;
         stats->max_depth_started = depth;
         for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
-            context.root_move_score_valid[move] = false;
-            context.root_move_scores[move] = 0.0;
+            context.root_move_value_valid[move] = false;
+            context.root_move_values[move] = core_unresolved_value(0.0);
         }
         CoreStatus status = core_minimax_search(
             board,
@@ -2147,9 +2901,10 @@ CoreStatus CoreMinimaxMoveWithStats(
             -DBL_MAX,
             DBL_MAX,
             preferred_move,
+            CORE_TERMINAL_CAUSE_NONE,
             &context,
             &iteration_timed_out,
-            &score,
+            &value,
             &candidate
         );
         if (status != CORE_OK) {
@@ -2161,8 +2916,15 @@ CoreStatus CoreMinimaxMoveWithStats(
             return status;
         }
         if (iteration_timed_out) {
-            if (context.root_best_valid) {
+            if (completed_depth == 0 && context.root_best_valid) {
                 completed_best = context.root_best_move;
+                if (context.root_move_value_valid[completed_best]) {
+                    completed_value = context.root_move_values[completed_best];
+                    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+                        completed_root_move_score_valid[move] = context.root_move_value_valid[move];
+                        completed_root_move_values[move] = context.root_move_values[move];
+                    }
+                }
             }
             timed_out = true;
             break;
@@ -2176,12 +2938,12 @@ CoreStatus CoreMinimaxMoveWithStats(
             context.principal_variation[0] = candidate;
         }
         completed_depth = depth;
-        completed_score = score;
+        completed_value = value;
         for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
-            completed_root_move_score_valid[move] = context.root_move_score_valid[move];
-            completed_root_move_scores[move] = context.root_move_scores[move];
+            completed_root_move_score_valid[move] = context.root_move_value_valid[move];
+            completed_root_move_values[move] = context.root_move_values[move];
         }
-        if (!fixed_depth_requested && (score >= 999999.0 || score <= -999999.0 || core_search_timed_out(&context.timer))) {
+        if (!fixed_depth_requested && core_search_timed_out(&context.timer)) {
             break;
         }
         if (context.tt_enabled) {
@@ -2192,23 +2954,32 @@ CoreStatus CoreMinimaxMoveWithStats(
     clock_gettime(CLOCK_MONOTONIC, &end);
     stats->completed_depth = completed_depth;
     stats->timed_out = timed_out;
-    stats->score = completed_score;
+    if (completed_depth > 0) {
+        stats->selection_reason = timed_out ?
+            CORE_SELECTION_TIMEOUT_BEST_SO_FAR : CORE_SELECTION_MINIMAX;
+    }
+    stats->score = completed_value.score;
+    stats->value = completed_value;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         stats->root_move_score_valid[move] = completed_root_move_score_valid[move];
-        stats->root_move_scores[move] = completed_root_move_scores[move];
+        stats->root_move_scores[move] = completed_root_move_values[move].score;
+        stats->root_candidates[move].minimax_value_valid = completed_root_move_score_valid[move];
+        stats->root_candidates[move].minimax_value = completed_root_move_values[move];
     }
     MoveDirection corridor_guard_move = MOVE_INVALID;
-    bool completed_score_is_terminal_loss = core_score_is_terminal_loss_band(&context.config.weights, completed_score);
-    bool completed_score_is_terminal_win = core_score_is_terminal_win_band(&context.config.weights, completed_score);
+    bool completed_score_is_terminal_loss = completed_value.outcome == CORE_OUTCOME_LOSS;
+    bool completed_score_is_terminal_win = completed_value.outcome == CORE_OUTCOME_WIN;
     if (
         !completed_score_is_terminal_win &&
         core_constrained_root_corridor_move(board, snake_id, safe_moves, safe_move_count, &corridor_guard_move) &&
-        completed_root_move_score_valid[(int)corridor_guard_move]
+        completed_root_move_score_valid[(int)corridor_guard_move] &&
+        completed_root_move_values[(int)corridor_guard_move].bound == CORE_VALUE_BOUND_EXACT &&
+        (root_allowed_mask & (1u << corridor_guard_move)) != 0
     ) {
         bool apply_corridor_guard = false;
-        double corridor_guard_score = completed_root_move_scores[(int)corridor_guard_move];
+        CoreSearchValue corridor_guard_value = completed_root_move_values[(int)corridor_guard_move];
         if (!completed_score_is_terminal_loss) {
-            apply_corridor_guard = !core_score_is_terminal_loss_band(&context.config.weights, corridor_guard_score);
+            apply_corridor_guard = corridor_guard_value.outcome != CORE_OUTCOME_LOSS;
         } else {
             CoreCorridorMoveMetrics guard_metrics;
             CoreCorridorMoveMetrics completed_metrics;
@@ -2238,8 +3009,10 @@ CoreStatus CoreMinimaxMoveWithStats(
          */
         if (apply_corridor_guard) {
             completed_best = corridor_guard_move;
-            completed_score = corridor_guard_score;
-            stats->score = completed_score;
+            completed_value = corridor_guard_value;
+            stats->score = completed_value.score;
+            stats->value = completed_value;
+            stats->selection_reason = CORE_SELECTION_CORRIDOR_GUARD;
         }
     }
     stats->move = completed_best;

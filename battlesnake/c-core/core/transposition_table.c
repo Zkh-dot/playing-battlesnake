@@ -56,7 +56,7 @@ CoreTtProbeResult CoreTtProbe(
     int depth,
     double alpha,
     double beta,
-    double* out_score,
+    CoreSearchValue* out_value,
     MoveDirection* out_best_move,
     CoreTtBound* out_bound,
     bool* out_collision
@@ -91,10 +91,10 @@ CoreTtProbeResult CoreTtProbe(
     }
 
     if (entry->bound == CORE_TT_EXACT ||
-        (entry->bound == CORE_TT_LOWER && entry->score >= beta) ||
-        (entry->bound == CORE_TT_UPPER && entry->score <= alpha)) {
-        if (out_score != NULL) {
-            *out_score = entry->score;
+        (entry->bound == CORE_TT_LOWER && entry->value.score >= beta) ||
+        (entry->bound == CORE_TT_UPPER && entry->value.score <= alpha)) {
+        if (out_value != NULL) {
+            *out_value = entry->value;
         }
         return CORE_TT_CUTOFF;
     }
@@ -106,7 +106,7 @@ bool CoreTtStore(
     CoreTranspositionTable* table,
     uint64_t hash,
     int depth,
-    double score,
+    CoreSearchValue value,
     CoreTtBound bound,
     MoveDirection best_move,
     bool* out_collision
@@ -129,7 +129,8 @@ bool CoreTtStore(
     }
 
     entry->hash = hash;
-    entry->score = score;
+    value.bound = bound;
+    entry->value = value;
     entry->depth = depth;
     entry->generation = table->generation;
     entry->bound = bound;

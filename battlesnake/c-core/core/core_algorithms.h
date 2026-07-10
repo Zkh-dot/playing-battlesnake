@@ -67,6 +67,36 @@ CoreStatus CoreMinimaxMoveWithStats(
     CoreSearchStats* out_stats
 );
 
+CoreOutcome CoreClassifyDuelOutcome(
+    const Board* board,
+    const char* snake_id,
+    const char* opponent_id
+);
+
+typedef struct {
+    bool evaluated;
+    bool safe_by_board_rules;
+    uint8_t opponent_reply_mask;
+    uint8_t win_reply_mask;
+    uint8_t draw_reply_mask;
+    uint8_t both_alive_reply_mask;
+    uint8_t loss_reply_mask;
+    uint8_t alive_reply_mask;
+    int alive_reply_count;
+    uint32_t immediate_causes;
+} CoreDuelRootCommandProfile;
+
+typedef struct {
+    CoreDuelRootCommandProfile commands[4];
+    uint8_t opponent_command_mask;
+} CoreDuelRootProfileResult;
+
+CoreStatus CoreDuelRootProfile(
+    const Board* board,
+    const char* snake_id,
+    CoreDuelRootProfileResult* out_result
+);
+
 CoreStatus CoreChokePoints(
     const Board* board,
     const char* snake_id,

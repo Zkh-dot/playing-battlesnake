@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from battlesnake.core.duel_profile import duel_profile_fallback
 from battlesnake.core.minimax import minimax_move
 from battlesnake.game import Board
 from battlesnake.strategies.base import Strategy
@@ -47,4 +48,7 @@ class StrategyDuel(Strategy):
         """Return the first safe move, or up when no safe move exists."""
 
         safe_moves = board.safe_moves(snake_id)
-        return Move(safe_moves[0]) if safe_moves else Move.UP
+        if safe_moves:
+            return Move(safe_moves[0])
+        duel_move = duel_profile_fallback(board, snake_id)
+        return duel_move if duel_move is not None else Move.UP

@@ -32,6 +32,7 @@ if __package__ in (None, ""):
 
 from fastapi import FastAPI
 
+from battlesnake.core.duel_profile import duel_profile_fallback
 from battlesnake.decision_telemetry import record_decision, record_game_end
 from battlesnake.game import Board, board_from_game_state
 from battlesnake.strategies.base import Strategy
@@ -143,7 +144,10 @@ def fallback_move(board: Board, snake_id: str) -> Move | str:
     """Return the first immediate safe move, or up when no safe move exists."""
 
     moves = board.safe_moves(snake_id)
-    return moves[0] if moves else Move.UP
+    if moves:
+        return moves[0]
+    duel_move = duel_profile_fallback(board, snake_id)
+    return duel_move if duel_move is not None else Move.UP
 
 
 def move_response_value(move: Move | str) -> str:

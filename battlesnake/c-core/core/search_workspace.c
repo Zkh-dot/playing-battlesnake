@@ -38,6 +38,7 @@ void CoreSearchWorkspaceFree(CoreSearchWorkspace* workspace) {
     free(workspace->occupied);
     free(workspace->snake_ids);
     free(workspace->moves);
+    free(workspace->transition_causes);
     free(workspace->option_counts);
     free(workspace->options);
     memset(workspace, 0, sizeof(*workspace));
@@ -64,16 +65,19 @@ bool CoreSearchWorkspaceEnsure(CoreSearchWorkspace* workspace, int max_snakes, s
     size_t entry_count = (size_t)max_snakes * (size_t)frame_capacity;
     const char** snake_ids = NULL;
     MoveDirection* moves = NULL;
+    uint32_t* transition_causes = NULL;
     int* option_counts = NULL;
     MoveDirection (*options)[4] = NULL;
     if (entry_count > 0) {
         snake_ids = (const char**)malloc(entry_count * sizeof(char*));
         moves = (MoveDirection*)malloc(entry_count * sizeof(MoveDirection));
+        transition_causes = (uint32_t*)malloc(entry_count * sizeof(uint32_t));
         option_counts = (int*)malloc(entry_count * sizeof(int));
         options = (MoveDirection(*)[4])malloc(entry_count * sizeof(MoveDirection[4]));
-        if (snake_ids == NULL || moves == NULL || option_counts == NULL || options == NULL) {
+        if (snake_ids == NULL || moves == NULL || transition_causes == NULL || option_counts == NULL || options == NULL) {
             free(snake_ids);
             free(moves);
+            free(transition_causes);
             free(option_counts);
             free(options);
             return false;
@@ -81,10 +85,12 @@ bool CoreSearchWorkspaceEnsure(CoreSearchWorkspace* workspace, int max_snakes, s
     }
     free(workspace->snake_ids);
     free(workspace->moves);
+    free(workspace->transition_causes);
     free(workspace->option_counts);
     free(workspace->options);
     workspace->snake_ids = snake_ids;
     workspace->moves = moves;
+    workspace->transition_causes = transition_causes;
     workspace->option_counts = option_counts;
     workspace->options = options;
     workspace->snake_capacity = max_snakes;
