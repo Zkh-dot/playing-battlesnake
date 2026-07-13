@@ -3406,7 +3406,8 @@ static CoreStatus core_prepare_root_policy(
             timer,
             candidate,
             &stats->root_analysis_nodes,
-            safe_alive_certificate_found && allow_policy_sufficient_cutoff
+            safe_alive_certificate_found && allow_policy_sufficient_cutoff &&
+                effective_policy == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY
         );
         CoreRootReplyClosureResult root_reply_closure =
             core_root_reply_closes_all_continuations(

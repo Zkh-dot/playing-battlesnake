@@ -385,6 +385,26 @@ def test_t439_fixed_depth_uses_root_dominance_before_search_scores() -> None:
     assert strict["root_candidates"][bad_move]["allowed"] is True
 
 
+def test_strict_minimax_does_not_claim_opportunity_policy_sufficiency() -> None:
+    position = _positions()[1]
+    bad_move = str(position["evidence"]["recorded_bad_move"])
+
+    result = minimax_diagnostics(
+        _fixture_board(position),
+        str(position["snake_id"]),
+        time_budget_ms=1000,
+        root_policy="strict_minimax",
+    )
+    bad = result["root_candidates"][bad_move]
+
+    assert result["root_policy_applied"] == "strict_minimax"
+    assert bad["allowed"] is True
+    assert bad["rejection_reason"] == "none"
+    assert bad["structural_proof"] == "unknown"
+    assert bad["proof_cutoff"] == "horizon"
+    assert bad["explored_states"] > 0
+
+
 def test_deadline_cutoff_remains_unknown() -> None:
     position = _positions()[1]
     result = minimax_diagnostics(
