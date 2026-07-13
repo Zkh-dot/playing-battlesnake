@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, TypedDict
+from typing import Iterable, Literal, TypedDict
 
 
 class Coord:
@@ -65,7 +65,9 @@ RIGHT: str
 class RootCandidateDiagnostics(TypedDict):
     evaluated: bool
     allowed: bool
-    rejection_reason: str
+    rejection_reason: Literal[
+        "none", "no_surviving_reply", "proven_short_self_trap", "structurally_dominated"
+    ]
     safe_by_board_rules: bool
     reply_outcomes: dict[str, str]
     alive_reply_mask: int

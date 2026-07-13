@@ -289,7 +289,7 @@ static void test_branching_pocket_proves_every_branch_dies(void) {
     assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
     assert(stats.root_candidates[MOVE_LEFT].structural_proof == CORE_STRUCTURAL_PROOF_UNSAFE);
     assert(stats.root_candidates[MOVE_LEFT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_DEAD_END);
-    assert(stats.root_candidates[MOVE_LEFT].proof_horizon == 9);
+    assert(stats.root_candidates[MOVE_LEFT].proof_horizon == 34);
     assert(stats.root_candidates[MOVE_LEFT].explored_states > 1);
 
     SnakeFree(&me);
@@ -320,7 +320,7 @@ static void test_repeatable_loop_is_structurally_safe(void) {
     BoardFree(board);
 }
 
-static void test_horizon_without_certificate_is_unknown(void) {
+static void test_extended_horizon_proves_long_corridor_dead_end(void) {
     Board* board = BoardCreate(10, 1, "standard", 0);
     Coord me_body[] = {{2, 0}, {1, 0}, {0, 0}};
     Coord you_body[] = {{9, 0}};
@@ -334,8 +334,8 @@ static void test_horizon_without_certificate_is_unknown(void) {
     assert(BoardAddSnake(board, &me));
     assert(BoardAddSnake(board, &you));
     assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
-    assert(stats.root_candidates[MOVE_RIGHT].structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN);
-    assert(stats.root_candidates[MOVE_RIGHT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_HORIZON);
+    assert(stats.root_candidates[MOVE_RIGHT].structural_proof == CORE_STRUCTURAL_PROOF_UNSAFE);
+    assert(stats.root_candidates[MOVE_RIGHT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_DEAD_END);
 
     SnakeFree(&me);
     SnakeFree(&you);
@@ -384,7 +384,7 @@ int main(void) {
     test_default_search_config_uses_ladder_policy();
     test_branching_pocket_proves_every_branch_dies();
     test_repeatable_loop_is_structurally_safe();
-    test_horizon_without_certificate_is_unknown();
+    test_extended_horizon_proves_long_corridor_dead_end();
     test_bounded_rectangle_cycle_proves_capacity();
     return 0;
 }

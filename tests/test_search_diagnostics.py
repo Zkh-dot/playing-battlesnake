@@ -180,6 +180,7 @@ def _issue_30_root_worst_scores(board: Board, snake_id: str, depth: int) -> dict
                         snake_id,
                         time_budget_ms=5000,
                         fixed_depth=max(depth - 1, 0),
+                        root_policy="strict_minimax",
                     )["score"]
                 )
             worst_reply = min(worst_reply, _adjust_terminal_child_score(child_score))

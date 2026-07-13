@@ -490,6 +490,7 @@ static const char* rejection_reason_name(CoreRootRejectionReason reason) {
     switch (reason) {
         case CORE_ROOT_REJECTION_NO_SURVIVING_REPLY: return "no_surviving_reply";
         case CORE_ROOT_REJECTION_PROVEN_SHORT_SELF_TRAP: return "proven_short_self_trap";
+        case CORE_ROOT_REJECTION_STRUCTURALLY_DOMINATED: return "structurally_dominated";
         default: return "none";
     }
 }
