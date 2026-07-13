@@ -127,6 +127,37 @@ def test_guaranteed_draw_is_preserved() -> None:
     assert audit_diagnostics(diagnostics).violation is False
 
 
+def test_immediate_guaranteed_draw_does_not_depend_on_minimax_completion() -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(
+                capacity=0,
+                length=8,
+                proof="unknown",
+                alive_replies=7,
+                minimax_outcome="unresolved",
+                reply_outcomes={"up": "draw", "down": "draw"},
+            ),
+            "right": _candidate(capacity=12, length=8, proof="safe", alive_replies=2),
+        },
+    }
+
+    assert audit_diagnostics(diagnostics).violation is False
+
+
+def test_selected_without_alive_reply_can_still_match_violation_predicate() -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(capacity=1, length=8, proof="unsafe", alive_replies=0),
+            "right": _candidate(capacity=12, length=8, proof="safe", alive_replies=1),
+        },
+    }
+
+    assert audit_diagnostics(diagnostics).violation is True
+
+
 def _board(
     width: int,
     height: int,
@@ -160,6 +191,34 @@ def test_prefilter_skips_only_when_static_lower_bounds_rule_out_deficiency() -> 
 
     assert should_run_diagnostics(open_board, "me") is False
     assert should_run_diagnostics(pocket_board, "me") is True
+
+
+def test_prefilter_keeps_no_alive_selected_candidate_with_one_alive_alternative() -> None:
+    board = Board(
+        3,
+        3,
+        {
+            "me": Snake("me", "scvnak", 90, [Coord(0, 0)], length=10),
+            "opponent": Snake(
+                "opponent", "opponent", 90, [Coord(0, 1), Coord(0, 1)]
+            ),
+        },
+        [],
+        [],
+        ruleset_name="standard",
+        hazard_damage=0,
+    )
+
+    assert should_run_diagnostics(board, "me") is True
+
+
+def test_prefilter_considers_every_candidate_allowed_by_a_diagnostics_record() -> None:
+    board = _board(3, 3, [(0, 0)], [(0, 1), (0, 1)])
+
+    # A synthetic diagnostics record can select an immediate-loss command even
+    # though production normally rejects it.  The checker predicate does not
+    # include that policy assumption, so the prefilter must fail open here.
+    assert should_run_diagnostics(board, "me") is True
 
 
 def test_committed_issue_positions_are_checker_compliant() -> None:
@@ -264,10 +323,10 @@ def test_scanner_json_reports_actual_move_unknowns_and_nonzero_exit(
 
     assert exit_code == 1
     assert output["budget_ms"] == 17
-    assert output["standard_duel_frames"] == 1
-    assert output["scanned_frames"] == 1
-    assert output["unknown_candidates"] == 1
-    assert output["cutoff_counts"] == {"none": 1}
+    assert output["standard_duel_root_frames"] == 2
+    assert output["diagnostics_root_frames"] == 2
+    assert output["unknown_candidate_proofs"] == 2
+    assert output["cutoff_candidate_counts"] == {"none": 2}
     assert output["violations"] == [
         {
             "actual_move": "right",
@@ -275,7 +334,14 @@ def test_scanner_json_reports_actual_move_unknowns_and_nonzero_exit(
             "safe_alternatives": ["right"],
             "selected_move": "left",
             "turn": 7,
-        }
+        },
+        {
+            "actual_move": None,
+            "game_id": "game-a",
+            "safe_alternatives": ["right"],
+            "selected_move": "left",
+            "turn": 8,
+        },
     ]
 
 
@@ -289,7 +355,105 @@ def test_scanner_zero_exit_and_stable_text_summary(tmp_path: Path, capsys) -> No
 
     assert exit_code == 0
     assert capsys.readouterr().out == (
-        "duel structural policy audit: files=1 standard_duel_frames=1 "
-        "prefiltered=0 scanned=1 unknown_candidates=1 cutoffs=none:1 "
-        "violations=0 budget_ms=23\n"
+        "duel structural policy audit: files_discovered=1 standard_duel_root_frames=2 "
+        "prefiltered_root_frames=0 diagnostics_root_frames=2 "
+        "unknown_candidate_proofs=2 cutoff_candidate_counts=none:2 "
+        "violations=0 errors=0 budget_ms=23\n"
     )
+
+
+def test_missing_actual_move_is_optional_evidence_not_a_skipped_root(
+    tmp_path: Path, capsys
+) -> None:
+    path = tmp_path / "terminal.json"
+    _write_export(path)
+    export = json.loads(path.read_text(encoding="utf-8"))
+    export["frames"][1]["Snakes"][0]["Death"] = {"Cause": "collision"}
+    path.write_text(json.dumps(export), encoding="utf-8")
+
+    exit_code = main(
+        ["--export-root", str(tmp_path), "--json", "--no-prefilter"],
+        diagnostics_fn=_pre_fix_diagnostics,
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert output["diagnostics_root_frames"] == 1
+    assert output["violations"][0]["actual_move"] is None
+
+
+def test_prefilter_and_exhaustive_mode_report_same_violation(
+    tmp_path: Path, capsys
+) -> None:
+    path = tmp_path / "pocket.json"
+    _write_export(path)
+    export = json.loads(path.read_text(encoding="utf-8"))
+    export["frames"][0]["Snakes"] = [
+        _raw_snake(
+            "me",
+            "scvnak",
+            [(2, 0), (2, 1), (2, 2), (1, 2), (0, 2), (0, 3), (1, 3), (1, 4), (0, 4)],
+        ),
+        _raw_snake("opponent", "opponent", [(4, 4), (4, 3), (4, 2)]),
+    ]
+    export["frames"][1]["Snakes"] = [
+        _raw_snake(
+            "me",
+            "scvnak",
+            [(1, 0), (2, 0), (2, 1), (2, 2), (1, 2), (0, 2), (0, 3), (1, 3), (1, 4)],
+        ),
+        _raw_snake("opponent", "opponent", [(3, 4), (4, 4), (4, 3)]),
+    ]
+    path.write_text(json.dumps(export), encoding="utf-8")
+
+    prefiltered_exit = main(
+        ["--export-root", str(tmp_path), "--json"],
+        diagnostics_fn=_pre_fix_diagnostics,
+    )
+    prefiltered = json.loads(capsys.readouterr().out)
+    exhaustive_exit = main(
+        ["--export-root", str(tmp_path), "--json", "--no-prefilter"],
+        diagnostics_fn=_pre_fix_diagnostics,
+    )
+    exhaustive = json.loads(capsys.readouterr().out)
+
+    assert prefiltered_exit == exhaustive_exit == 1
+    assert prefiltered["violations"] == exhaustive["violations"]
+    assert prefiltered["diagnostics_root_frames"] == 2
+
+
+def test_missing_export_root_is_an_explicit_input_error(tmp_path: Path, capsys) -> None:
+    exit_code = main(["--export-root", str(tmp_path / "missing"), "--json"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["error_count"] == 1
+    assert output["errors"][0]["kind"] == "missing_export_root"
+
+
+def test_invalid_json_and_malformed_replay_are_explicit_errors(
+    tmp_path: Path, capsys
+) -> None:
+    (tmp_path / "invalid.json").write_text("{", encoding="utf-8")
+    (tmp_path / "malformed.json").write_text(
+        json.dumps({"game": {"Width": 5}, "frames": {}}), encoding="utf-8"
+    )
+    (tmp_path / "malformed-snake.json").write_text(
+        json.dumps(
+            {
+                "game": {"Width": 5, "Height": 5, "RulesetName": "standard"},
+                "frames": [{"Turn": 1, "Snakes": ["not-a-snake"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["--export-root", str(tmp_path), "--json"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["error_count"] == 3
+    assert {error["kind"] for error in output["errors"]} == {
+        "invalid_json",
+        "malformed_replay",
+    }

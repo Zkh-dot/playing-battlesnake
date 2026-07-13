@@ -52,11 +52,8 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
         for candidate in candidates.values()
     )
     reply_outcomes = tuple(selected.get("reply_outcomes", {}).values())
-    guaranteed_draw = (
-        selected.get("minimax_outcome") == "draw"
-        and int(selected["alive_reply_count"]) == 0
-        and bool(reply_outcomes)
-        and all(outcome == "draw" for outcome in reply_outcomes)
+    guaranteed_draw = bool(reply_outcomes) and all(
+        outcome == "draw" for outcome in reply_outcomes
     )
     capacity_deficient = int(selected["relaxed_static_capacity"]) < int(
         selected["post_move_length"]
@@ -78,15 +75,19 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
 def should_run_diagnostics(board: Board, snake_id: str) -> bool:
     """Return whether a conservative static prefilter cannot rule out deficiency.
 
-    A violating selected move and its proved-safe alternative both have a live
-    reply under the production root ladder, so fewer than two live-reply root
-    commands cannot violate the invariant.  For the remaining commands, the
-    flood fill permanently blocks every currently occupied cell (apart from the
-    destination).  This is a lower bound on ``relaxed_static_capacity`` because
-    the production relaxed board removes the opponent and permits our tail to
-    vacate.  If every lower bound already fits the post-move length, no selected
-    command can be capacity-deficient.  Any uncertainty fails open to the full
-    production diagnostics call.
+    A violation needs one proved-safe alternative with a live reply, so a board
+    with no live-reply command can be skipped.  The selected move itself need
+    not have a live reply.  The diagnostics predicate deliberately makes no
+    further assumption about which command production selected.  We therefore
+    check the capacity lower bound for every evaluated command, regardless of
+    board-rule safety or live-reply count.
+
+    The flood fill permanently blocks every currently occupied cell (apart
+    from the destination).  This is a lower bound on
+    ``relaxed_static_capacity`` because the production relaxed board removes
+    the opponent and permits our tail to vacate.  If every eligible lower bound
+    already fits the post-move length, no production-selected command can be
+    capacity-deficient.  Any uncertainty fails open to full diagnostics.
     """
     profile = duel_root_profile(board, snake_id)
     live_moves = [
@@ -94,8 +95,14 @@ def should_run_diagnostics(board: Board, snake_id: str) -> bool:
         for move, candidate in profile.items()
         if candidate["evaluated"] and int(candidate["alive_reply_count"]) > 0
     ]
-    if len(live_moves) < 2:
+    if not live_moves:
         return False
+
+    selected_candidates = [
+        move
+        for move, candidate in profile.items()
+        if candidate["evaluated"]
+    ]
 
     snake = board.snakes[snake_id]
     occupied = {
@@ -105,7 +112,7 @@ def should_run_diagnostics(board: Board, snake_id: str) -> bool:
     }
     food = {(coord.x, coord.y) for coord in board.food}
     head = board.head(snake_id)
-    for move in live_moves:
+    for move in selected_candidates:
         destination = board.step(head, move)
         start = (destination.x, destination.y)
         blocked = occupied - {start}
@@ -154,8 +161,10 @@ def _game_id(export: dict[str, Any], path: Path) -> str:
 
 
 def _actual_move(
-    frame: dict[str, Any], following: dict[str, Any], snake_id: str
+    frame: dict[str, Any], following: dict[str, Any] | None, snake_id: str
 ) -> str | None:
+    if following is None:
+        return None
     if int(following.get("Turn", -1)) != int(frame["Turn"]) + 1:
         return None
     current = next(
@@ -184,6 +193,101 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _summary(export_root: Path, budget_ms: int, prefilter: bool) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "export_root": str(export_root),
+        "budget_ms": budget_ms,
+        "prefilter": prefilter,
+        "files_discovered": 0,
+        "replay_root_frames_seen": 0,
+        "standard_duel_root_frames": 0,
+        "prefiltered_root_frames": 0,
+        "diagnostics_root_frames": 0,
+        "unknown_candidate_proofs": 0,
+        "cutoff_candidate_counts": {},
+        "violations": [],
+        "error_count": 0,
+        "errors": [],
+    }
+
+
+def _replay_structure_error(export: object) -> str | None:
+    if not isinstance(export, dict):
+        return "top-level JSON value is not an object"
+    game = export.get("game")
+    frames = export.get("frames")
+    if not isinstance(game, dict):
+        return "game is not an object"
+    if "Width" not in game or "Height" not in game:
+        return "game is missing Width or Height"
+    try:
+        int(game["Width"])
+        int(game["Height"])
+    except (TypeError, ValueError):
+        return "game Width or Height is not an integer"
+    if not isinstance(frames, list):
+        return "frames is not an array"
+    for index, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            return f"frame {index} is not an object"
+        if not isinstance(frame.get("Snakes"), list):
+            return f"frame {index} Snakes is not an array"
+        try:
+            int(frame["Turn"])
+        except (KeyError, TypeError, ValueError):
+            return f"frame {index} Turn is missing or not an integer"
+        for collection_name in ("Food", "Hazards"):
+            collection = frame.get(collection_name, [])
+            if not isinstance(collection, list):
+                return f"frame {index} {collection_name} is not an array"
+            for coord_index, coord in enumerate(collection):
+                if not _valid_export_coord(coord):
+                    return (
+                        f"frame {index} {collection_name}[{coord_index}] "
+                        "is not an X/Y coordinate"
+                    )
+        for snake_index, snake in enumerate(frame["Snakes"]):
+            if not isinstance(snake, dict):
+                return f"frame {index} Snakes[{snake_index}] is not an object"
+            if "ID" not in snake:
+                return f"frame {index} Snakes[{snake_index}] is missing ID"
+            body = snake.get("Body")
+            if not isinstance(body, list):
+                return f"frame {index} Snakes[{snake_index}] Body is not an array"
+            for coord_index, coord in enumerate(body):
+                if not _valid_export_coord(coord):
+                    return (
+                        f"frame {index} Snakes[{snake_index}] Body[{coord_index}] "
+                        "is not an X/Y coordinate"
+                    )
+            try:
+                int(snake.get("Health", 100))
+            except (TypeError, ValueError):
+                return f"frame {index} Snakes[{snake_index}] Health is not an integer"
+    return None
+
+
+def _valid_export_coord(coord: object) -> bool:
+    if not isinstance(coord, dict) or "X" not in coord or "Y" not in coord:
+        return False
+    try:
+        int(coord["X"])
+        int(coord["Y"])
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _record_error(
+    summary: dict[str, Any], *, kind: str, path: Path, detail: str
+) -> None:
+    summary["errors"].append(
+        {"kind": kind, "path": str(path), "detail": detail}
+    )
+    summary["error_count"] = len(summary["errors"])
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -196,45 +300,62 @@ def main(
     if args.limit is not None and args.limit <= 0:
         _parser().error("--limit must be positive")
     run_diagnostics = diagnostics_fn or minimax_diagnostics
+    summary = _summary(args.export_root, args.budget_ms, not args.no_prefilter)
+    if not args.export_root.exists():
+        _record_error(
+            summary,
+            kind="missing_export_root",
+            path=args.export_root,
+            detail="export root does not exist",
+        )
+        _print_summary(summary, as_json=args.json)
+        return 2
     paths = export_paths(args.export_root)
-    summary: dict[str, Any] = {
-        "schema_version": 1,
-        "export_root": str(args.export_root),
-        "budget_ms": args.budget_ms,
-        "prefilter": not args.no_prefilter,
-        "files_seen": len(paths),
-        "frames_seen": 0,
-        "standard_duel_frames": 0,
-        "prefiltered_frames": 0,
-        "scanned_frames": 0,
-        "unknown_candidates": 0,
-        "cutoff_counts": {},
-        "violations": [],
-    }
+    summary["files_discovered"] = len(paths)
     cutoff_counts: Counter[str] = Counter()
     stop = False
     for path in paths:
         try:
             export = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError as error:
+            _record_error(
+                summary,
+                kind="unreadable_export",
+                path=path,
+                detail=str(error),
+            )
             continue
-        if not isinstance(export, dict):
+        except json.JSONDecodeError as error:
+            _record_error(
+                summary,
+                kind="invalid_json",
+                path=path,
+                detail=f"line {error.lineno} column {error.colno}: {error.msg}",
+            )
+            continue
+        structure_error = _replay_structure_error(export)
+        if structure_error is not None:
+            _record_error(
+                summary,
+                kind="malformed_replay",
+                path=path,
+                detail=structure_error,
+            )
             continue
         game = export.get("game")
         frames = export.get("frames")
-        if not isinstance(game, dict) or not isinstance(frames, list):
-            continue
+        assert isinstance(game, dict)
+        assert isinstance(frames, list)
         game_id = _game_id(export, path)
         if args.game_ids and game_id not in args.game_ids:
             continue
         if _ruleset_name(game) != "standard":
             continue
-        for index in range(len(frames) - 1):
-            frame = frames[index]
-            following = frames[index + 1]
-            if not isinstance(frame, dict) or not isinstance(following, dict):
-                continue
-            summary["frames_seen"] += 1
+        for index, frame in enumerate(frames):
+            assert isinstance(frame, dict)
+            following = frames[index + 1] if index + 1 < len(frames) else None
+            assert following is None or isinstance(following, dict)
+            summary["replay_root_frames_seen"] += 1
             turn = int(frame.get("Turn", -1))
             if args.turns and turn not in args.turns:
                 continue
@@ -246,21 +367,19 @@ def main(
                 continue
             snake_id = str(ours[0]["ID"])
             actual_move = _actual_move(frame, following, snake_id)
-            if actual_move is None:
-                continue
-            summary["standard_duel_frames"] += 1
+            summary["standard_duel_root_frames"] += 1
             alive_frame = dict(frame)
             alive_frame["Snakes"] = alive
             board = _board_from_frame(game, alive_frame)
             if not args.no_prefilter and not should_run_diagnostics(board, snake_id):
-                summary["prefiltered_frames"] += 1
+                summary["prefiltered_root_frames"] += 1
             else:
                 diagnostics = run_diagnostics(
                     board, snake_id, time_budget_ms=args.budget_ms
                 )
-                summary["scanned_frames"] += 1
+                summary["diagnostics_root_frames"] += 1
                 audit = audit_diagnostics(diagnostics)
-                summary["unknown_candidates"] += audit.unknown_candidates
+                summary["unknown_candidate_proofs"] += audit.unknown_candidates
                 for candidate in diagnostics["root_candidates"].values():
                     if candidate["structural_proof"] == "unknown":
                         cutoff_counts[str(candidate.get("proof_cutoff", "none"))] += 1
@@ -274,27 +393,39 @@ def main(
                             "safe_alternatives": list(audit.safe_alternatives),
                         }
                     )
-            if args.limit is not None and summary["standard_duel_frames"] >= args.limit:
+            if (
+                args.limit is not None
+                and summary["standard_duel_root_frames"] >= args.limit
+            ):
                 stop = True
                 break
         if stop:
             break
-    summary["cutoff_counts"] = dict(sorted(cutoff_counts.items()))
-    if args.json:
+    summary["cutoff_candidate_counts"] = dict(sorted(cutoff_counts.items()))
+    _print_summary(summary, as_json=args.json)
+    if summary["error_count"]:
+        return 2
+    return 1 if summary["violations"] else 0
+
+
+def _print_summary(summary: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
         print(json.dumps(summary, sort_keys=True))
     else:
         cutoff_summary = ",".join(
-            f"{cutoff}:{count}" for cutoff, count in summary["cutoff_counts"].items()
+            f"{cutoff}:{count}"
+            for cutoff, count in summary["cutoff_candidate_counts"].items()
         ) or "none"
         print(
             "duel structural policy audit: "
-            f"files={summary['files_seen']} "
-            f"standard_duel_frames={summary['standard_duel_frames']} "
-            f"prefiltered={summary['prefiltered_frames']} "
-            f"scanned={summary['scanned_frames']} "
-            f"unknown_candidates={summary['unknown_candidates']} "
-            f"cutoffs={cutoff_summary} "
+            f"files_discovered={summary['files_discovered']} "
+            f"standard_duel_root_frames={summary['standard_duel_root_frames']} "
+            f"prefiltered_root_frames={summary['prefiltered_root_frames']} "
+            f"diagnostics_root_frames={summary['diagnostics_root_frames']} "
+            f"unknown_candidate_proofs={summary['unknown_candidate_proofs']} "
+            f"cutoff_candidate_counts={cutoff_summary} "
             f"violations={len(summary['violations'])} "
+            f"errors={summary['error_count']} "
             f"budget_ms={summary['budget_ms']}"
         )
         for violation in summary["violations"]:
@@ -303,7 +434,10 @@ def main(
                 f"actual={violation['actual_move']} selected={violation['selected_move']} "
                 f"safe_alternatives={','.join(violation['safe_alternatives'])}"
             )
-    return 1 if summary["violations"] else 0
+        for error in summary["errors"]:
+            print(
+                f"ERROR {error['kind']} {error['path']}: {error['detail']}"
+            )
 
 
 if __name__ == "__main__":
