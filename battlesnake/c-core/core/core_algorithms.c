@@ -2748,7 +2748,10 @@ static Coord core_rectangle_perimeter_coord(
 static int core_structural_bounded_cycle_capacity(
     const Board* board,
     const Snake* snake,
-    const CoreStructuralOpponentTiming* opponent_timing
+    const CoreStructuralOpponentTiming* opponent_timing,
+    const Coord* optional_food,
+    int optional_food_count,
+    Coord consumed_root_food
 ) {
     if (snake == NULL || snake->body_len < 2) {
         return 0;
@@ -2792,8 +2795,13 @@ static int core_structural_bounded_cycle_capacity(
             return 0;
         }
     }
+    int possible_growth = 0;
     for (int index = 0; index < capacity; index++) {
         Coord coord = core_rectangle_perimeter_coord(index, min_x, min_y, max_x, max_y);
+        if (!CoordEquals(coord, consumed_root_food) &&
+            core_coord_in_array(optional_food, optional_food_count, coord)) {
+            possible_growth++;
+        }
         int forward_distance = body_step == 1
             ? (head_index - index + capacity) % capacity
             : (index - head_index + capacity) % capacity;
@@ -2803,6 +2811,12 @@ static int core_structural_bounded_cycle_capacity(
             )) {
             return 0;
         }
+    }
+    if (possible_growth > capacity - snake->body_len - 1) {
+        /* Every still-present food on the forced perimeter is mandatory
+         * growth.  Opponent removal can only shorten this body, so reserve
+         * room for the all-food geometry before certifying the cycle. */
+        return 0;
     }
     return capacity;
 }
@@ -2990,6 +3004,61 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
+    /* The bounded rectangle shortcut does not walk states, so give it a
+     * separate no-future-food health certificate.  One body turnover is the
+     * exact realization horizon: after every original segment has vacated
+     * once, the proper perimeter segment certified by the shortcut has been
+     * re-established.  The same certificate gates the general geometric
+     * proof, while future-food growth receives an independent capacity check
+     * before SAFE can participate in dominance. */
+    Coord root_destination = SnakeHead(snake);
+    const Snake* source_snake = BoardFindSnakeConst(board, snake_id);
+    if (source_snake == NULL) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    int64_t post_root_health = (int64_t)source_snake->health - 1;
+    if (core_coord_in_array(board->hazards, board->hazard_count, root_destination)) {
+        post_root_health -= (int64_t)board->hazard_damage;
+    }
+    if (core_coord_in_array(board->food, board->food_count, root_destination)) {
+        post_root_health = 100;
+    }
+    if (post_root_health <= 0) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNSAFE;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEAD_END;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    int64_t per_turn_damage = 1;
+    if (board->hazard_count > 0 && board->hazard_damage > 0) {
+        per_turn_damage += (int64_t)board->hazard_damage;
+    }
+    int64_t required_health = per_turn_damage * (int64_t)post_move_length;
+    if (post_root_health <= required_health) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_SURVIVABILITY;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    int optional_food_count = 0;
+    for (int i = 0; i < board->food_count; i++) {
+        if (!CoordEquals(board->food[i], root_destination)) {
+            optional_food_count++;
+        }
+    }
+    if (optional_food_count > INT_MAX - post_move_length) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    int possible_body_length = post_move_length + optional_food_count;
+    /* Health/hazards were certified above from the real root transition.  The
+     * geometry channel deliberately ignores health and future food; any SAFE
+     * result is validated below against room for the all-food body. */
     bool root_in_cyclic_core = false;
     candidate->relaxed_static_capacity = core_relaxed_static_capacity(
         CoreSearchStateBoard(&state), snake_id, &root_in_cyclic_core
@@ -3044,7 +3113,6 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
-    Coord root_destination = SnakeHead(snake);
     if (opponent_closure_considered && BoardInBounds(board, root_destination) &&
         core_structural_opponent_closes_at(
             &opponent_timing, core_coord_index(board, root_destination), 1, 1
@@ -3058,7 +3126,10 @@ static void core_analyze_self_trap(
     int structural_capacity = core_structural_bounded_cycle_capacity(
         CoreSearchStateBoard(&state),
         snake,
-        &opponent_timing
+        &opponent_timing,
+        board->food,
+        board->food_count,
+        root_destination
     );
     if (core_search_timed_out(timer)) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
@@ -3129,8 +3200,14 @@ static void core_analyze_self_trap(
         core_biconnected_workspace_free(&short_context.biconnected_workspace);
         free(short_ancestors);
         if (short_outcome.result != CORE_STRUCTURAL_PROOF_UNKNOWN) {
-            candidate->structural_proof = short_outcome.result;
-            candidate->proof_cutoff = short_outcome.cutoff;
+            bool optional_food_uncertain = optional_food_count > 0 &&
+                (short_outcome.result == CORE_STRUCTURAL_PROOF_UNSAFE ||
+                 (short_outcome.result == CORE_STRUCTURAL_PROOF_SAFE &&
+                  short_outcome.proved_capacity < possible_body_length));
+            candidate->structural_proof = optional_food_uncertain
+                ? CORE_STRUCTURAL_PROOF_UNKNOWN : short_outcome.result;
+            candidate->proof_cutoff = optional_food_uncertain
+                ? CORE_STRUCTURAL_CUTOFF_SURVIVABILITY : short_outcome.cutoff;
             candidate->explored_states = short_context.explored_states;
             candidate->structural_capacity = short_outcome.proved_capacity;
             core_structural_opponent_timing_free(&opponent_timing);
@@ -3205,8 +3282,14 @@ static void core_analyze_self_trap(
     );
     core_relaxed_capacity_workspace_free(&context.capacity_workspace);
     core_biconnected_workspace_free(&context.biconnected_workspace);
-    candidate->structural_proof = outcome.result;
-    candidate->proof_cutoff = outcome.cutoff;
+    bool optional_food_uncertain = optional_food_count > 0 &&
+        (outcome.result == CORE_STRUCTURAL_PROOF_UNSAFE ||
+         (outcome.result == CORE_STRUCTURAL_PROOF_SAFE &&
+          outcome.proved_capacity < possible_body_length));
+    candidate->structural_proof = optional_food_uncertain
+        ? CORE_STRUCTURAL_PROOF_UNKNOWN : outcome.result;
+    candidate->proof_cutoff = optional_food_uncertain
+        ? CORE_STRUCTURAL_CUTOFF_SURVIVABILITY : outcome.cutoff;
     candidate->explored_states = context.explored_states;
     candidate->structural_capacity = outcome.proved_capacity;
     free(ancestor_bodies);

@@ -43,18 +43,21 @@ def _board(
     you_body: list[tuple[int, int]],
     *,
     food: list[tuple[int, int]] | None = None,
+    health: int = 90,
+    hazards: list[tuple[int, int]] | None = None,
+    hazard_damage: int = 0,
 ) -> Board:
     return Board(
         width=width,
         height=height,
         snakes={
-            "me": Snake("me", "me", 90, [Coord(x, y) for x, y in me_body]),
+            "me": Snake("me", "me", health, [Coord(x, y) for x, y in me_body]),
             "you": Snake("you", "you", 90, [Coord(x, y) for x, y in you_body]),
         },
         food=[Coord(x, y) for x, y in food or []],
-        hazards=[],
+        hazards=[Coord(x, y) for x, y in hazards or []],
         ruleset_name="standard",
-        hazard_damage=0,
+        hazard_damage=hazard_damage,
     )
 
 
@@ -92,6 +95,88 @@ def test_repeatable_loop_is_not_rejected_as_unsafe() -> None:
     assert candidate["structural_proof"] == "safe"
     assert candidate["proof_cutoff"] == "cycle"
     assert candidate["explored_states"] > 1
+
+
+def test_low_health_geometric_cycle_is_unknown_without_survivability_proof() -> None:
+    board = _board(
+        3,
+        2,
+        [(0, 0), (0, 1), (1, 1), (1, 0)],
+        [(2, 1)],
+        health=2,
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["structural_proof"] == "unknown"
+    assert candidate["proof_cutoff"] == "survivability"
+
+
+def test_low_health_hazard_rectangle_is_not_a_safe_capacity_witness() -> None:
+    board = _board(
+        4,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(3, 2)],
+        health=16,
+        hazards=[(2, 0)],
+        hazard_damage=14,
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["structural_proof"] == "unknown"
+    assert candidate["proof_cutoff"] == "survivability"
+
+
+def test_immediate_root_food_resets_health_and_growth_before_certificate() -> None:
+    board = _board(
+        4,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(3, 2)],
+        health=1,
+        food=[(2, 0)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["post_move_length"] == 5
+    assert candidate["structural_proof"] == "safe"
+
+
+def test_optional_post_root_food_cannot_be_used_as_no_growth_geometry() -> None:
+    board = _board(
+        4,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(1, 1)],
+        food=[(2, 1), (2, 2)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["structural_proof"] == "unknown"
+    assert candidate["proof_cutoff"] == "survivability"
+
+
+def test_low_health_false_safe_cannot_dominate_immediate_food_escape() -> None:
+    board = _board(
+        5,
+        5,
+        [(0, 1), (1, 1), (2, 1), (3, 1), (4, 1), (4, 0)],
+        [(4, 4), (4, 3), (4, 2)],
+        health=2,
+        food=[(0, 0)],
+    )
+
+    result = minimax_diagnostics(board, "me", time_budget_ms=1000, fixed_depth=1)
+
+    assert result["root_candidates"]["up"]["structural_proof"] == "unknown"
+    assert result["root_candidates"]["up"]["proof_cutoff"] == "survivability"
+    assert result["root_candidates"]["down"]["rejection_reason"] != "structurally_dominated"
+    assert result["root_candidates"]["down"]["allowed"] is True
+    assert result["move"] == "down"
 
 
 def test_equal_length_opponent_closes_root_doorway() -> None:

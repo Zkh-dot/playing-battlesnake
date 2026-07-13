@@ -320,6 +320,52 @@ static void test_repeatable_loop_is_structurally_safe(void) {
     BoardFree(board);
 }
 
+static void test_low_health_loop_is_not_a_safe_structural_witness(void) {
+    Board* board = BoardCreate(3, 2, "standard", 0);
+    Coord me_body[] = {{0, 0}, {0, 1}, {1, 1}, {1, 0}};
+    Coord you_body[] = {{2, 1}};
+    Snake me = make_snake("me", me_body, 4, 2);
+    Snake you = make_snake("you", you_body, 1, 90);
+    CoreSearchConfig config = CoreSearchConfigDefault(1000);
+    CoreSearchStats stats;
+    MoveDirection move = MOVE_INVALID;
+
+    config.fixed_depth = 1;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
+    assert(stats.root_candidates[MOVE_RIGHT].structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN);
+    assert(stats.root_candidates[MOVE_RIGHT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_SURVIVABILITY);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
+static void test_root_hazard_damage_blocks_false_capacity_safety(void) {
+    Board* board = BoardCreate(4, 3, "standard", 14);
+    Coord me_body[] = {{1, 0}, {0, 0}, {0, 1}, {0, 2}};
+    Coord you_body[] = {{3, 2}};
+    Coord hazard = {2, 0};
+    Snake me = make_snake("me", me_body, 4, 16);
+    Snake you = make_snake("you", you_body, 1, 90);
+    CoreSearchConfig config = CoreSearchConfigDefault(1000);
+    CoreSearchStats stats;
+    MoveDirection move = MOVE_INVALID;
+
+    config.fixed_depth = 1;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(BoardAddHazard(board, hazard));
+    assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
+    assert(stats.root_candidates[MOVE_RIGHT].structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN);
+    assert(stats.root_candidates[MOVE_RIGHT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_SURVIVABILITY);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
 static void test_extended_horizon_proves_long_corridor_dead_end(void) {
     Board* board = BoardCreate(10, 1, "standard", 0);
     Coord me_body[] = {{2, 0}, {1, 0}, {0, 0}};
@@ -384,6 +430,8 @@ int main(void) {
     test_default_search_config_uses_ladder_policy();
     test_branching_pocket_proves_every_branch_dies();
     test_repeatable_loop_is_structurally_safe();
+    test_low_health_loop_is_not_a_safe_structural_witness();
+    test_root_hazard_damage_blocks_false_capacity_safety();
     test_extended_horizon_proves_long_corridor_dead_end();
     test_bounded_rectangle_cycle_proves_capacity();
     return 0;
