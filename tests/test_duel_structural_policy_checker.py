@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from battlesnake.battlesnake_native import Board, Coord, Snake, minimax_diagnostics
 
 import tools.check_duel_structural_policy as checker
@@ -109,7 +111,7 @@ def test_unknown_is_counted_but_never_treated_as_safe() -> None:
     assert audit.unknown_candidates == 2
 
 
-def test_guaranteed_draw_is_preserved() -> None:
+def test_all_draw_terminal_non_loss_is_preserved() -> None:
     diagnostics = {
         "move": "left",
         "root_candidates": {
@@ -128,7 +130,7 @@ def test_guaranteed_draw_is_preserved() -> None:
     assert audit_diagnostics(diagnostics).violation is False
 
 
-def test_immediate_guaranteed_draw_does_not_depend_on_minimax_completion() -> None:
+def test_all_draw_terminal_non_loss_does_not_depend_on_minimax_completion() -> None:
     diagnostics = {
         "move": "left",
         "root_candidates": {
@@ -144,6 +146,75 @@ def test_immediate_guaranteed_draw_does_not_depend_on_minimax_completion() -> No
         },
     }
 
+    assert audit_diagnostics(diagnostics).violation is False
+
+
+@pytest.mark.parametrize(
+    "reply_outcomes",
+    [
+        {"up": "win", "down": "win"},
+        {"up": "win", "down": "draw"},
+    ],
+    ids=["all-win", "mixed-win-draw"],
+)
+def test_guaranteed_terminal_non_loss_is_not_a_violation(
+    reply_outcomes: dict[str, str],
+) -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(
+                capacity=1,
+                length=8,
+                proof="unknown",
+                minimax_outcome="unresolved",
+                reply_outcomes=reply_outcomes,
+            ),
+            "right": _candidate(capacity=12, length=8, proof="safe", alive_replies=1),
+        },
+    }
+
+    assert audit_diagnostics(diagnostics).violation is False
+
+
+@pytest.mark.parametrize("nonterminal_outcome", ["both_alive", "loss"])
+def test_incomplete_terminal_non_loss_remains_a_violation(
+    nonterminal_outcome: str,
+) -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(
+                capacity=1,
+                length=8,
+                proof="unknown",
+                reply_outcomes={
+                    "up": "win",
+                    "down": "draw",
+                    "left": nonterminal_outcome,
+                },
+            ),
+            "right": _candidate(capacity=12, length=8, proof="safe", alive_replies=1),
+        },
+    }
+
+    assert audit_diagnostics(diagnostics).violation is True
+
+
+def test_checker_matches_exact_six_by_six_all_win_root() -> None:
+    board = _board(
+        6,
+        6,
+        [(5, 1), (4, 1), (3, 1), (3, 0), (2, 0), (1, 0)],
+        [(4, 0), (5, 0)],
+    )
+    diagnostics = minimax_diagnostics(board, "me", time_budget_ms=1000, fixed_depth=1)
+    selected = diagnostics["root_candidates"]["down"]
+
+    assert diagnostics["move"] == "down"
+    assert selected["relaxed_static_capacity"] < selected["post_move_length"]
+    assert selected["structural_proof"] != "safe"
+    assert set(selected["reply_outcomes"].values()) == {"win"}
     assert audit_diagnostics(diagnostics).violation is False
 
 

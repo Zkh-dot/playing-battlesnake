@@ -52,8 +52,8 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
         for candidate in candidates.values()
     )
     reply_outcomes = tuple(selected.get("reply_outcomes", {}).values())
-    guaranteed_draw = bool(reply_outcomes) and all(
-        outcome == "draw" for outcome in reply_outcomes
+    guaranteed_terminal_non_loss = bool(reply_outcomes) and all(
+        outcome in {"win", "draw"} for outcome in reply_outcomes
     )
     capacity_deficient = int(selected["relaxed_static_capacity"]) < int(
         selected["post_move_length"]
@@ -62,7 +62,7 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
         capacity_deficient
         and selected["structural_proof"] != "safe"
         and bool(safe_alternatives)
-        and not guaranteed_draw
+        and not guaranteed_terminal_non_loss
     )
     return DiagnosticsAudit(
         violation,
