@@ -87,6 +87,29 @@ class Issue36EndgameTests(unittest.TestCase):
 
 
 class Issue36DepthBudgetTests(unittest.TestCase):
+    def test_t344_structural_work_guard_is_board_derived(self) -> None:
+        raw = next(
+            position
+            for position in _positions()
+            if str(position["game_id"]).startswith("b085baae") and int(position["turn"]) == 344
+        )
+        board = _board_from_issue_30_fixture(raw)
+        result = minimax_diagnostics(
+            board,
+            str(raw["snake_id"]),
+            time_budget_ms=5000,
+            fixed_depth=1,
+        )
+
+        for move in ("up", "left"):
+            candidate = result["root_candidates"][move]
+            expected_limit = (
+                int(candidate["post_move_length"]) + board.width + board.height
+            ) * board.width * board.height
+            self.assertEqual(candidate["structural_proof"], "unknown")
+            self.assertEqual(candidate["proof_cutoff"], "resource_limit")
+            self.assertLessEqual(int(candidate["explored_states"]), expected_limit)
+
     def test_issue36_positions_complete_production_like_fixed_depth(self) -> None:
         for raw in _positions():
             with self.subTest(game_id=raw["game_id"], turn=raw["turn"]):

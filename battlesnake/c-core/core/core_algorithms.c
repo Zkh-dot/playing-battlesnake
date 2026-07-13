@@ -2946,9 +2946,12 @@ static void core_analyze_self_trap(
         .horizon = proof_horizon,
         .ancestor_capacity = ancestor_capacity,
         .require_capacity_sufficient = true,
-        /* Board-derived completeness guard: at most one cell's worth of
-         * alternatives per required proof ply. Exhaustion stays UNKNOWN. */
-        .max_states = (uint64_t)proof_horizon * (uint64_t)cell_count,
+        /* Board-derived work guard: explore at most one full body turnover
+         * plus one board traversal's worth of state layers. Every node may
+         * run full-board capacity/topology analysis, so exhaustion remains
+         * UNKNOWN instead of consuming the entire root-search deadline. */
+        .max_states = ((uint64_t)post_move_length + (uint64_t)board->width +
+                       (uint64_t)board->height) * (uint64_t)cell_count,
         .use_opponent_closure = opponent_closure_considered,
         .ancestor_bodies = ancestor_bodies,
         .explored_states = 0,
