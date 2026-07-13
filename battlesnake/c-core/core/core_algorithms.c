@@ -807,9 +807,11 @@ static void core_fill_vacate_times(const Board* board, const char* snake_id, int
 static bool core_fill_opponent_arrival(
     const Board* board,
     const char* snake_id,
-    int own_length,
+    int minimum_length,
+    int maximum_length_exclusive,
     const int* vacate,
     int* opponent_arrival,
+    unsigned char* exact_reachability,
     unsigned int* seen,
     unsigned int seen_stamp,
     size_t* queue,
@@ -832,7 +834,9 @@ static bool core_fill_opponent_arrival(
     size_t tail = 0;
     for (int i = 0; i < board->snake_count; i++) {
         const Snake* snake = &board->snakes[i];
-        if (snake->body_len == 0 || strcmp(snake->id, snake_id) == 0 || core_snake_length(snake) < own_length) {
+        int snake_length = core_snake_length(snake);
+        if (snake->body_len == 0 || strcmp(snake->id, snake_id) == 0 ||
+            snake_length < minimum_length || snake_length >= maximum_length_exclusive) {
             continue;
         }
 
@@ -845,6 +849,9 @@ static bool core_fill_opponent_arrival(
         if (opponent_arrival[index] > 0) {
             opponent_arrival[index] = 0;
             seen[index] = seen_stamp;
+            if (exact_reachability != NULL) {
+                exact_reachability[index] = 1;
+            }
             queue[tail++] = (size_t)index;
         }
     }
@@ -887,6 +894,9 @@ static bool core_fill_opponent_arrival(
             }
 
             seen[next_state] = seen_stamp;
+            if (exact_reachability != NULL) {
+                exact_reachability[next_state] = 1;
+            }
             queue[tail++] = next_state;
             if (opponent_arrival[neighbor] > next_time) {
                 opponent_arrival[neighbor] = next_time;
@@ -908,6 +918,48 @@ static bool core_has_equal_or_longer_opponent(const Board* board, const char* sn
         }
     }
     return false;
+}
+
+static bool core_has_opponent(const Board* board, const char* snake_id) {
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* snake = &board->snakes[i];
+        if (snake->body_len > 0 && strcmp(snake->id, snake_id) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void core_fill_opponent_vacate_times(
+    const Board* board,
+    const char* snake_id,
+    int* vacate
+) {
+    bool constrictor = core_is_constrictor(board);
+    for (int i = 0; i < board->snake_count; i++) {
+        const Snake* snake = &board->snakes[i];
+        if (snake->body_len <= 0 || strcmp(snake->id, snake_id) == 0) {
+            continue;
+        }
+        int delay = constrictor ? CORE_SPACE_TIME_NEVER : 0;
+        if (!constrictor && core_snake_can_eat_next_turn(board, snake)) {
+            delay = 1;
+        }
+        for (int j = 0; j < snake->body_len; j++) {
+            Coord body = snake->body[j];
+            if (!BoardInBounds(board, body)) {
+                continue;
+            }
+            int vacate_time = CORE_SPACE_TIME_NEVER;
+            if (delay < CORE_SPACE_TIME_NEVER) {
+                vacate_time = snake->body_len - j + delay;
+            }
+            int index = core_coord_index(board, body);
+            if (vacate_time > vacate[index]) {
+                vacate[index] = vacate_time;
+            }
+        }
+    }
 }
 
 typedef struct {
@@ -1063,8 +1115,10 @@ CoreStatus CoreSpaceTimeCompute(
             board,
             snake_id,
             own_length,
+            INT_MAX,
             vacate,
             opponent_arrival,
+            NULL,
             scratch->opponent_seen,
             opponent_stamp,
             scratch->opponent_queue,
@@ -1834,9 +1888,43 @@ typedef struct {
 } CoreStructuralProofOutcome;
 
 typedef struct {
+    int* dangerous_arrival;
+    int* opponent_vacate;
+    unsigned char* shorter_reachability;
+    size_t cell_count;
+    int horizon;
+} CoreStructuralOpponentTiming;
+
+static void core_structural_opponent_timing_free(CoreStructuralOpponentTiming* timing) {
+    free(timing->dangerous_arrival);
+    free(timing->shorter_reachability);
+    memset(timing, 0, sizeof(*timing));
+}
+
+static bool core_structural_opponent_closes_at(
+    const CoreStructuralOpponentTiming* timing,
+    int index,
+    int own_arrival,
+    int dangerous_deadline
+) {
+    /* Equal-or-longer heads contest on the same turn. A shorter head loses
+     * that collision, but if it occupied the cell one turn earlier its neck
+     * can still occupy the doorway when we arrive. Original body cells use
+     * their earliest truthful vacate turn independently of head reachability. */
+    int occupancy_arrival = own_arrival - 1;
+    bool shorter_can_occupy = timing->shorter_reachability != NULL &&
+        occupancy_arrival >= 0 && occupancy_arrival <= timing->horizon &&
+        timing->shorter_reachability[
+            (size_t)occupancy_arrival * timing->cell_count + (size_t)index
+        ];
+    return timing->dangerous_arrival[index] <= dangerous_deadline || shorter_can_occupy ||
+           timing->opponent_vacate[index] > own_arrival;
+}
+
+typedef struct {
     const char* snake_id;
     const CoreSearchTimer* timer;
-    const int* opponent_arrival;
+    CoreStructuralOpponentTiming opponent_timing;
     int body_len;
     int horizon;
     int ancestor_capacity;
@@ -1934,9 +2022,11 @@ static CoreStructuralProofOutcome core_prove_structural_node(
                     continue;
                 }
                 Coord destination = MoveStep(structural_head, (MoveDirection)move);
-                int arrival = context->opponent_arrival[core_coord_index(board, destination)];
-                if (!context->use_opponent_closure || arrival == CORE_SPACE_TIME_NEVER ||
-                    arrival > depth + 1) {
+                int destination_index = core_coord_index(board, destination);
+                if (!context->use_opponent_closure ||
+                    !core_structural_opponent_closes_at(
+                        &context->opponent_timing, destination_index, depth + 1, depth + 1
+                    )) {
                     MoveDirection structural_moves[1] = {(MoveDirection)move};
                     if (!CoreSearchStateMakeMoves(state, structural_ids, structural_moves, 1)) {
                         return core_structural_outcome(
@@ -2035,7 +2125,12 @@ static CoreStructuralProofOutcome core_prove_structural_node(
         Coord destination = MoveStep(SnakeHead(snake), (MoveDirection)move);
         if (!region_established && context->use_opponent_closure &&
             BoardInBounds(board, destination) &&
-            context->opponent_arrival[core_coord_index(board, destination)] <= depth + 1) {
+            core_structural_opponent_closes_at(
+                &context->opponent_timing,
+                core_coord_index(board, destination),
+                depth + 1,
+                depth + 1
+            )) {
             continue;
         }
         MoveDirection moves[1] = {(MoveDirection)move};
@@ -2147,56 +2242,89 @@ static bool core_prepare_structural_opponent_arrival(
     const char* snake_id,
     int own_length,
     int horizon,
-    int** out_arrival,
+    CoreStructuralOpponentTiming* out_timing,
     bool* out_considered
 ) {
-    *out_arrival = NULL;
+    memset(out_timing, 0, sizeof(*out_timing));
     *out_considered = false;
     size_t cell_count = 0;
     if (!core_cell_count(board, &cell_count) || cell_count > SIZE_MAX / sizeof(int)) {
         return false;
     }
-    int* arrival = (int*)malloc(cell_count * sizeof(int));
-    if (arrival == NULL) {
+    if (cell_count > SIZE_MAX / (2 * sizeof(int))) {
         return false;
     }
-    for (size_t i = 0; i < cell_count; i++) {
-        arrival[i] = CORE_SPACE_TIME_NEVER;
+    int* timing_storage = (int*)malloc(2 * cell_count * sizeof(int));
+    if (timing_storage == NULL) {
+        return false;
     }
-    if (!core_has_equal_or_longer_opponent(board, snake_id, own_length)) {
-        *out_arrival = arrival;
+    int* dangerous_arrival = timing_storage;
+    int* opponent_vacate = timing_storage + cell_count;
+    for (size_t i = 0; i < cell_count; i++) {
+        dangerous_arrival[i] = CORE_SPACE_TIME_NEVER;
+        opponent_vacate[i] = 0;
+    }
+    out_timing->dangerous_arrival = dangerous_arrival;
+    out_timing->opponent_vacate = opponent_vacate;
+    out_timing->cell_count = cell_count;
+    out_timing->horizon = horizon;
+    if (!core_has_opponent(board, snake_id)) {
         return true;
     }
 
     *out_considered = true;
     if ((size_t)horizon + 1 > SIZE_MAX / cell_count) {
-        free(arrival);
+        free(timing_storage);
+        memset(out_timing, 0, sizeof(*out_timing));
         return false;
     }
     size_t state_count = ((size_t)horizon + 1) * cell_count;
     if (state_count > SIZE_MAX / sizeof(unsigned int) || state_count > SIZE_MAX / sizeof(size_t)) {
-        free(arrival);
+        free(timing_storage);
+        memset(out_timing, 0, sizeof(*out_timing));
         return false;
     }
     int* vacate = (int*)calloc(cell_count, sizeof(int));
     unsigned int* seen = (unsigned int*)calloc(state_count, sizeof(unsigned int));
     size_t* queue = (size_t*)malloc(state_count * sizeof(size_t));
-    if (vacate == NULL || seen == NULL || queue == NULL) {
-        free(arrival);
+    unsigned char* shorter_reachability = (unsigned char*)calloc(state_count, 1);
+    if (vacate == NULL || seen == NULL || queue == NULL || shorter_reachability == NULL) {
+        free(timing_storage);
+        memset(out_timing, 0, sizeof(*out_timing));
         free(vacate);
         free(seen);
         free(queue);
+        free(shorter_reachability);
         return false;
     }
+    out_timing->shorter_reachability = shorter_reachability;
     core_fill_vacate_times(board, snake_id, vacate);
-    bool filled = core_fill_opponent_arrival(
+    core_fill_opponent_vacate_times(board, snake_id, opponent_vacate);
+    bool dangerous_filled = core_fill_opponent_arrival(
         board,
         snake_id,
         own_length,
+        INT_MAX,
         vacate,
-        arrival,
+        dangerous_arrival,
+        NULL,
         seen,
         1,
+        queue,
+        cell_count,
+        horizon
+    );
+    int* shorter_arrival = (int*)malloc(cell_count * sizeof(int));
+    bool shorter_filled = shorter_arrival != NULL && core_fill_opponent_arrival(
+        board,
+        snake_id,
+        2,
+        own_length,
+        vacate,
+        shorter_arrival,
+        shorter_reachability,
+        seen,
+        2,
         queue,
         cell_count,
         horizon
@@ -2204,11 +2332,13 @@ static bool core_prepare_structural_opponent_arrival(
     free(vacate);
     free(seen);
     free(queue);
-    if (!filled) {
-        free(arrival);
+    free(shorter_arrival);
+    if (!dangerous_filled || !shorter_filled) {
+        free(timing_storage);
+        free(shorter_reachability);
+        memset(out_timing, 0, sizeof(*out_timing));
         return false;
     }
-    *out_arrival = arrival;
     return true;
 }
 
@@ -2268,7 +2398,7 @@ static Coord core_rectangle_perimeter_coord(
 static int core_structural_bounded_cycle_capacity(
     const Board* board,
     const Snake* snake,
-    const int* opponent_arrival
+    const CoreStructuralOpponentTiming* opponent_timing
 ) {
     if (snake == NULL || snake->body_len < 2) {
         return 0;
@@ -2314,8 +2444,13 @@ static int core_structural_bounded_cycle_capacity(
     }
     for (int index = 0; index < capacity; index++) {
         Coord coord = core_rectangle_perimeter_coord(index, min_x, min_y, max_x, max_y);
-        int arrival = opponent_arrival[core_coord_index(board, coord)];
-        if (arrival != CORE_SPACE_TIME_NEVER && arrival <= capacity) {
+        int forward_distance = body_step == 1
+            ? (head_index - index + capacity) % capacity
+            : (index - head_index + capacity) % capacity;
+        int own_arrival = 1 + forward_distance;
+        if (core_structural_opponent_closes_at(
+                opponent_timing, core_coord_index(board, coord), own_arrival, capacity
+            )) {
             return 0;
         }
     }
@@ -2500,14 +2635,14 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
-    int* opponent_arrival = NULL;
+    CoreStructuralOpponentTiming opponent_timing = {0};
     bool opponent_closure_considered = false;
     if (!core_prepare_structural_opponent_arrival(
         board,
         snake_id,
         post_move_length,
         proof_horizon,
-        &opponent_arrival,
+        &opponent_timing,
         &opponent_closure_considered
     )) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
@@ -2518,17 +2653,19 @@ static void core_analyze_self_trap(
     candidate->opponent_closure_considered = opponent_closure_considered;
     Coord root_destination = SnakeHead(snake);
     if (opponent_closure_considered && BoardInBounds(board, root_destination) &&
-        opponent_arrival[core_coord_index(board, root_destination)] <= 1) {
+        core_structural_opponent_closes_at(
+            &opponent_timing, core_coord_index(board, root_destination), 1, 1
+        )) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNSAFE;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEAD_END;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
     int structural_capacity = core_structural_bounded_cycle_capacity(
         CoreSearchStateBoard(&state),
         snake,
-        opponent_arrival
+        &opponent_timing
     );
     if (structural_capacity > 0) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_SAFE;
@@ -2536,7 +2673,7 @@ static void core_analyze_self_trap(
         candidate->structural_capacity = structural_capacity;
         candidate->explored_states = 1;
         (*analysis_nodes)++;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
@@ -2544,7 +2681,7 @@ static void core_analyze_self_trap(
         (size_t)post_move_length * (size_t)post_move_length > SIZE_MAX / sizeof(Coord)) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
@@ -2554,14 +2691,14 @@ static void core_analyze_self_trap(
     if (short_ancestors == NULL) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
     CoreStructuralProofContext short_context = {
         .snake_id = snake_id,
         .timer = timer,
-        .opponent_arrival = opponent_arrival,
+        .opponent_timing = opponent_timing,
         .body_len = post_move_length,
         .horizon = post_move_length,
         .ancestor_capacity = post_move_length,
@@ -2581,7 +2718,7 @@ static void core_analyze_self_trap(
         candidate->proof_cutoff = short_outcome.cutoff;
         candidate->explored_states = short_context.explored_states;
         candidate->structural_capacity = short_outcome.proved_capacity;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
@@ -2592,14 +2729,14 @@ static void core_analyze_self_trap(
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = short_outcome.cutoff;
         candidate->explored_states = short_context.explored_states;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
     if (proof_horizon > (INT_MAX - 1) / 2) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
@@ -2608,7 +2745,7 @@ static void core_analyze_self_trap(
         (size_t)ancestor_capacity * (size_t)post_move_length > SIZE_MAX / sizeof(Coord)) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
@@ -2618,14 +2755,14 @@ static void core_analyze_self_trap(
     if (ancestor_bodies == NULL) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
-        free(opponent_arrival);
+        core_structural_opponent_timing_free(&opponent_timing);
         CoreSearchStateFree(&state);
         return;
     }
     CoreStructuralProofContext context = {
         .snake_id = snake_id,
         .timer = timer,
-        .opponent_arrival = opponent_arrival,
+        .opponent_timing = opponent_timing,
         .body_len = post_move_length,
         .horizon = proof_horizon,
         .ancestor_capacity = ancestor_capacity,
@@ -2652,7 +2789,7 @@ static void core_analyze_self_trap(
     candidate->explored_states = context.explored_states;
     candidate->structural_capacity = outcome.proved_capacity;
     free(ancestor_bodies);
-    free(opponent_arrival);
+    core_structural_opponent_timing_free(&opponent_timing);
     CoreSearchStateFree(&state);
 }
 

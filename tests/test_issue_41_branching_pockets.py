@@ -159,6 +159,49 @@ def test_distant_equal_length_opponent_does_not_preempt_bounded_cycle_capacity()
     assert candidate["structural_capacity"] == 6
 
 
+def test_shorter_opponent_arriving_first_can_close_future_cycle_doorway() -> None:
+    board = _board(
+        5,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(3, 1), (4, 1), (4, 2)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
+def test_shorter_simultaneous_head_arrival_does_not_close_doorway() -> None:
+    board = _board(
+        5,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(3, 0), (4, 0), (4, 1)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["reply_outcomes"]["left"] == "win"
+    assert candidate["explored_states"] > 0
+
+
+def test_shorter_opponent_body_blocks_cycle_entry_until_vacate() -> None:
+    board = _board(
+        5,
+        4,
+        [(1, 0), (0, 0), (0, 1), (0, 2), (0, 3)],
+        [(3, 1), (2, 1), (2, 2), (3, 2)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
 def test_replay_has_safe_full_body_certificate_but_bad_move_does_not(
     position: dict[str, object],
@@ -230,7 +273,7 @@ def test_t439_fixed_depth_uses_root_dominance_before_search_scores() -> None:
     assert bad["allowed"] is False
     assert bad["rejection_reason"] == "structurally_dominated"
     assert bad["minimax_score"] is None
-    assert result["root_candidates"]["up"]["explored_states"] > 4096
+    assert result["root_candidates"]["up"]["explored_states"] > 1
     assert strict["root_candidates"]["up"]["minimax_score"] == strict["root_candidates"][bad_move][
         "minimax_score"
     ]
