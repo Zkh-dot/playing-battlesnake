@@ -8,6 +8,7 @@ import sys
 
 from battlesnake.battlesnake_native import Board, Coord, Snake, minimax_diagnostics
 
+import tools.check_duel_structural_policy as checker
 from tools.check_duel_structural_policy import (
     audit_diagnostics,
     main,
@@ -531,3 +532,52 @@ def test_semantically_invalid_ruleset_values_are_structured_errors(
     assert exit_code == 2
     assert output["error_count"] == 2
     assert all(error["kind"] == "malformed_replay" for error in output["errors"])
+
+
+def test_native_profile_runtime_error_is_structured_with_root_context(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _write_export(tmp_path / "game-a.json")
+
+    def fail_profile(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("profile failed")
+
+    monkeypatch.setattr(checker, "duel_root_profile", fail_profile)
+    exit_code = main(
+        ["--export-root", str(tmp_path), "--turn", "7", "--json"],
+        diagnostics_fn=_compliant_diagnostics,
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["errors"] == [
+        {
+            "detail": "profile failed",
+            "game_id": "game-a",
+            "kind": "root_processing_error",
+            "path": str(tmp_path / "game-a.json"),
+            "stage": "prefilter",
+            "turn": 7,
+        }
+    ]
+
+
+def test_native_diagnostics_runtime_error_is_structured_with_root_context(
+    tmp_path: Path, capsys
+) -> None:
+    _write_export(tmp_path / "game-a.json")
+
+    def fail_diagnostics(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("diagnostics failed")
+
+    exit_code = main(
+        ["--export-root", str(tmp_path), "--turn", "7", "--json", "--no-prefilter"],
+        diagnostics_fn=fail_diagnostics,
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["errors"][0]["game_id"] == "game-a"
+    assert output["errors"][0]["turn"] == 7
+    assert output["errors"][0]["stage"] == "diagnostics"
+    assert output["errors"][0]["detail"] == "diagnostics failed"

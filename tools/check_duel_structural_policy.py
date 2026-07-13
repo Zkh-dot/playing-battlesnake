@@ -325,6 +325,28 @@ def _record_error(
     summary["error_count"] = len(summary["errors"])
 
 
+def _record_root_error(
+    summary: dict[str, Any],
+    *,
+    path: Path,
+    game_id: str,
+    turn: int,
+    stage: str,
+    error: Exception,
+) -> None:
+    summary["errors"].append(
+        {
+            "kind": "root_processing_error",
+            "path": str(path),
+            "game_id": game_id,
+            "turn": turn,
+            "stage": stage,
+            "detail": str(error),
+        }
+    )
+    summary["error_count"] = len(summary["errors"])
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -428,46 +450,61 @@ def main(
                 alive_frame = dict(frame)
                 alive_frame["Snakes"] = alive
                 board = _board_from_frame(game, alive_frame)
-            except (KeyError, TypeError, ValueError, OverflowError, AttributeError) as error:
-                _record_error(
+            except Exception as error:
+                _record_root_error(
                     summary,
-                    kind="malformed_replay",
                     path=path,
-                    detail=f"T{turn} board conversion failed: {error}",
+                    game_id=game_id,
+                    turn=turn,
+                    stage="board_conversion",
+                    error=error,
                 )
                 break
             summary["standard_duel_root_frames"] += 1
-            try:
-                if not args.no_prefilter and not should_run_diagnostics(board, snake_id):
-                    summary["prefiltered_root_frames"] += 1
-                else:
-                    diagnostics = run_diagnostics(
-                        board, snake_id, time_budget_ms=args.budget_ms
+            if not args.no_prefilter:
+                try:
+                    run_full_diagnostics = should_run_diagnostics(board, snake_id)
+                except Exception as error:
+                    _record_root_error(
+                        summary,
+                        path=path,
+                        game_id=game_id,
+                        turn=turn,
+                        stage="prefilter",
+                        error=error,
                     )
-                    summary["diagnostics_root_frames"] += 1
-                    audit = audit_diagnostics(diagnostics)
-                    summary["unknown_candidate_proofs"] += audit.unknown_candidates
-                    for candidate in diagnostics["root_candidates"].values():
-                        if candidate["structural_proof"] == "unknown":
-                            cutoff_counts[
-                                str(candidate.get("proof_cutoff", "none"))
-                            ] += 1
-                    if audit.violation:
-                        summary["violations"].append(
-                            {
-                                "game_id": game_id,
-                                "turn": turn,
-                                "actual_move": actual_move,
-                                "selected_move": audit.selected_move,
-                                "safe_alternatives": list(audit.safe_alternatives),
-                            }
-                        )
-            except (KeyError, TypeError, ValueError, OverflowError, AttributeError) as error:
-                _record_error(
+                    break
+                if not run_full_diagnostics:
+                    summary["prefiltered_root_frames"] += 1
+                    continue
+            try:
+                diagnostics = run_diagnostics(
+                    board, snake_id, time_budget_ms=args.budget_ms
+                )
+                summary["diagnostics_root_frames"] += 1
+                audit = audit_diagnostics(diagnostics)
+                summary["unknown_candidate_proofs"] += audit.unknown_candidates
+                for candidate in diagnostics["root_candidates"].values():
+                    if candidate["structural_proof"] == "unknown":
+                        cutoff_counts[str(candidate.get("proof_cutoff", "none"))] += 1
+                if audit.violation:
+                    summary["violations"].append(
+                        {
+                            "game_id": game_id,
+                            "turn": turn,
+                            "actual_move": actual_move,
+                            "selected_move": audit.selected_move,
+                            "safe_alternatives": list(audit.safe_alternatives),
+                        }
+                    )
+            except Exception as error:
+                _record_root_error(
                     summary,
-                    kind="malformed_replay",
                     path=path,
-                    detail=f"T{turn} root processing failed: {error}",
+                    game_id=game_id,
+                    turn=turn,
+                    stage="diagnostics",
+                    error=error,
                 )
                 break
             if (
