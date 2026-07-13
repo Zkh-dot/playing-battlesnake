@@ -581,3 +581,69 @@ def test_native_diagnostics_runtime_error_is_structured_with_root_context(
     assert output["errors"][0]["turn"] == 7
     assert output["errors"][0]["stage"] == "diagnostics"
     assert output["errors"][0]["detail"] == "diagnostics failed"
+
+
+def test_limit_counts_prefiltered_and_diagnostics_roots_without_off_by_one(
+    tmp_path: Path, capsys
+) -> None:
+    path = tmp_path / "mixed.json"
+    _write_export(path)
+    export = json.loads(path.read_text(encoding="utf-8"))
+    export["game"]["Width"] = 7
+    export["game"]["Height"] = 7
+    export["frames"] = [
+        {
+            "Turn": 1,
+            "Snakes": [
+                _raw_snake("me", "scvnak", [(3, 3)]),
+                _raw_snake("opponent", "opponent", [(6, 6)]),
+            ],
+            "Food": [],
+            "Hazards": [],
+        },
+        {
+            "Turn": 2,
+            "Snakes": [
+                _raw_snake("me", "scvnak", [(4, 3)]),
+                _raw_snake("opponent", "opponent", [(5, 6)]),
+            ],
+            "Food": [],
+            "Hazards": [],
+        },
+        {
+            "Turn": 3,
+            "Snakes": [
+                _raw_snake("me", "scvnak", [(3, 3), (3, 2), (3, 1)]),
+                _raw_snake("opponent", "opponent", [(6, 6), (6, 5)]),
+            ],
+            "Food": [],
+            "Hazards": [],
+        },
+    ]
+    path.write_text(json.dumps(export), encoding="utf-8")
+
+    calls: list[int] = []
+
+    def diagnostics(*args: object, **kwargs: object) -> dict[str, object]:
+        calls.append(1)
+        return _compliant_diagnostics(*args, **kwargs)
+
+    assert main(
+        ["--export-root", str(tmp_path), "--limit", "2", "--json"],
+        diagnostics_fn=diagnostics,
+    ) == 0
+    prefiltered = json.loads(capsys.readouterr().out)
+    assert prefiltered["standard_duel_root_frames"] == 2
+    assert prefiltered["prefiltered_root_frames"] == 2
+    assert prefiltered["diagnostics_root_frames"] == 0
+    assert calls == []
+
+    assert main(
+        ["--export-root", str(tmp_path), "--limit", "2", "--json", "--no-prefilter"],
+        diagnostics_fn=diagnostics,
+    ) == 0
+    exhaustive = json.loads(capsys.readouterr().out)
+    assert exhaustive["standard_duel_root_frames"] == 2
+    assert exhaustive["prefiltered_root_frames"] == 0
+    assert exhaustive["diagnostics_root_frames"] == 2
+    assert len(calls) == 2

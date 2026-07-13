@@ -461,6 +461,10 @@ def main(
                 )
                 break
             summary["standard_duel_root_frames"] += 1
+            limit_reached = (
+                args.limit is not None
+                and summary["standard_duel_root_frames"] == args.limit
+            )
             if not args.no_prefilter:
                 try:
                     run_full_diagnostics = should_run_diagnostics(board, snake_id)
@@ -473,9 +477,13 @@ def main(
                         stage="prefilter",
                         error=error,
                     )
+                    stop = limit_reached
                     break
                 if not run_full_diagnostics:
                     summary["prefiltered_root_frames"] += 1
+                    if limit_reached:
+                        stop = True
+                        break
                     continue
             try:
                 diagnostics = run_diagnostics(
@@ -506,11 +514,9 @@ def main(
                     stage="diagnostics",
                     error=error,
                 )
+                stop = limit_reached
                 break
-            if (
-                args.limit is not None
-                and summary["standard_duel_root_frames"] >= args.limit
-            ):
+            if limit_reached:
                 stop = True
                 break
         if stop:
