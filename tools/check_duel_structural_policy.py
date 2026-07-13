@@ -555,8 +555,14 @@ def _print_summary(summary: dict[str, Any], *, as_json: bool) -> None:
                 f"safe_alternatives={','.join(violation['safe_alternatives'])}"
             )
         for error in summary["errors"]:
+            root_context = ""
+            if error["kind"] == "root_processing_error":
+                root_context = (
+                    f" game_id={error['game_id']} turn={error['turn']}"
+                    f" stage={error['stage']}"
+                )
             print(
-                f"ERROR {error['kind']} {error['path']}: {error['detail']}"
+                f"ERROR {error['kind']} {error['path']}{root_context}: {error['detail']}"
             )
 
 

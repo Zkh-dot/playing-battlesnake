@@ -20,7 +20,7 @@ def test_checker_module_exists() -> None:
     assert importlib.util.find_spec("tools.check_duel_structural_policy") is not None
 
 
-def test_checker_is_directly_executable() -> None:
+def test_checker_python_entrypoint_exposes_help() -> None:
     completed = subprocess.run(
         [sys.executable, "tools/check_duel_structural_policy.py", "--help"],
         check=False,
@@ -559,6 +559,32 @@ def test_native_profile_runtime_error_is_structured_with_root_context(
             "stage": "prefilter",
             "turn": 7,
         }
+    ]
+
+
+def test_text_errors_localize_each_root_and_processing_stage(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _write_export(tmp_path / "game-a.json")
+    _write_export(tmp_path / "game-b.json")
+
+    def fail_profile(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("profile failed")
+
+    monkeypatch.setattr(checker, "duel_root_profile", fail_profile)
+    exit_code = main(["--export-root", str(tmp_path), "--turn", "7"])
+    lines = capsys.readouterr().out.splitlines()
+
+    assert exit_code == 2
+    assert lines[1:] == [
+        (
+            f"ERROR root_processing_error {tmp_path / 'game-a.json'} "
+            "game_id=game-a turn=7 stage=prefilter: profile failed"
+        ),
+        (
+            f"ERROR root_processing_error {tmp_path / 'game-b.json'} "
+            "game_id=game-b turn=7 stage=prefilter: profile failed"
+        ),
     ]
 
 
