@@ -114,6 +114,7 @@ def test_unknown_is_counted_but_never_treated_as_safe() -> None:
 def test_all_draw_terminal_non_loss_is_preserved() -> None:
     diagnostics = {
         "move": "left",
+        "complete_opponent_replies": ("up", "down"),
         "root_candidates": {
             "left": _candidate(
                 capacity=0,
@@ -133,6 +134,7 @@ def test_all_draw_terminal_non_loss_is_preserved() -> None:
 def test_all_draw_terminal_non_loss_does_not_depend_on_minimax_completion() -> None:
     diagnostics = {
         "move": "left",
+        "complete_opponent_replies": ("up", "down"),
         "root_candidates": {
             "left": _candidate(
                 capacity=0,
@@ -162,6 +164,7 @@ def test_guaranteed_terminal_non_loss_is_not_a_violation(
 ) -> None:
     diagnostics = {
         "move": "left",
+        "complete_opponent_replies": tuple(reply_outcomes),
         "root_candidates": {
             "left": _candidate(
                 capacity=1,
@@ -175,6 +178,41 @@ def test_guaranteed_terminal_non_loss_is_not_a_violation(
     }
 
     assert audit_diagnostics(diagnostics).violation is False
+
+
+def test_partial_terminal_non_loss_reply_set_remains_a_violation() -> None:
+    diagnostics = {
+        "move": "left",
+        "complete_opponent_replies": ("up", "down"),
+        "root_candidates": {
+            "left": _candidate(
+                capacity=1,
+                length=8,
+                proof="unknown",
+                reply_outcomes={"up": "win"},
+            ),
+            "right": _candidate(capacity=12, length=8, proof="safe", alive_replies=1),
+        },
+    }
+
+    assert audit_diagnostics(diagnostics).violation is True
+
+
+def test_terminal_non_loss_without_reply_completeness_remains_a_violation() -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(
+                capacity=1,
+                length=8,
+                proof="unknown",
+                reply_outcomes={"up": "win", "down": "draw"},
+            ),
+            "right": _candidate(capacity=12, length=8, proof="safe", alive_replies=1),
+        },
+    }
+
+    assert audit_diagnostics(diagnostics).violation is True
 
 
 @pytest.mark.parametrize("nonterminal_outcome", ["both_alive", "loss"])
@@ -209,6 +247,9 @@ def test_checker_matches_exact_six_by_six_all_win_root() -> None:
         [(4, 0), (5, 0)],
     )
     diagnostics = minimax_diagnostics(board, "me", time_budget_ms=1000, fixed_depth=1)
+    diagnostics["complete_opponent_replies"] = checker._complete_opponent_replies(
+        board, "me"
+    )
     selected = diagnostics["root_candidates"]["down"]
 
     assert diagnostics["move"] == "down"

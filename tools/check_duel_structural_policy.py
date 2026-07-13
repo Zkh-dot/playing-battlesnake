@@ -51,9 +51,14 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
         candidate["structural_proof"] == "unknown"
         for candidate in candidates.values()
     )
-    reply_outcomes = tuple(selected.get("reply_outcomes", {}).values())
-    guaranteed_terminal_non_loss = bool(reply_outcomes) and all(
-        outcome in {"win", "draw"} for outcome in reply_outcomes
+    reply_outcomes = selected.get("reply_outcomes", {})
+    complete_opponent_replies = frozenset(
+        str(move) for move in diagnostics.get("complete_opponent_replies", ())
+    )
+    guaranteed_terminal_non_loss = (
+        bool(complete_opponent_replies)
+        and frozenset(reply_outcomes) == complete_opponent_replies
+        and all(outcome in {"win", "draw"} for outcome in reply_outcomes.values())
     )
     capacity_deficient = int(selected["relaxed_static_capacity"]) < int(
         selected["post_move_length"]
@@ -70,6 +75,20 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
         safe_alternatives,
         unknown_candidates,
     )
+
+
+def _complete_opponent_replies(board: Board, snake_id: str) -> tuple[str, ...]:
+    """Return the complete reply set only when the native profile proves it."""
+    profile = duel_root_profile(board, snake_id)
+    reply_sets = {
+        frozenset(str(reply) for reply in candidate["reply_outcomes"])
+        for candidate in profile.values()
+        if candidate["evaluated"]
+    }
+    if len(reply_sets) != 1:
+        return ()
+    replies = next(iter(reply_sets))
+    return tuple(sorted(replies)) if replies else ()
 
 
 def should_run_diagnostics(board: Board, snake_id: str) -> bool:
@@ -488,6 +507,10 @@ def main(
             try:
                 diagnostics = run_diagnostics(
                     board, snake_id, time_budget_ms=args.budget_ms
+                )
+                diagnostics = dict(diagnostics)
+                diagnostics["complete_opponent_replies"] = _complete_opponent_replies(
+                    board, snake_id
                 )
                 summary["diagnostics_root_frames"] += 1
                 audit = audit_diagnostics(diagnostics)
