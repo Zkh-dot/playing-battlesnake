@@ -12,6 +12,216 @@ static Snake make_snake(const char* id, Coord* body, int body_len, int health) {
     return snake;
 }
 
+static CoreSearchValue root_test_value(
+    CoreOutcome outcome,
+    CoreValueBound bound,
+    double score,
+    uint16_t terminal_distance
+) {
+    CoreSearchValue value;
+    memset(&value, 0, sizeof(value));
+    value.outcome = outcome;
+    value.bound = bound;
+    value.score = score;
+    value.terminal_distance = terminal_distance;
+    return value;
+}
+
+static CoreRootCandidateStats root_test_stats(
+    CoreStructuralProofResult proof,
+    int relaxed_static_capacity,
+    int post_move_length
+) {
+    CoreRootCandidateStats stats;
+    memset(&stats, 0, sizeof(stats));
+    stats.structural_proof = proof;
+    stats.relaxed_static_capacity = relaxed_static_capacity;
+    stats.post_move_length = post_move_length;
+    return stats;
+}
+
+static void assert_root_comparison(
+    CoreSearchValue candidate_value,
+    CoreRootCandidateStats candidate_stats,
+    CoreSearchValue incumbent_value,
+    CoreRootCandidateStats incumbent_stats,
+    CoreRootComparisonOrdering expected_ordering,
+    CoreRootComparisonReason expected_reason
+) {
+    CoreRootComparison comparison = CoreCompareRootCandidates(
+        &candidate_value,
+        &candidate_stats,
+        &incumbent_value,
+        &incumbent_stats
+    );
+    assert(comparison.ordering == expected_ordering);
+    assert(comparison.reason == expected_reason);
+    CoreRootComparison reverse = CoreCompareRootCandidates(
+        &incumbent_value,
+        &incumbent_stats,
+        &candidate_value,
+        &candidate_stats
+    );
+    CoreRootComparisonOrdering expected_reverse = expected_ordering;
+    if (expected_ordering == CORE_ROOT_COMPARISON_CANDIDATE) {
+        expected_reverse = CORE_ROOT_COMPARISON_INCUMBENT;
+    } else if (expected_ordering == CORE_ROOT_COMPARISON_INCUMBENT) {
+        expected_reverse = CORE_ROOT_COMPARISON_CANDIDATE;
+    }
+    assert(reverse.ordering == expected_reverse);
+    assert(reverse.reason == expected_reason);
+}
+
+static void test_root_comparison_orders_exact_outcomes_before_structure(void) {
+    const CoreOutcome better[] = {
+        CORE_OUTCOME_WIN,
+        CORE_OUTCOME_DRAW,
+        CORE_OUTCOME_UNRESOLVED,
+    };
+    const CoreOutcome worse[] = {
+        CORE_OUTCOME_DRAW,
+        CORE_OUTCOME_UNRESOLVED,
+        CORE_OUTCOME_LOSS,
+    };
+    CoreRootCandidateStats safe = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 8, 3);
+    CoreRootCandidateStats unsafe = root_test_stats(CORE_STRUCTURAL_PROOF_UNSAFE, 0, 3);
+
+    for (size_t index = 0; index < sizeof(better) / sizeof(better[0]); index++) {
+        assert_root_comparison(
+            root_test_value(better[index], CORE_VALUE_BOUND_EXACT, 0.0, 0),
+            unsafe,
+            root_test_value(worse[index], CORE_VALUE_BOUND_EXACT, 0.0, 0),
+            safe,
+            CORE_ROOT_COMPARISON_CANDIDATE,
+            CORE_ROOT_COMPARISON_TERMINAL_OUTCOME
+        );
+    }
+
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_DRAW, CORE_VALUE_BOUND_EXACT, 0.0, 0),
+        unsafe,
+        root_test_value(CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_EXACT, 1000000.0, 20),
+        safe,
+        CORE_ROOT_COMPARISON_CANDIDATE,
+        CORE_ROOT_COMPARISON_TERMINAL_OUTCOME
+    );
+}
+
+static void test_root_comparison_uses_only_decisive_search_bounds(void) {
+    CoreRootCandidateStats equal_structure = root_test_stats(
+        CORE_STRUCTURAL_PROOF_NOT_ANALYZED,
+        0,
+        0
+    );
+
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_DRAW, CORE_VALUE_BOUND_LOWER, 0.0, 0),
+        equal_structure,
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 100.0, 0),
+        equal_structure,
+        CORE_ROOT_COMPARISON_CANDIDATE,
+        CORE_ROOT_COMPARISON_SEARCH_BOUND
+    );
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_UPPER, -10.0, 0),
+        equal_structure,
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_LOWER, 10.0, 0),
+        equal_structure,
+        CORE_ROOT_COMPARISON_EQUAL,
+        CORE_ROOT_COMPARISON_NOT_COMPARED
+    );
+}
+
+static void test_root_comparison_applies_structural_lattice_to_unresolved_values(void) {
+    CoreSearchValue structurally_preferred_value = root_test_value(
+        CORE_OUTCOME_UNRESOLVED,
+        CORE_VALUE_BOUND_EXACT,
+        -100.0,
+        0
+    );
+    CoreSearchValue heuristic_preferred_value = root_test_value(
+        CORE_OUTCOME_UNRESOLVED,
+        CORE_VALUE_BOUND_EXACT,
+        100.0,
+        0
+    );
+    CoreRootCandidateStats safe = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 2, 4);
+    CoreRootCandidateStats unsafe = root_test_stats(CORE_STRUCTURAL_PROOF_UNSAFE, 20, 4);
+    CoreRootCandidateStats deficient_unknown = root_test_stats(
+        CORE_STRUCTURAL_PROOF_UNKNOWN,
+        3,
+        4
+    );
+    CoreRootCandidateStats sufficient_unknown = root_test_stats(
+        CORE_STRUCTURAL_PROOF_UNKNOWN,
+        4,
+        4
+    );
+
+    assert_root_comparison(
+        structurally_preferred_value,
+        safe,
+        heuristic_preferred_value,
+        unsafe,
+        CORE_ROOT_COMPARISON_CANDIDATE,
+        CORE_ROOT_COMPARISON_STRUCTURAL_PROOF
+    );
+    assert_root_comparison(
+        structurally_preferred_value,
+        safe,
+        heuristic_preferred_value,
+        deficient_unknown,
+        CORE_ROOT_COMPARISON_CANDIDATE,
+        CORE_ROOT_COMPARISON_STRUCTURAL_PROOF
+    );
+    assert_root_comparison(
+        structurally_preferred_value,
+        safe,
+        heuristic_preferred_value,
+        sufficient_unknown,
+        CORE_ROOT_COMPARISON_INCUMBENT,
+        CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+    );
+}
+
+static void test_root_comparison_prefers_later_exact_loss(void) {
+    CoreRootCandidateStats equal_structure = root_test_stats(
+        CORE_STRUCTURAL_PROOF_NOT_ANALYZED,
+        0,
+        0
+    );
+
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_EXACT, -999999.0, 9),
+        equal_structure,
+        root_test_value(CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_EXACT, -999990.0, 4),
+        equal_structure,
+        CORE_ROOT_COMPARISON_CANDIDATE,
+        CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL
+    );
+}
+
+static void test_root_comparison_uses_heuristic_only_after_structural_equality(void) {
+    CoreRootCandidateStats structure = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 12, 4);
+
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 17.0, 0),
+        structure,
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 16.0, 0),
+        structure,
+        CORE_ROOT_COMPARISON_CANDIDATE,
+        CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+    );
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 17.0, 0),
+        structure,
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 17.0, 0),
+        structure,
+        CORE_ROOT_COMPARISON_EQUAL,
+        CORE_ROOT_COMPARISON_NOT_COMPARED
+    );
+}
+
 static void test_single_snake_uses_safe_fallback(void) {
     Board* board = BoardCreate(5, 5, "standard", 0);
     Coord body[] = {{2, 2}, {2, 1}, {2, 0}};
@@ -412,6 +622,11 @@ static void test_bounded_rectangle_cycle_proves_capacity(void) {
 }
 
 int main(void) {
+    test_root_comparison_orders_exact_outcomes_before_structure();
+    test_root_comparison_uses_only_decisive_search_bounds();
+    test_root_comparison_applies_structural_lattice_to_unresolved_values();
+    test_root_comparison_prefers_later_exact_loss();
+    test_root_comparison_uses_heuristic_only_after_structural_equality();
     test_single_snake_uses_safe_fallback();
     test_missing_snake_is_error();
     test_solo_two_snakes_uses_minimax();

@@ -74,6 +74,29 @@ typedef enum {
     CORE_SELECTION_CORRIDOR_GUARD = 3,
 } CoreSelectionReason;
 
+typedef enum {
+    CORE_ROOT_COMPARISON_NOT_COMPARED = 0,
+    CORE_ROOT_COMPARISON_TERMINAL_OUTCOME = 1,
+    CORE_ROOT_COMPARISON_SEARCH_BOUND = 2,
+    CORE_ROOT_COMPARISON_STRUCTURAL_PROOF = 3,
+    CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL = 4,
+    CORE_ROOT_COMPARISON_HEURISTIC_VALUE = 5,
+    CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK = 6,
+    CORE_ROOT_COMPARISON_PREVIOUS_PV = 7,
+    CORE_ROOT_COMPARISON_STABLE_DIRECTION = 8,
+} CoreRootComparisonReason;
+
+typedef enum {
+    CORE_ROOT_COMPARISON_INCUMBENT = -1,
+    CORE_ROOT_COMPARISON_EQUAL = 0,
+    CORE_ROOT_COMPARISON_CANDIDATE = 1,
+} CoreRootComparisonOrdering;
+
+typedef struct {
+    CoreRootComparisonOrdering ordering;
+    CoreRootComparisonReason reason;
+} CoreRootComparison;
+
 typedef struct {
     bool evaluated;
     bool allowed;

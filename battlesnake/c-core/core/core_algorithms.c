@@ -1451,6 +1451,158 @@ static CoreSearchValue core_terminal_value(
     return value;
 }
 
+static int core_outcome_rank(CoreOutcome outcome) {
+    switch (outcome) {
+        case CORE_OUTCOME_WIN:
+            return 3;
+        case CORE_OUTCOME_DRAW:
+            return 2;
+        case CORE_OUTCOME_UNRESOLVED:
+            return 1;
+        case CORE_OUTCOME_LOSS:
+            return 0;
+    }
+    return 1;
+}
+
+static void core_outcome_interval(
+    const CoreSearchValue* value,
+    int* out_lower,
+    int* out_upper
+) {
+    int rank = core_outcome_rank(value->outcome);
+    *out_lower = value->bound == CORE_VALUE_BOUND_UPPER ? 0 : rank;
+    *out_upper = value->bound == CORE_VALUE_BOUND_LOWER ? 3 : rank;
+}
+
+static int core_structural_rank(const CoreRootCandidateStats* candidate) {
+    if (candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE) {
+        return 2;
+    }
+    if (candidate->structural_proof == CORE_STRUCTURAL_PROOF_UNSAFE) {
+        return 0;
+    }
+    if (candidate->structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN) {
+        return candidate->relaxed_static_capacity >= candidate->post_move_length ? 2 : 1;
+    }
+    return 1;
+}
+
+static CoreRootComparison core_root_comparison(
+    CoreRootComparisonOrdering ordering,
+    CoreRootComparisonReason reason
+) {
+    CoreRootComparison comparison;
+    comparison.ordering = ordering;
+    comparison.reason = reason;
+    return comparison;
+}
+
+CoreRootComparison CoreCompareRootCandidates(
+    const CoreSearchValue* candidate_value,
+    const CoreRootCandidateStats* candidate_stats,
+    const CoreSearchValue* incumbent_value,
+    const CoreRootCandidateStats* incumbent_stats
+) {
+    if (
+        candidate_value == NULL || candidate_stats == NULL ||
+        incumbent_value == NULL || incumbent_stats == NULL
+    ) {
+        return core_root_comparison(
+            CORE_ROOT_COMPARISON_EQUAL,
+            CORE_ROOT_COMPARISON_NOT_COMPARED
+        );
+    }
+
+    int candidate_lower = 0;
+    int candidate_upper = 0;
+    int incumbent_lower = 0;
+    int incumbent_upper = 0;
+    core_outcome_interval(candidate_value, &candidate_lower, &candidate_upper);
+    core_outcome_interval(incumbent_value, &incumbent_lower, &incumbent_upper);
+    if (candidate_lower > incumbent_upper) {
+        CoreRootComparisonReason reason =
+            candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
+            incumbent_value->bound == CORE_VALUE_BOUND_EXACT ?
+                CORE_ROOT_COMPARISON_TERMINAL_OUTCOME :
+                CORE_ROOT_COMPARISON_SEARCH_BOUND;
+        return core_root_comparison(CORE_ROOT_COMPARISON_CANDIDATE, reason);
+    }
+    if (candidate_upper < incumbent_lower) {
+        CoreRootComparisonReason reason =
+            candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
+            incumbent_value->bound == CORE_VALUE_BOUND_EXACT ?
+                CORE_ROOT_COMPARISON_TERMINAL_OUTCOME :
+                CORE_ROOT_COMPARISON_SEARCH_BOUND;
+        return core_root_comparison(CORE_ROOT_COMPARISON_INCUMBENT, reason);
+    }
+
+    if (
+        candidate_value->outcome == CORE_OUTCOME_UNRESOLVED &&
+        incumbent_value->outcome == CORE_OUTCOME_UNRESOLVED
+    ) {
+        int candidate_structural_rank = core_structural_rank(candidate_stats);
+        int incumbent_structural_rank = core_structural_rank(incumbent_stats);
+        if (candidate_structural_rank > incumbent_structural_rank) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_CANDIDATE,
+                CORE_ROOT_COMPARISON_STRUCTURAL_PROOF
+            );
+        }
+        if (candidate_structural_rank < incumbent_structural_rank) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_INCUMBENT,
+                CORE_ROOT_COMPARISON_STRUCTURAL_PROOF
+            );
+        }
+    }
+
+    if (
+        candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
+        incumbent_value->bound == CORE_VALUE_BOUND_EXACT &&
+        candidate_value->outcome == CORE_OUTCOME_LOSS &&
+        incumbent_value->outcome == CORE_OUTCOME_LOSS
+    ) {
+        if (candidate_value->terminal_distance > incumbent_value->terminal_distance) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_CANDIDATE,
+                CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL
+            );
+        }
+        if (candidate_value->terminal_distance < incumbent_value->terminal_distance) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_INCUMBENT,
+                CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL
+            );
+        }
+    }
+
+    if (
+        candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
+        incumbent_value->bound == CORE_VALUE_BOUND_EXACT &&
+        candidate_value->outcome == CORE_OUTCOME_UNRESOLVED &&
+        incumbent_value->outcome == CORE_OUTCOME_UNRESOLVED
+    ) {
+        if (candidate_value->score > incumbent_value->score) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_CANDIDATE,
+                CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+            );
+        }
+        if (candidate_value->score < incumbent_value->score) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_INCUMBENT,
+                CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+            );
+        }
+    }
+
+    return core_root_comparison(
+        CORE_ROOT_COMPARISON_EQUAL,
+        CORE_ROOT_COMPARISON_NOT_COMPARED
+    );
+}
+
 static CoreSearchValue core_backup_child_value(
     const CoreEvaluationWeights* weights,
     CoreSearchValue child
