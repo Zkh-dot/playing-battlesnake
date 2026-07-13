@@ -112,6 +112,49 @@ def test_low_health_geometric_cycle_is_unknown_without_survivability_proof() -> 
     assert candidate["proof_cutoff"] == "survivability"
 
 
+def test_cycle_found_after_starvation_is_not_a_bounded_survivability_certificate() -> None:
+    board = _board(
+        7,
+        5,
+        [(1, 2), (0, 2), (0, 1), (0, 0)],
+        [(6, 4), (6, 3)],
+        health=6,
+    )
+
+    candidate = _candidate(board, "up")
+
+    # Four health is enough for the old one-turnover pre-gate, but the first
+    # geometric repetition is much later.  A relaxed-state cycle cannot spend
+    # health that the production snake does not have.
+    assert candidate["structural_proof"] == "unknown"
+    assert candidate["proof_cutoff"] == "survivability"
+
+
+def test_route_food_growth_must_replay_the_delayed_tail_before_cycle_certificate() -> None:
+    no_growth = _board(
+        5,
+        5,
+        [(0, 1), (0, 2), (0, 3), (1, 3), (1, 2), (2, 2), (2, 1), (2, 0)],
+        [(4, 1)],
+    )
+    delayed_tail = _board(
+        5,
+        5,
+        [(0, 1), (0, 2), (0, 3), (1, 3), (1, 2), (2, 2), (2, 1), (2, 0)],
+        [(4, 1)],
+        food=[(3, 2)],
+    )
+
+    no_growth_candidate = _candidate(no_growth, "down")
+    delayed_tail_candidate = _candidate(delayed_tail, "down")
+
+    assert no_growth_candidate["structural_proof"] == "safe"
+    # The route meal delays the tail, so the relaxed no-growth repetition is
+    # not itself a full-body certificate.
+    assert delayed_tail_candidate["structural_proof"] == "unknown"
+    assert delayed_tail_candidate["proof_cutoff"] == "survivability"
+
+
 def test_low_health_hazard_rectangle_is_not_a_safe_capacity_witness() -> None:
     board = _board(
         4,
@@ -392,7 +435,6 @@ def test_replay_has_safe_full_body_certificate_but_bad_move_does_not(
         _fixture_board(position),
         str(position["snake_id"]),
         time_budget_ms=5000,
-        fixed_depth=1,
     )
     bad = result["root_candidates"][bad_move]
     alternatives = [
@@ -404,6 +446,27 @@ def test_replay_has_safe_full_body_certificate_but_bad_move_does_not(
     assert bad["relaxed_static_capacity"] < bad["post_move_length"]
     assert bad["structural_proof"] != "safe"
     assert any(candidate["structural_proof"] == "safe" for candidate in alternatives)
+
+
+def test_t288_fixed_depth_downgrades_unvalidated_no_growth_cycle() -> None:
+    position = _positions()[2]
+    board = _fixture_board(position)
+
+    result = minimax_diagnostics(
+        board, str(position["snake_id"]), time_budget_ms=5000, fixed_depth=1
+    )
+    strict = minimax_diagnostics(
+        board,
+        str(position["snake_id"]),
+        time_budget_ms=5000,
+        fixed_depth=1,
+        root_policy="strict_minimax",
+    )
+
+    assert result["root_candidates"]["down"]["structural_proof"] == "unknown"
+    assert result["root_candidates"]["down"]["proof_cutoff"] == "survivability"
+    assert result["root_candidates"]["left"]["allowed"] is True
+    assert strict["root_candidates"]["left"]["allowed"] is True
 
 
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
@@ -434,6 +497,8 @@ def test_replay_branching_pocket_is_structurally_dominated(
     assert bad["allowed"] is False
     assert bad["rejection_reason"] == "structurally_dominated"
     assert any(candidate["structural_proof"] == "safe" for candidate in allowed)
+    if int(evidence["turn"]) == 288:
+        assert result["root_candidates"]["down"]["proof_cutoff"] == "bounded_lasso"
 
 
 def test_t439_fixed_depth_uses_root_dominance_before_search_scores() -> None:

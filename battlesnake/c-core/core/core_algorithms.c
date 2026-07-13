@@ -2017,6 +2017,7 @@ static bool core_structural_opponent_closes_at(
 
 typedef struct {
     const char* snake_id;
+    const Board* source_board;
     const CoreSearchTimer* timer;
     CoreStructuralOpponentTiming opponent_timing;
     int body_len;
@@ -2026,6 +2027,14 @@ typedef struct {
     uint64_t max_states;
     bool use_opponent_closure;
     Coord* ancestor_bodies;
+    Coord* path_heads;
+    bool* path_closure_required;
+    const Coord* initial_body;
+    int64_t initial_health;
+    int optional_food_count;
+    bool lasso_survivability_failed;
+    bool allow_lasso_early;
+    bool bounded_lasso_found;
     uint64_t explored_states;
     uint64_t* analysis_nodes;
     CoreRelaxedCapacityWorkspace capacity_workspace;
@@ -2042,6 +2051,133 @@ static CoreStructuralProofOutcome core_structural_outcome(
     return outcome;
 }
 
+typedef enum {
+    CORE_LASSO_NOT_PROVED = 0,
+    CORE_LASSO_PROVED = 1,
+    CORE_LASSO_DEADLINE = -1,
+    CORE_LASSO_ALLOCATION_FAILURE = -2,
+} CoreLassoResult;
+
+/* Validate a simple repeated-head route against the two extremal realizations
+ * that matter for a bounded full-body certificate.  The no-future-food replay
+ * spends exact health/hazard damage.  The all-route-food replay keeps the
+ * longest possible tail; if it is legal and leaves a free loop cell, every
+ * subset of contested meals has weaker self-occupancy.  This proves only the
+ * concrete realization prefix.  Adversarial play after it remains minimax's
+ * responsibility. */
+static CoreLassoResult core_validate_bounded_lasso(
+    CoreStructuralProofContext* context,
+    int depth,
+    int loop_start,
+    int* out_capacity
+) {
+    int loop_length = depth - loop_start;
+    if (loop_length <= context->body_len) {
+        return CORE_LASSO_NOT_PROVED;
+    }
+    for (int left = loop_start; left < depth; left++) {
+        for (int right = left + 1; right < depth; right++) {
+            if (CoordEquals(context->path_heads[left], context->path_heads[right])) {
+                return CORE_LASSO_NOT_PROVED;
+            }
+        }
+    }
+    if (context->source_board->food_count > INT_MAX - context->body_len ||
+        (size_t)context->body_len + (size_t)context->source_board->food_count >
+            SIZE_MAX / sizeof(Coord) ||
+        (size_t)context->source_board->food_count > SIZE_MAX / sizeof(bool)) {
+        return CORE_LASSO_ALLOCATION_FAILURE;
+    }
+    int body_capacity = context->body_len + context->source_board->food_count;
+    Coord* body = (Coord*)malloc((size_t)body_capacity * sizeof(Coord));
+    bool* eaten = context->source_board->food_count > 0
+        ? (bool*)calloc((size_t)context->source_board->food_count, sizeof(bool))
+        : NULL;
+    if (body == NULL || (context->source_board->food_count > 0 && eaten == NULL)) {
+        free(body);
+        free(eaten);
+        return CORE_LASSO_ALLOCATION_FAILURE;
+    }
+    memcpy(body, context->initial_body, (size_t)context->body_len * sizeof(Coord));
+    int body_len = context->body_len;
+    int64_t health = context->initial_health;
+    for (int food = 0; food < context->source_board->food_count; food++) {
+        eaten[food] = CoordEquals(
+            context->source_board->food[food], context->path_heads[1]
+        );
+    }
+    CoreLassoResult result = CORE_LASSO_NOT_PROVED;
+    for (int step = 2; step <= depth; step++) {
+        if (core_search_timed_out(context->timer)) {
+            result = CORE_LASSO_DEADLINE;
+            break;
+        }
+        Coord next = context->path_heads[step];
+        if (!BoardInBounds(context->source_board, next) ||
+            (context->use_opponent_closure && context->path_closure_required[step] &&
+             core_structural_opponent_closes_at(
+                &context->opponent_timing,
+                core_coord_index(context->source_board, next),
+                step,
+                step
+            ))) {
+            context->lasso_survivability_failed = true;
+            break;
+        }
+        health -= 1;
+        if (core_coord_in_array(
+                context->source_board->hazards, context->source_board->hazard_count, next
+            )) {
+            health -= context->source_board->hazard_damage;
+        }
+        if (health <= 0) {
+            context->lasso_survivability_failed = true;
+            break;
+        }
+        bool grow = false;
+        for (int food = 0; food < context->source_board->food_count; food++) {
+            if (!eaten[food] && CoordEquals(context->source_board->food[food], next)) {
+                eaten[food] = true;
+                grow = true;
+                break;
+            }
+        }
+        int occupied = grow ? body_len : body_len - 1;
+        if (core_coord_in_array(body, occupied, next)) {
+            context->lasso_survivability_failed = true;
+            break;
+        }
+        int copy_count = grow ? body_len : body_len - 1;
+        if (copy_count > 0) {
+            memmove(body + 1, body, (size_t)copy_count * sizeof(Coord));
+        }
+        body[0] = next;
+        if (grow) body_len++;
+        if (step == depth) {
+            bool wholly_resident = body_len < loop_length;
+            for (int segment = 0; wholly_resident && segment < body_len; segment++) {
+                bool on_loop = false;
+                for (int loop = loop_start; loop < depth; loop++) {
+                    if (CoordEquals(body[segment], context->path_heads[loop])) {
+                        on_loop = true;
+                        break;
+                    }
+                }
+                wholly_resident = on_loop;
+            }
+            if (wholly_resident) {
+                *out_capacity = loop_length;
+                result = CORE_LASSO_PROVED;
+            } else {
+                context->lasso_survivability_failed = true;
+            }
+        }
+    }
+    free(body);
+    free(eaten);
+    return result;
+}
+
 static CoreStructuralProofOutcome core_prove_structural_node(
     CoreSearchState* state,
     int depth,
@@ -2051,6 +2187,8 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     bool region_established,
     int known_capacity,
     int known_cyclic_core,
+    int64_t no_food_health,
+    bool arrival_closure_required,
     CoreStructuralProofContext* context
 ) {
     if (core_search_timed_out(context->timer)) {
@@ -2076,6 +2214,8 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     }
     context->explored_states++;
     (*context->analysis_nodes)++;
+    context->path_heads[depth] = SnakeHead(snake);
+    context->path_closure_required[depth] = arrival_closure_required;
 
     bool head_in_cyclic_core = known_cyclic_core > 0;
     int capacity = known_capacity;
@@ -2164,6 +2304,37 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     }
     if (was_region_established && !region_established && safe_steps_remaining >= 0) {
         safe_steps_remaining = -2;
+    }
+    for (int loop_start = depth - 1; loop_start >= 1; loop_start--) {
+        if (!CoordEquals(context->path_heads[loop_start], SnakeHead(snake))) continue;
+        int loop_capacity = 0;
+        CoreLassoResult lasso = core_validate_bounded_lasso(
+            context, depth, loop_start, &loop_capacity
+        );
+        if (lasso == CORE_LASSO_PROVED) {
+            if (!context->bounded_lasso_found) {
+                context->bounded_lasso_found = true;
+            }
+            if (context->allow_lasso_early) {
+                return core_structural_outcome(
+                    CORE_STRUCTURAL_PROOF_SAFE,
+                    CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO,
+                    depth,
+                    loop_capacity
+                );
+            }
+        } else if (lasso == CORE_LASSO_DEADLINE) {
+            return core_structural_outcome(
+                CORE_STRUCTURAL_PROOF_UNKNOWN, CORE_STRUCTURAL_CUTOFF_DEADLINE, depth, 0
+            );
+        } else if (lasso == CORE_LASSO_ALLOCATION_FAILURE) {
+            return core_structural_outcome(
+                CORE_STRUCTURAL_PROOF_UNKNOWN,
+                CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE,
+                depth,
+                0
+            );
+        }
     }
     if (capacity_sufficient) {
         if (context->require_capacity_sufficient && safe_steps_remaining == -1 &&
@@ -2306,17 +2477,42 @@ static CoreStructuralProofOutcome core_prove_structural_node(
             0
         );
         if (child != NULL && child->body_len == context->body_len) {
-            child_outcome = core_prove_structural_node(
-                state,
-                depth + 1,
-                ancestor_count + 1,
-                safe_steps_remaining >= 0 ? safe_steps_remaining - 1 : safe_steps_remaining,
-                minimum_capacity,
-                region_established,
-                ordered_moves[ordered].capacity,
-                ordered_moves[ordered].cyclic_core ? 1 : 0,
-                context
-            );
+            Coord child_head = SnakeHead(child);
+            int64_t child_health = no_food_health - 1;
+            if (core_coord_in_array(
+                    context->source_board->hazards,
+                    context->source_board->hazard_count,
+                    child_head
+                )) {
+                child_health -= context->source_board->hazard_damage;
+            }
+            if (child_health <= 0 && context->allow_lasso_early) {
+                /* The budgeted opportunity pass is looking for a bounded
+                 * survivability witness.  A no-future-food branch that has
+                 * already exhausted real health cannot produce one, even if
+                 * relaxed geometry later repeats.  Fixed/strict execution
+                 * keeps the ordinary geometric traversal unchanged. */
+                child_outcome = core_structural_outcome(
+                    CORE_STRUCTURAL_PROOF_UNKNOWN,
+                    CORE_STRUCTURAL_CUTOFF_SURVIVABILITY,
+                    depth + 1,
+                    0
+                );
+            } else {
+                child_outcome = core_prove_structural_node(
+                    state,
+                    depth + 1,
+                    ancestor_count + 1,
+                    safe_steps_remaining >= 0 ? safe_steps_remaining - 1 : safe_steps_remaining,
+                    minimum_capacity,
+                    region_established,
+                    ordered_moves[ordered].capacity,
+                    ordered_moves[ordered].cyclic_core ? 1 : 0,
+                    child_health,
+                    !region_established,
+                    context
+                );
+            }
         }
         if (!CoreSearchStateUnmake(state)) {
             return core_structural_outcome(
@@ -2962,7 +3158,8 @@ static void core_analyze_self_trap(
     const CoreSearchTimer* timer,
     CoreRootCandidateStats* candidate,
     uint64_t* analysis_nodes,
-    bool skip_capacity_deficit_proof
+    bool skip_capacity_deficit_proof,
+    bool allow_lasso_early
 ) {
     if (core_search_timed_out(timer)) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
@@ -3055,7 +3252,6 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
-    int possible_body_length = post_move_length + optional_food_count;
     /* Health/hazards were certified above from the real root transition.  The
      * geometry channel deliberately ignores health and future food; any SAFE
      * result is validated below against room for the all-food body. */
@@ -3164,7 +3360,16 @@ static void core_analyze_self_trap(
         Coord* short_ancestors = (Coord*)malloc(
             (size_t)post_move_length * (size_t)post_move_length * sizeof(Coord)
         );
-        if (short_ancestors == NULL) {
+        Coord* short_path = (Coord*)malloc(
+            ((size_t)post_move_length + 2u) * sizeof(Coord)
+        );
+        bool* short_closure = (bool*)malloc(
+            ((size_t)post_move_length + 2u) * sizeof(bool)
+        );
+        if (short_ancestors == NULL || short_path == NULL || short_closure == NULL) {
+            free(short_ancestors);
+            free(short_path);
+            free(short_closure);
             candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
             candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
             core_structural_opponent_timing_free(&opponent_timing);
@@ -3173,6 +3378,7 @@ static void core_analyze_self_trap(
         }
         CoreStructuralProofContext short_context = {
             .snake_id = snake_id,
+            .source_board = board,
             .timer = timer,
             .opponent_timing = opponent_timing,
             .body_len = post_move_length,
@@ -3182,6 +3388,15 @@ static void core_analyze_self_trap(
             .max_states = (uint64_t)post_move_length * (uint64_t)cell_count,
             .use_opponent_closure = opponent_closure_considered,
             .ancestor_bodies = short_ancestors,
+            .path_heads = short_path,
+            .path_closure_required = short_closure,
+            /* The root DFS node snapshots its body into ancestor slot zero.
+             * Unlike the search state's live buffer, that slot stays immutable
+             * while descendants validate a realization prefix. */
+            .initial_body = short_ancestors,
+            .initial_health = post_root_health,
+            .optional_food_count = optional_food_count,
+            .allow_lasso_early = allow_lasso_early,
             .explored_states = 0,
             .analysis_nodes = analysis_nodes,
         };
@@ -3194,16 +3409,22 @@ static void core_analyze_self_trap(
             false,
             candidate->relaxed_static_capacity,
             root_in_cyclic_core ? 1 : 0,
+            post_root_health,
+            true,
             &short_context
         );
         core_relaxed_capacity_workspace_free(&short_context.capacity_workspace);
         core_biconnected_workspace_free(&short_context.biconnected_workspace);
         free(short_ancestors);
+        free(short_path);
+        free(short_closure);
         if (short_outcome.result != CORE_STRUCTURAL_PROOF_UNKNOWN) {
             bool optional_food_uncertain = optional_food_count > 0 &&
-                (short_outcome.result == CORE_STRUCTURAL_PROOF_UNSAFE ||
-                 (short_outcome.result == CORE_STRUCTURAL_PROOF_SAFE &&
-                  short_outcome.proved_capacity < possible_body_length));
+                short_outcome.result == CORE_STRUCTURAL_PROOF_UNSAFE;
+            optional_food_uncertain = optional_food_uncertain ||
+                (short_outcome.result == CORE_STRUCTURAL_PROOF_SAFE &&
+                 !short_context.bounded_lasso_found &&
+                 (optional_food_count > 0 || short_context.lasso_survivability_failed));
             candidate->structural_proof = optional_food_uncertain
                 ? CORE_STRUCTURAL_PROOF_UNKNOWN : short_outcome.result;
             candidate->proof_cutoff = optional_food_uncertain
@@ -3243,7 +3464,12 @@ static void core_analyze_self_trap(
     Coord* ancestor_bodies = (Coord*)malloc(
         (size_t)ancestor_capacity * (size_t)post_move_length * sizeof(Coord)
     );
-    if (ancestor_bodies == NULL) {
+    Coord* path_heads = (Coord*)malloc(((size_t)ancestor_capacity + 2u) * sizeof(Coord));
+    bool* path_closure = (bool*)malloc(((size_t)ancestor_capacity + 2u) * sizeof(bool));
+    if (ancestor_bodies == NULL || path_heads == NULL || path_closure == NULL) {
+        free(ancestor_bodies);
+        free(path_heads);
+        free(path_closure);
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
         core_structural_opponent_timing_free(&opponent_timing);
@@ -3252,6 +3478,7 @@ static void core_analyze_self_trap(
     }
     CoreStructuralProofContext context = {
         .snake_id = snake_id,
+        .source_board = board,
         .timer = timer,
         .opponent_timing = opponent_timing,
         .body_len = post_move_length,
@@ -3266,6 +3493,12 @@ static void core_analyze_self_trap(
                        (uint64_t)board->height) * (uint64_t)cell_count,
         .use_opponent_closure = opponent_closure_considered,
         .ancestor_bodies = ancestor_bodies,
+        .path_heads = path_heads,
+        .path_closure_required = path_closure,
+        .initial_body = ancestor_bodies,
+        .initial_health = post_root_health,
+        .optional_food_count = optional_food_count,
+        .allow_lasso_early = allow_lasso_early,
         .explored_states = 0,
         .analysis_nodes = analysis_nodes,
     };
@@ -3278,21 +3511,30 @@ static void core_analyze_self_trap(
         false,
         candidate->relaxed_static_capacity,
         root_in_cyclic_core ? 1 : 0,
+        post_root_health,
+        true,
         &context
     );
     core_relaxed_capacity_workspace_free(&context.capacity_workspace);
     core_biconnected_workspace_free(&context.biconnected_workspace);
     bool optional_food_uncertain = optional_food_count > 0 &&
-        (outcome.result == CORE_STRUCTURAL_PROOF_UNSAFE ||
-         (outcome.result == CORE_STRUCTURAL_PROOF_SAFE &&
-          outcome.proved_capacity < possible_body_length));
+        outcome.result == CORE_STRUCTURAL_PROOF_UNSAFE;
+    optional_food_uncertain = optional_food_uncertain ||
+        (outcome.result == CORE_STRUCTURAL_PROOF_SAFE &&
+         !context.bounded_lasso_found &&
+         (optional_food_count > 0 || context.lasso_survivability_failed));
     candidate->structural_proof = optional_food_uncertain
         ? CORE_STRUCTURAL_PROOF_UNKNOWN : outcome.result;
     candidate->proof_cutoff = optional_food_uncertain
         ? CORE_STRUCTURAL_CUTOFF_SURVIVABILITY : outcome.cutoff;
     candidate->explored_states = context.explored_states;
     candidate->structural_capacity = outcome.proved_capacity;
+    if (outcome.cutoff == CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO) {
+        candidate->proof_horizon = outcome.depth;
+    }
     free(ancestor_bodies);
+    free(path_heads);
+    free(path_closure);
     core_structural_opponent_timing_free(&opponent_timing);
     CoreSearchStateFree(&state);
 }
@@ -3605,6 +3847,8 @@ static CoreStatus core_prepare_root_policy(
             candidate,
             &stats->root_analysis_nodes,
             safe_alive_certificate_found && allow_policy_sufficient_cutoff &&
+                effective_policy == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+            allow_policy_sufficient_cutoff &&
                 effective_policy == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY
         );
         CoreRootReplyClosureResult root_reply_closure =

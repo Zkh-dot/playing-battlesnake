@@ -475,6 +475,7 @@ static const char* structural_cutoff_name(CoreStructuralProofCutoff cutoff) {
         case CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE: return "allocation_failure";
         case CORE_STRUCTURAL_CUTOFF_POLICY_SUFFICIENT: return "policy_sufficient";
         case CORE_STRUCTURAL_CUTOFF_SURVIVABILITY: return "survivability";
+        case CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO: return "bounded_lasso";
         default: return "none";
     }
 }
