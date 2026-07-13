@@ -273,6 +273,52 @@ static void test_default_search_config_uses_ladder_policy(void) {
     assert(zeroed.root_policy == CORE_ROOT_POLICY_STRICT_MINIMAX);
 }
 
+static void test_branching_pocket_proves_every_branch_dies(void) {
+    Board* board = BoardCreate(5, 5, "standard", 0);
+    Coord me_body[] = {{2, 0}, {2, 1}, {2, 2}, {1, 2}, {0, 2}, {0, 3}, {1, 3}, {1, 4}, {0, 4}};
+    Coord you_body[] = {{4, 4}, {4, 3}, {4, 2}};
+    Snake me = make_snake("me", me_body, 9, 90);
+    Snake you = make_snake("you", you_body, 3, 90);
+    CoreSearchConfig config = CoreSearchConfigDefault(1000);
+    CoreSearchStats stats;
+    MoveDirection move = MOVE_INVALID;
+
+    config.fixed_depth = 1;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
+    assert(stats.root_candidates[MOVE_LEFT].structural_proof == CORE_STRUCTURAL_PROOF_UNSAFE);
+    assert(stats.root_candidates[MOVE_LEFT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_DEAD_END);
+    assert(stats.root_candidates[MOVE_LEFT].proof_horizon == 9);
+    assert(stats.root_candidates[MOVE_LEFT].explored_states > 1);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
+static void test_repeatable_loop_is_structurally_safe(void) {
+    Board* board = BoardCreate(3, 2, "standard", 0);
+    Coord me_body[] = {{0, 0}, {0, 1}, {1, 1}, {1, 0}};
+    Coord you_body[] = {{2, 1}};
+    Snake me = make_snake("me", me_body, 4, 90);
+    Snake you = make_snake("you", you_body, 1, 90);
+    CoreSearchConfig config = CoreSearchConfigDefault(1000);
+    CoreSearchStats stats;
+    MoveDirection move = MOVE_INVALID;
+
+    config.fixed_depth = 1;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
+    assert(stats.root_candidates[MOVE_RIGHT].structural_proof == CORE_STRUCTURAL_PROOF_SAFE);
+    assert(stats.root_candidates[MOVE_RIGHT].explored_states > 1);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
 int main(void) {
     test_single_snake_uses_safe_fallback();
     test_missing_snake_is_error();
@@ -290,5 +336,7 @@ int main(void) {
     test_effective_budget_allows_zero_margin();
     test_duel_root_profile_prefers_contingent_survival_over_terminal_moves();
     test_default_search_config_uses_ladder_policy();
+    test_branching_pocket_proves_every_branch_dies();
+    test_repeatable_loop_is_structurally_safe();
     return 0;
 }

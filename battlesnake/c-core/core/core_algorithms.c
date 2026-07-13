@@ -1604,7 +1604,201 @@ static bool core_body_seen(const Coord* seen, int seen_count, int body_len, cons
     return false;
 }
 
-static void core_analyze_self_trap(
+#define CORE_STRUCTURAL_PROOF_MAX_STATES 200000u
+
+typedef struct {
+    CoreStructuralProofResult result;
+    CoreStructuralProofCutoff cutoff;
+    int depth;
+} CoreStructuralProofOutcome;
+
+typedef struct {
+    const char* snake_id;
+    const CoreSearchTimer* timer;
+    const int* opponent_arrival;
+    int body_len;
+    int horizon;
+    bool use_opponent_closure;
+    Coord* ancestor_bodies;
+    uint64_t explored_states;
+    uint64_t* analysis_nodes;
+} CoreStructuralProofContext;
+
+static CoreStructuralProofOutcome core_structural_outcome(
+    CoreStructuralProofResult result,
+    CoreStructuralProofCutoff cutoff,
+    int depth
+) {
+    CoreStructuralProofOutcome outcome = {result, cutoff, depth};
+    return outcome;
+}
+
+static CoreStructuralProofOutcome core_prove_structural_node(
+    CoreSearchState* state,
+    int depth,
+    int ancestor_count,
+    CoreStructuralProofContext* context
+) {
+    if (core_search_timed_out(context->timer)) {
+        return core_structural_outcome(CORE_STRUCTURAL_PROOF_UNKNOWN, CORE_STRUCTURAL_CUTOFF_DEADLINE, depth);
+    }
+    if (context->explored_states >= CORE_STRUCTURAL_PROOF_MAX_STATES) {
+        return core_structural_outcome(
+            CORE_STRUCTURAL_PROOF_UNKNOWN,
+            CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT,
+            depth
+        );
+    }
+
+    const Board* board = CoreSearchStateBoard(state);
+    const Snake* snake = BoardFindSnakeConst(board, context->snake_id);
+    if (snake == NULL || snake->body_len != context->body_len) {
+        return core_structural_outcome(CORE_STRUCTURAL_PROOF_UNSAFE, CORE_STRUCTURAL_CUTOFF_DEAD_END, depth);
+    }
+    context->explored_states++;
+    (*context->analysis_nodes)++;
+
+    if (core_body_seen(context->ancestor_bodies, ancestor_count, context->body_len, snake) &&
+        !context->use_opponent_closure) {
+        return core_structural_outcome(CORE_STRUCTURAL_PROOF_SAFE, CORE_STRUCTURAL_CUTOFF_CYCLE, depth);
+    }
+    if (depth >= context->horizon) {
+        return core_structural_outcome(CORE_STRUCTURAL_PROOF_SAFE, CORE_STRUCTURAL_CUTOFF_HORIZON, depth);
+    }
+    memcpy(
+        context->ancestor_bodies + (size_t)ancestor_count * (size_t)context->body_len,
+        snake->body,
+        (size_t)context->body_len * sizeof(Coord)
+    );
+
+    const char* ids[1] = {context->snake_id};
+    bool saw_unknown = false;
+    CoreStructuralProofOutcome unknown = core_structural_outcome(
+        CORE_STRUCTURAL_PROOF_UNKNOWN,
+        CORE_STRUCTURAL_CUTOFF_NONE,
+        depth
+    );
+    int deepest_dead_end = depth;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        Coord destination = MoveStep(SnakeHead(snake), (MoveDirection)move);
+        if (context->use_opponent_closure && BoardInBounds(board, destination) &&
+            context->opponent_arrival[core_coord_index(board, destination)] <= depth + 1) {
+            continue;
+        }
+        MoveDirection moves[1] = {(MoveDirection)move};
+        if (!CoreSearchStateMakeMoves(state, ids, moves, 1)) {
+            return core_structural_outcome(
+                CORE_STRUCTURAL_PROOF_UNKNOWN,
+                CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE,
+                depth
+            );
+        }
+        const Snake* child = BoardFindSnakeConst(CoreSearchStateBoard(state), context->snake_id);
+        CoreStructuralProofOutcome child_outcome = core_structural_outcome(
+            CORE_STRUCTURAL_PROOF_UNSAFE,
+            CORE_STRUCTURAL_CUTOFF_DEAD_END,
+            depth + 1
+        );
+        if (child != NULL && child->body_len == context->body_len) {
+            child_outcome = core_prove_structural_node(state, depth + 1, ancestor_count + 1, context);
+        }
+        if (!CoreSearchStateUnmake(state)) {
+            return core_structural_outcome(
+                CORE_STRUCTURAL_PROOF_UNKNOWN,
+                CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE,
+                depth
+            );
+        }
+        if (child_outcome.result == CORE_STRUCTURAL_PROOF_SAFE) {
+            return child_outcome;
+        }
+        if (child_outcome.result == CORE_STRUCTURAL_PROOF_UNKNOWN && !saw_unknown) {
+            saw_unknown = true;
+            unknown = child_outcome;
+        } else if (child_outcome.result == CORE_STRUCTURAL_PROOF_UNSAFE && child_outcome.depth > deepest_dead_end) {
+            deepest_dead_end = child_outcome.depth;
+        }
+    }
+    if (saw_unknown) {
+        return unknown;
+    }
+    return core_structural_outcome(
+        CORE_STRUCTURAL_PROOF_UNSAFE,
+        CORE_STRUCTURAL_CUTOFF_DEAD_END,
+        deepest_dead_end
+    );
+}
+
+static bool core_prepare_structural_opponent_arrival(
+    const Board* board,
+    const char* snake_id,
+    int own_length,
+    int horizon,
+    int** out_arrival,
+    bool* out_considered
+) {
+    *out_arrival = NULL;
+    *out_considered = false;
+    size_t cell_count = 0;
+    if (!core_cell_count(board, &cell_count) || cell_count > SIZE_MAX / sizeof(int)) {
+        return false;
+    }
+    int* arrival = (int*)malloc(cell_count * sizeof(int));
+    if (arrival == NULL) {
+        return false;
+    }
+    for (size_t i = 0; i < cell_count; i++) {
+        arrival[i] = CORE_SPACE_TIME_NEVER;
+    }
+    if (!core_has_equal_or_longer_opponent(board, snake_id, own_length)) {
+        *out_arrival = arrival;
+        return true;
+    }
+
+    *out_considered = true;
+    if ((size_t)horizon + 1 > SIZE_MAX / cell_count) {
+        free(arrival);
+        return false;
+    }
+    size_t state_count = ((size_t)horizon + 1) * cell_count;
+    int* vacate = (int*)calloc(cell_count, sizeof(int));
+    unsigned int* seen = (unsigned int*)calloc(state_count, sizeof(unsigned int));
+    size_t* queue = (size_t*)malloc(state_count * sizeof(size_t));
+    if (vacate == NULL || seen == NULL || queue == NULL) {
+        free(arrival);
+        free(vacate);
+        free(seen);
+        free(queue);
+        return false;
+    }
+    core_fill_vacate_times(board, snake_id, vacate);
+    bool filled = core_fill_opponent_arrival(
+        board,
+        snake_id,
+        own_length,
+        vacate,
+        arrival,
+        seen,
+        1,
+        queue,
+        cell_count,
+        horizon
+    );
+    free(vacate);
+    free(seen);
+    free(queue);
+    if (!filled) {
+        free(arrival);
+        return false;
+    }
+    *out_arrival = arrival;
+    return true;
+}
+
+/* Preserve the pre-structural-proof diagnostic contract while callers migrate
+ * from CoreTrapStatus to CoreStructuralProofResult. This result must not be
+ * used as evidence that a branching state is safe. */
+static void core_analyze_legacy_self_trap(
     const Board* board,
     const char* snake_id,
     MoveDirection root_move,
@@ -1616,14 +1810,7 @@ static void core_analyze_self_trap(
     memset(&state, 0, sizeof(state));
     uint32_t root_cause = 0;
     int post_move_length = 0;
-    if (!core_relaxed_root_state(
-        board,
-        snake_id,
-        root_move,
-        &state,
-        &post_move_length,
-        &root_cause
-    )) {
+    if (!core_relaxed_root_state(board, snake_id, root_move, &state, &post_move_length, &root_cause)) {
         candidate->trap_status = CORE_TRAP_UNKNOWN;
         return;
     }
@@ -1642,7 +1829,6 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
-
     int proof_horizon = post_move_length - 1;
     int horizon = 1;
     candidate->trap_horizon = horizon;
@@ -1660,7 +1846,6 @@ static void core_analyze_self_trap(
     memcpy(seen, snake->body, (size_t)post_move_length * sizeof(Coord));
     int seen_count = 1;
     const char* ids[1] = {snake_id};
-
     while (horizon < proof_horizon) {
         if (core_search_timed_out(timer)) {
             candidate->trap_status = CORE_TRAP_UNKNOWN;
@@ -1687,9 +1872,7 @@ static void core_analyze_self_trap(
                 break;
             }
         }
-        if (surviving_count < 0) {
-            break;
-        }
+        if (surviving_count < 0) break;
         if (surviving_count == 0) {
             candidate->trap_status = CORE_TRAP_PROVEN_SELF_TRAP;
             candidate->trap_horizon = horizon;
@@ -1732,6 +1915,112 @@ static void core_analyze_self_trap(
         candidate->trap_status = CORE_TRAP_SURVIVES_HORIZON;
     }
     free(seen);
+    CoreSearchStateFree(&state);
+}
+
+static void core_analyze_self_trap(
+    const Board* board,
+    const char* snake_id,
+    MoveDirection root_move,
+    const CoreSearchTimer* timer,
+    CoreRootCandidateStats* candidate,
+    uint64_t* analysis_nodes
+) {
+    core_analyze_legacy_self_trap(board, snake_id, root_move, timer, candidate, analysis_nodes);
+    CoreSearchState state;
+    memset(&state, 0, sizeof(state));
+    uint32_t root_cause = 0;
+    int post_move_length = 0;
+    if (!core_relaxed_root_state(
+        board,
+        snake_id,
+        root_move,
+        &state,
+        &post_move_length,
+        &root_cause
+    )) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        return;
+    }
+    candidate->post_move_length = post_move_length;
+    candidate->proof_horizon = post_move_length;
+    const Snake* snake = BoardFindSnakeConst(CoreSearchStateBoard(&state), snake_id);
+    if (snake == NULL || snake->body_len == 0) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNSAFE;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEAD_END;
+        candidate->immediate_causes |= root_cause;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    candidate->relaxed_static_capacity = core_relaxed_static_capacity(CoreSearchStateBoard(&state), snake_id);
+    if (candidate->relaxed_static_capacity < 0) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        CoreSearchStateFree(&state);
+        return;
+    }
+
+    int* opponent_arrival = NULL;
+    bool opponent_closure_considered = false;
+    if (!core_prepare_structural_opponent_arrival(
+        board,
+        snake_id,
+        post_move_length,
+        post_move_length,
+        &opponent_arrival,
+        &opponent_closure_considered
+    )) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    candidate->opponent_closure_considered = opponent_closure_considered;
+    Coord root_destination = SnakeHead(snake);
+    if (opponent_closure_considered && BoardInBounds(board, root_destination) &&
+        opponent_arrival[core_coord_index(board, root_destination)] <= 1) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNSAFE;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEAD_END;
+        free(opponent_arrival);
+        CoreSearchStateFree(&state);
+        return;
+    }
+    if ((size_t)post_move_length > SIZE_MAX / (size_t)post_move_length ||
+        (size_t)post_move_length * (size_t)post_move_length > SIZE_MAX / sizeof(Coord)) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT;
+        free(opponent_arrival);
+        CoreSearchStateFree(&state);
+        return;
+    }
+    Coord* ancestor_bodies = (Coord*)malloc(
+        (size_t)post_move_length * (size_t)post_move_length * sizeof(Coord)
+    );
+    if (ancestor_bodies == NULL) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        free(opponent_arrival);
+        CoreSearchStateFree(&state);
+        return;
+    }
+    CoreStructuralProofContext context = {
+        .snake_id = snake_id,
+        .timer = timer,
+        .opponent_arrival = opponent_arrival,
+        .body_len = post_move_length,
+        .horizon = post_move_length,
+        .use_opponent_closure = opponent_closure_considered,
+        .ancestor_bodies = ancestor_bodies,
+        .explored_states = 0,
+        .analysis_nodes = analysis_nodes,
+    };
+    CoreStructuralProofOutcome outcome = core_prove_structural_node(&state, 1, 0, &context);
+    candidate->structural_proof = outcome.result;
+    candidate->proof_cutoff = outcome.cutoff;
+    candidate->explored_states = context.explored_states;
+    free(ancestor_bodies);
+    free(opponent_arrival);
     CoreSearchStateFree(&state);
 }
 

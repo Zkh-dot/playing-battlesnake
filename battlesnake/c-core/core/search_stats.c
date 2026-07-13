@@ -58,6 +58,8 @@ void CoreSearchStatsInit(CoreSearchStats* stats) {
         stats->root_candidates[move].allowed = true;
         stats->root_candidates[move].rejection_reason = CORE_ROOT_REJECTION_NONE;
         stats->root_candidates[move].trap_status = CORE_TRAP_NOT_ANALYZED;
+        stats->root_candidates[move].structural_proof = CORE_STRUCTURAL_PROOF_NOT_ANALYZED;
+        stats->root_candidates[move].proof_cutoff = CORE_STRUCTURAL_CUTOFF_NONE;
         stats->root_candidates[move].refutation_status = CORE_REFUTATION_NOT_ANALYZED;
         stats->root_candidates[move].minimax_value.outcome = CORE_OUTCOME_UNRESOLVED;
         stats->root_candidates[move].minimax_value.bound = CORE_VALUE_BOUND_EXACT;

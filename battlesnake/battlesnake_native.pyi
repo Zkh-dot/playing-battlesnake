@@ -74,6 +74,12 @@ class RootCandidateDiagnostics(TypedDict):
     immediate_causes: list[str]
     trap_status: str
     trap_horizon: int
+    structural_proof: str
+    proof_cutoff: str
+    proof_horizon: int
+    explored_states: int
+    structural_capacity: int
+    opponent_closure_considered: bool
     post_move_length: int
     relaxed_static_capacity: int
     refutation_status: str

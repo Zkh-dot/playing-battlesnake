@@ -455,6 +455,28 @@ static const char* trap_status_name(CoreTrapStatus status) {
     }
 }
 
+static const char* structural_proof_name(CoreStructuralProofResult result) {
+    switch (result) {
+        case CORE_STRUCTURAL_PROOF_SAFE: return "safe";
+        case CORE_STRUCTURAL_PROOF_UNSAFE: return "unsafe";
+        case CORE_STRUCTURAL_PROOF_UNKNOWN: return "unknown";
+        default: return "not_analyzed";
+    }
+}
+
+static const char* structural_cutoff_name(CoreStructuralProofCutoff cutoff) {
+    switch (cutoff) {
+        case CORE_STRUCTURAL_CUTOFF_CAPACITY: return "capacity";
+        case CORE_STRUCTURAL_CUTOFF_CYCLE: return "cycle";
+        case CORE_STRUCTURAL_CUTOFF_HORIZON: return "horizon";
+        case CORE_STRUCTURAL_CUTOFF_DEAD_END: return "dead_end";
+        case CORE_STRUCTURAL_CUTOFF_DEADLINE: return "deadline";
+        case CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT: return "resource_limit";
+        case CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE: return "allocation_failure";
+        default: return "none";
+    }
+}
+
 static const char* refutation_status_name(CoreRefutationStatus status) {
     switch (status) {
         case CORE_REFUTATION_PROVEN_REFUTABLE: return "proven_refutable";
@@ -563,6 +585,12 @@ static PyObject* root_candidate_dict(const CoreRootCandidateStats* candidate) {
         PyDict_SetItemString(result, "immediate_causes", causes) < 0 ||
         dict_set_string(result, "trap_status", trap_status_name(candidate->trap_status)) < 0 ||
         dict_set_int(result, "trap_horizon", candidate->trap_horizon) < 0 ||
+        dict_set_string(result, "structural_proof", structural_proof_name(candidate->structural_proof)) < 0 ||
+        dict_set_string(result, "proof_cutoff", structural_cutoff_name(candidate->proof_cutoff)) < 0 ||
+        dict_set_int(result, "proof_horizon", candidate->proof_horizon) < 0 ||
+        dict_set_u64(result, "explored_states", candidate->explored_states) < 0 ||
+        dict_set_int(result, "structural_capacity", candidate->structural_capacity) < 0 ||
+        dict_set_bool(result, "opponent_closure_considered", candidate->opponent_closure_considered) < 0 ||
         dict_set_int(result, "post_move_length", candidate->post_move_length) < 0 ||
         dict_set_int(result, "relaxed_static_capacity", candidate->relaxed_static_capacity) < 0 ||
         dict_set_string(result, "refutation_status", refutation_status_name(candidate->refutation_status)) < 0;
