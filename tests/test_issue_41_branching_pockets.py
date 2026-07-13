@@ -230,6 +230,7 @@ def test_t439_fixed_depth_uses_root_dominance_before_search_scores() -> None:
     assert bad["allowed"] is False
     assert bad["rejection_reason"] == "structurally_dominated"
     assert bad["minimax_score"] is None
+    assert result["root_candidates"]["up"]["explored_states"] > 4096
     assert strict["root_candidates"]["up"]["minimax_score"] == strict["root_candidates"][bad_move][
         "minimax_score"
     ]
@@ -247,6 +248,49 @@ def test_deadline_cutoff_remains_unknown() -> None:
 
     assert result["root_candidates"]["up"]["structural_proof"] == "unknown"
     assert result["root_candidates"]["up"]["proof_cutoff"] == "deadline"
+
+
+def test_capacity_deficit_history_cannot_restart_horizon_proof() -> None:
+    board = _board(
+        5,
+        4,
+        [(2, 3), (2, 2), (3, 2), (3, 1), (2, 1), (2, 0)],
+        [(0, 2), (0, 1)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert not (
+        candidate["structural_proof"] == "safe" and candidate["proof_cutoff"] == "horizon"
+    )
+
+
+def test_bounded_cycle_checks_opponent_arrival_through_full_perimeter() -> None:
+    board = _board(
+        10,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(6, 2), (7, 2), (8, 2), (8, 1)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["proof_cutoff"] != "capacity"
+
+
+def test_static_cyclic_region_does_not_bypass_contested_doorway() -> None:
+    board = _board(
+        5,
+        3,
+        [(1, 2), (0, 2), (0, 1), (0, 0), (1, 0), (2, 0)],
+        [(3, 1), (3, 2), (4, 2), (4, 1), (4, 0), (3, 0)],
+    )
+
+    candidate = _candidate(board, "down")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
 
 
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")

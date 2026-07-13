@@ -1550,10 +1550,10 @@ static bool core_relaxed_root_state(
 static int core_relaxed_static_capacity(
     const Board* board,
     const char* snake_id,
-    bool* out_has_cycle
+    bool* out_head_in_cyclic_core
 ) {
-    if (out_has_cycle != NULL) {
-        *out_has_cycle = false;
+    if (out_head_in_cyclic_core != NULL) {
+        *out_head_in_cyclic_core = false;
     }
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     size_t cell_count = 0;
@@ -1581,7 +1581,6 @@ static int core_relaxed_static_capacity(
     queue[0] = start;
     int read = 0;
     int write = 1;
-    int directed_edges = 0;
     while (read < write) {
         int index = queue[read++];
         Coord coord = {index % board->width, index / board->width};
@@ -1591,21 +1590,66 @@ static int core_relaxed_static_capacity(
                 continue;
             }
             int next_index = core_coord_index(board, next);
-            if (!blocked[next_index]) {
-                directed_edges++;
-            }
             if (!blocked[next_index] && !visited[next_index]) {
                 visited[next_index] = 1;
                 queue[write++] = next_index;
             }
         }
     }
+    if (out_head_in_cyclic_core != NULL) {
+        /* The connected component may only be cyclic beyond a narrow doorway.
+         * Peel its acyclic fringe so opponent closure stays enforced until the
+         * head actually enters the cyclic core through an uncontested edge. */
+        unsigned char* degree = (unsigned char*)calloc(cell_count, sizeof(unsigned char));
+        if (degree == NULL) {
+            free(blocked);
+            free(visited);
+            free(queue);
+            return -1;
+        }
+        int peel_read = 0;
+        int peel_write = 0;
+        for (size_t raw_index = 0; raw_index < cell_count; raw_index++) {
+            if (!visited[raw_index]) {
+                continue;
+            }
+            Coord coord = {(int)(raw_index % (size_t)board->width),
+                           (int)(raw_index / (size_t)board->width)};
+            for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+                Coord next = MoveStep(coord, (MoveDirection)move);
+                if (BoardInBounds(board, next) && visited[core_coord_index(board, next)]) {
+                    degree[raw_index]++;
+                }
+            }
+            if (degree[raw_index] < 2) {
+                queue[peel_write++] = (int)raw_index;
+                blocked[raw_index] = 2;
+            }
+        }
+        while (peel_read < peel_write) {
+            int index = queue[peel_read++];
+            Coord coord = {index % board->width, index / board->width};
+            for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+                Coord next = MoveStep(coord, (MoveDirection)move);
+                if (!BoardInBounds(board, next)) {
+                    continue;
+                }
+                int next_index = core_coord_index(board, next);
+                if (visited[next_index] && blocked[next_index] != 2 && degree[next_index] > 0) {
+                    degree[next_index]--;
+                    if (degree[next_index] < 2) {
+                        blocked[next_index] = 2;
+                        queue[peel_write++] = next_index;
+                    }
+                }
+            }
+        }
+        *out_head_in_cyclic_core = blocked[start] != 2;
+        free(degree);
+    }
     free(blocked);
     free(visited);
     free(queue);
-    if (out_has_cycle != NULL) {
-        *out_has_cycle = directed_edges / 2 >= write;
-    }
     return write;
 }
 
@@ -1632,7 +1676,6 @@ typedef struct {
     int body_len;
     int horizon;
     int ancestor_capacity;
-    bool starts_capacity_sufficient;
     bool require_capacity_sufficient;
     uint64_t max_states;
     bool use_opponent_closure;
@@ -1657,6 +1700,7 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     int ancestor_count,
     int safe_steps_remaining,
     int minimum_capacity,
+    bool region_established,
     CoreStructuralProofContext* context
 ) {
     if (core_search_timed_out(context->timer)) {
@@ -1683,22 +1727,28 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     context->explored_states++;
     (*context->analysis_nodes)++;
 
-    bool region_has_cycle = false;
-    int capacity = core_relaxed_static_capacity(board, context->snake_id, &region_has_cycle);
+    bool head_in_cyclic_core = false;
+    int capacity = core_relaxed_static_capacity(
+        board, context->snake_id, &head_in_cyclic_core
+    );
     if (capacity < 0) {
         return core_structural_outcome(
             CORE_STRUCTURAL_PROOF_UNKNOWN, CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE, depth, 0
         );
     }
-    bool capacity_sufficient = capacity >= context->body_len && region_has_cycle;
+    bool capacity_sufficient = capacity >= context->body_len;
+    if (capacity_sufficient && head_in_cyclic_core) {
+        region_established = true;
+    }
     if (capacity_sufficient) {
-        if (safe_steps_remaining == -1 && context->starts_capacity_sufficient) {
+        if (context->require_capacity_sufficient && safe_steps_remaining == -1 &&
+            region_established) {
             safe_steps_remaining = context->horizon;
             minimum_capacity = capacity;
         } else if (safe_steps_remaining >= 0 && capacity < minimum_capacity) {
             minimum_capacity = capacity;
         }
-        if (safe_steps_remaining == 0) {
+        if (context->require_capacity_sufficient && safe_steps_remaining == 0) {
             return core_structural_outcome(
                 CORE_STRUCTURAL_PROOF_SAFE,
                 CORE_STRUCTURAL_CUTOFF_HORIZON,
@@ -1717,7 +1767,7 @@ static CoreStructuralProofOutcome core_prove_structural_node(
         context->ancestor_bodies, ancestor_count, context->body_len, snake
     );
     bool cycle_established_before_contest = !context->require_capacity_sufficient ||
-        safe_steps_remaining >= 0;
+        region_established;
     if (exact_cycle && cycle_established_before_contest) {
         return core_structural_outcome(
             CORE_STRUCTURAL_PROOF_SAFE,
@@ -1749,12 +1799,13 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     typedef struct {
         MoveDirection move;
         int capacity;
+        bool cyclic_core;
     } CoreStructuralMove;
     CoreStructuralMove ordered_moves[4];
     int ordered_count = 0;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         Coord destination = MoveStep(SnakeHead(snake), (MoveDirection)move);
-        if (!capacity_sufficient && context->use_opponent_closure && BoardInBounds(board, destination) &&
+        if (!region_established && context->use_opponent_closure && BoardInBounds(board, destination) &&
             context->opponent_arrival[core_coord_index(board, destination)] <= depth + 1) {
             continue;
         }
@@ -1769,8 +1820,9 @@ static CoreStructuralProofOutcome core_prove_structural_node(
         }
         const Snake* child = BoardFindSnakeConst(CoreSearchStateBoard(state), context->snake_id);
         if (child != NULL && child->body_len == context->body_len) {
+            bool child_cyclic_core = false;
             int child_capacity = core_relaxed_static_capacity(
-                CoreSearchStateBoard(state), context->snake_id, NULL
+                CoreSearchStateBoard(state), context->snake_id, &child_cyclic_core
             );
             if (child_capacity < 0) {
                 (void)CoreSearchStateUnmake(state);
@@ -1782,11 +1834,16 @@ static CoreStructuralProofOutcome core_prove_structural_node(
                 );
             }
             int insert = ordered_count;
-            while (insert > 0 && ordered_moves[insert - 1].capacity < child_capacity) {
+            while (insert > 0 &&
+                   ((!ordered_moves[insert - 1].cyclic_core && child_cyclic_core) ||
+                    (ordered_moves[insert - 1].cyclic_core == child_cyclic_core &&
+                     ordered_moves[insert - 1].capacity < child_capacity))) {
                 ordered_moves[insert] = ordered_moves[insert - 1];
                 insert--;
             }
-            ordered_moves[insert] = (CoreStructuralMove){(MoveDirection)move, child_capacity};
+            ordered_moves[insert] = (CoreStructuralMove){
+                (MoveDirection)move, child_capacity, child_cyclic_core
+            };
             ordered_count++;
         }
         if (!CoreSearchStateUnmake(state)) {
@@ -1821,8 +1878,9 @@ static CoreStructuralProofOutcome core_prove_structural_node(
                 state,
                 depth + 1,
                 ancestor_count + 1,
-                safe_steps_remaining < 0 ? -1 : safe_steps_remaining - 1,
+                safe_steps_remaining >= 0 ? safe_steps_remaining - 1 : safe_steps_remaining,
                 minimum_capacity,
+                region_established,
                 context
             );
         }
@@ -2028,7 +2086,7 @@ static int core_structural_bounded_cycle_capacity(
     for (int index = 0; index < capacity; index++) {
         Coord coord = core_rectangle_perimeter_coord(index, min_x, min_y, max_x, max_y);
         int arrival = opponent_arrival[core_coord_index(board, coord)];
-        if (arrival != CORE_SPACE_TIME_NEVER && arrival <= snake->body_len) {
+        if (arrival != CORE_SPACE_TIME_NEVER && arrival <= capacity) {
             return 0;
         }
     }
@@ -2213,11 +2271,6 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
-    bool root_region_has_cycle = false;
-    (void)core_relaxed_static_capacity(
-        CoreSearchStateBoard(&state), snake_id, &root_region_has_cycle
-    );
-
     int* opponent_arrival = NULL;
     bool opponent_closure_considered = false;
     if (!core_prepare_structural_opponent_arrival(
@@ -2283,16 +2336,15 @@ static void core_analyze_self_trap(
         .body_len = post_move_length,
         .horizon = post_move_length,
         .ancestor_capacity = post_move_length,
-        .starts_capacity_sufficient = false,
         .require_capacity_sufficient = false,
-        .max_states = 4096u,
+        .max_states = (uint64_t)post_move_length * (uint64_t)cell_count,
         .use_opponent_closure = opponent_closure_considered,
         .ancestor_bodies = short_ancestors,
         .explored_states = 0,
         .analysis_nodes = analysis_nodes,
     };
     CoreStructuralProofOutcome short_outcome = core_prove_structural_node(
-        &state, 1, 0, -1, 0, &short_context
+        &state, 1, 0, -1, 0, false, &short_context
     );
     free(short_ancestors);
     if (short_outcome.result != CORE_STRUCTURAL_PROOF_UNKNOWN) {
@@ -2348,8 +2400,6 @@ static void core_analyze_self_trap(
         .body_len = post_move_length,
         .horizon = proof_horizon,
         .ancestor_capacity = ancestor_capacity,
-        .starts_capacity_sufficient =
-            candidate->relaxed_static_capacity >= post_move_length && root_region_has_cycle,
         .require_capacity_sufficient = true,
         /* Board-derived completeness guard: at most one cell's worth of
          * alternatives per required proof ply. Exhaustion stays UNKNOWN. */
@@ -2363,8 +2413,9 @@ static void core_analyze_self_trap(
         &state,
         1,
         0,
-        -1,
+        candidate->relaxed_static_capacity < post_move_length ? -2 : -1,
         0,
+        false,
         &context
     );
     candidate->structural_proof = outcome.result;
@@ -2639,7 +2690,7 @@ static CoreStatus core_prepare_root_policy(
         if (has_safe_alive_alternative) {
             for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
                 CoreRootCandidateStats* candidate = &stats->root_candidates[move];
-                if ((allowed_mask & (1u << move)) == 0 || candidate->alive_reply_count <= 0 ||
+                if ((allowed_mask & (1u << move)) == 0 ||
                     candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE ||
                     candidate->relaxed_static_capacity >= candidate->post_move_length) {
                     continue;

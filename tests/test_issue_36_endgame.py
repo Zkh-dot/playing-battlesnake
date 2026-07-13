@@ -56,11 +56,14 @@ class Issue36EndgameTests(unittest.TestCase):
                 )
                 root_scores = result["root_move_scores"]
 
-                self.assertIn(str(raw["bad_move"]), root_scores)
-                self.assertLess(
-                    root_scores[str(raw["bad_move"])],
-                    root_scores[str(result["move"])],
-                )
+                bad_move = str(raw["bad_move"])
+                bad_candidate = result["root_candidates"][bad_move]
+                if bad_candidate["rejection_reason"] == "structurally_dominated":
+                    self.assertNotIn(bad_move, root_scores)
+                    self.assertFalse(bad_candidate["allowed"])
+                else:
+                    self.assertIn(bad_move, root_scores)
+                    self.assertLess(root_scores[bad_move], root_scores[str(result["move"])])
 
     def test_b085baae_turn_344_terminal_loss_tie_prefers_open_corridor(self) -> None:
         raw = next(
