@@ -35,7 +35,14 @@ def _fixture_board(raw: dict[str, object]) -> Board:
     )
 
 
-def _board(width: int, height: int, me_body: list[tuple[int, int]], you_body: list[tuple[int, int]]) -> Board:
+def _board(
+    width: int,
+    height: int,
+    me_body: list[tuple[int, int]],
+    you_body: list[tuple[int, int]],
+    *,
+    food: list[tuple[int, int]] | None = None,
+) -> Board:
     return Board(
         width=width,
         height=height,
@@ -43,7 +50,7 @@ def _board(width: int, height: int, me_body: list[tuple[int, int]], you_body: li
             "me": Snake("me", "me", 90, [Coord(x, y) for x, y in me_body]),
             "you": Snake("you", "you", 90, [Coord(x, y) for x, y in you_body]),
         },
-        food=[],
+        food=[Coord(x, y) for x, y in food or []],
         hazards=[],
         ruleset_name="standard",
         hazard_damage=0,
@@ -202,6 +209,36 @@ def test_shorter_opponent_body_blocks_cycle_entry_until_vacate() -> None:
     assert candidate["structural_proof"] != "safe"
 
 
+def test_shorter_opponent_growth_promotes_simultaneous_doorway_arrival() -> None:
+    board = _board(
+        5,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(1, 2), (1, 1), (2, 1)],
+        food=[(2, 2)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
+def test_two_reachable_meals_keep_shorter_tail_in_doorway() -> None:
+    board = _board(
+        5,
+        4,
+        [(1, 0), (0, 0), (0, 1), (0, 2), (0, 3)],
+        [(4, 2), (4, 1), (3, 1), (2, 1)],
+        food=[(3, 2), (2, 2)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
 def test_replay_has_safe_full_body_certificate_but_bad_move_does_not(
     position: dict[str, object],
@@ -273,7 +310,12 @@ def test_t439_fixed_depth_uses_root_dominance_before_search_scores() -> None:
     assert bad["allowed"] is False
     assert bad["rejection_reason"] == "structurally_dominated"
     assert bad["minimax_score"] is None
-    assert result["root_candidates"]["up"]["explored_states"] > 1
+    # Exact shorter-opponent closure pruning reduced this proof from 4356 to
+    # 209 states before growth timing was added (236 now). The state count is
+    # an implementation detail; the invariant is a completed SAFE proof that
+    # did not fall through the board-derived resource guard.
+    assert result["root_candidates"]["up"]["structural_proof"] == "safe"
+    assert result["root_candidates"]["up"]["proof_cutoff"] != "resource_limit"
     assert strict["root_candidates"]["up"]["minimax_score"] == strict["root_candidates"][bad_move][
         "minimax_score"
     ]

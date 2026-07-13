@@ -807,6 +807,7 @@ static void core_fill_vacate_times(const Board* board, const char* snake_id, int
 static bool core_fill_opponent_arrival(
     const Board* board,
     const char* snake_id,
+    const char* selected_opponent_id,
     int minimum_length,
     int maximum_length_exclusive,
     const int* vacate,
@@ -836,6 +837,7 @@ static bool core_fill_opponent_arrival(
         const Snake* snake = &board->snakes[i];
         int snake_length = core_snake_length(snake);
         if (snake->body_len == 0 || strcmp(snake->id, snake_id) == 0 ||
+            (selected_opponent_id != NULL && strcmp(snake->id, selected_opponent_id) != 0) ||
             snake_length < minimum_length || snake_length >= maximum_length_exclusive) {
             continue;
         }
@@ -928,38 +930,6 @@ static bool core_has_opponent(const Board* board, const char* snake_id) {
         }
     }
     return false;
-}
-
-static void core_fill_opponent_vacate_times(
-    const Board* board,
-    const char* snake_id,
-    int* vacate
-) {
-    bool constrictor = core_is_constrictor(board);
-    for (int i = 0; i < board->snake_count; i++) {
-        const Snake* snake = &board->snakes[i];
-        if (snake->body_len <= 0 || strcmp(snake->id, snake_id) == 0) {
-            continue;
-        }
-        int delay = constrictor ? CORE_SPACE_TIME_NEVER : 0;
-        if (!constrictor && core_snake_can_eat_next_turn(board, snake)) {
-            delay = 1;
-        }
-        for (int j = 0; j < snake->body_len; j++) {
-            Coord body = snake->body[j];
-            if (!BoardInBounds(board, body)) {
-                continue;
-            }
-            int vacate_time = CORE_SPACE_TIME_NEVER;
-            if (delay < CORE_SPACE_TIME_NEVER) {
-                vacate_time = snake->body_len - j + delay;
-            }
-            int index = core_coord_index(board, body);
-            if (vacate_time > vacate[index]) {
-                vacate[index] = vacate_time;
-            }
-        }
-    }
 }
 
 typedef struct {
@@ -1114,6 +1084,7 @@ CoreStatus CoreSpaceTimeCompute(
         if (!core_fill_opponent_arrival(
             board,
             snake_id,
+            NULL,
             own_length,
             INT_MAX,
             vacate,
@@ -1893,6 +1864,8 @@ typedef struct {
     unsigned char* shorter_reachability;
     size_t cell_count;
     int horizon;
+    int shorter_equal_promotion_time;
+    int shorter_body_promotion_time;
 } CoreStructuralOpponentTiming;
 
 static void core_structural_opponent_timing_free(CoreStructuralOpponentTiming* timing) {
@@ -1911,13 +1884,20 @@ static bool core_structural_opponent_closes_at(
      * that collision, but if it occupied the cell one turn earlier its neck
      * can still occupy the doorway when we arrive. Original body cells use
      * their earliest truthful vacate turn independently of head reachability. */
+    bool promoted_head_can_contest = own_arrival >= timing->shorter_equal_promotion_time &&
+        own_arrival <= timing->horizon && timing->shorter_reachability != NULL &&
+        timing->shorter_reachability[
+            (size_t)own_arrival * timing->cell_count + (size_t)index
+        ];
     int occupancy_arrival = own_arrival - 1;
     bool shorter_can_occupy = timing->shorter_reachability != NULL &&
+        occupancy_arrival >= timing->shorter_body_promotion_time &&
         occupancy_arrival >= 0 && occupancy_arrival <= timing->horizon &&
         timing->shorter_reachability[
             (size_t)occupancy_arrival * timing->cell_count + (size_t)index
         ];
-    return timing->dangerous_arrival[index] <= dangerous_deadline || shorter_can_occupy ||
+    return timing->dangerous_arrival[index] <= dangerous_deadline || promoted_head_can_contest ||
+           shorter_can_occupy ||
            timing->opponent_vacate[index] > own_arrival;
 }
 
@@ -2237,6 +2217,194 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     );
 }
 
+static int core_compare_ints(const void* left, const void* right) {
+    int left_value = *(const int*)left;
+    int right_value = *(const int*)right;
+    return (left_value > right_value) - (left_value < right_value);
+}
+
+static int core_space_time_saturating_add(int left, int right) {
+    if (left >= CORE_SPACE_TIME_NEVER || right >= CORE_SPACE_TIME_NEVER ||
+        right > CORE_SPACE_TIME_NEVER - left) {
+        return CORE_SPACE_TIME_NEVER;
+    }
+    return left + right;
+}
+
+static int core_distinct_food_promotion_time(
+    const int* sorted_food_arrivals,
+    int reachable_food_count,
+    int required_meals
+) {
+    if (required_meals <= 0) {
+        return 0;
+    }
+    if (reachable_food_count < required_meals) {
+        return CORE_SPACE_TIME_NEVER;
+    }
+    int arrival = sorted_food_arrivals[required_meals - 1];
+    return arrival > required_meals ? arrival : required_meals;
+}
+
+static int core_food_delay_fixed_point(
+    const int* sorted_food_arrivals,
+    int reachable_food_count,
+    int base_vacate
+) {
+    int delay = 0;
+    while (delay < reachable_food_count) {
+        int deadline = core_space_time_saturating_add(base_vacate, delay);
+        int next_delay = 0;
+        for (int i = 0; i < reachable_food_count; i++) {
+            int meal_number = i + 1;
+            int meal_time = sorted_food_arrivals[i] > meal_number
+                ? sorted_food_arrivals[i]
+                : meal_number;
+            if (meal_time > deadline) {
+                break;
+            }
+            next_delay++;
+        }
+        if (next_delay <= delay) {
+            break;
+        }
+        delay = next_delay;
+    }
+    return delay;
+}
+
+static bool core_prepare_structural_food_timing(
+    const Board* board,
+    const char* snake_id,
+    int own_length,
+    int horizon,
+    size_t cell_count,
+    int* shared_vacate,
+    CoreStructuralOpponentTiming* timing,
+    unsigned int* seen,
+    size_t* queue
+) {
+    timing->shorter_equal_promotion_time = CORE_SPACE_TIME_NEVER;
+    timing->shorter_body_promotion_time = CORE_SPACE_TIME_NEVER;
+    if ((size_t)board->food_count > SIZE_MAX / sizeof(int)) {
+        return false;
+    }
+    int* arrival = (int*)malloc(cell_count * sizeof(int));
+    int* food_arrivals = board->food_count > 0
+        ? (int*)malloc((size_t)board->food_count * sizeof(int))
+        : NULL;
+    /* Food timing is an optimistic lower bound: independent routes may share
+     * cells and ignore temporary body occupancy. That can only promote or
+     * retain an opponent too early, yielding UNKNOWN/UNSAFE rather than a
+     * false SAFE certificate. Only distinct food present on this board and
+     * reachable within the proof horizon contributes. */
+    int* optimistic_vacate = (int*)calloc(cell_count, sizeof(int));
+    if (arrival == NULL || optimistic_vacate == NULL ||
+        (board->food_count > 0 && food_arrivals == NULL)) {
+        free(arrival);
+        free(food_arrivals);
+        free(optimistic_vacate);
+        return false;
+    }
+
+    bool okay = true;
+    for (int i = 0; i < board->snake_count && okay; i++) {
+        const Snake* snake = &board->snakes[i];
+        int snake_length = core_snake_length(snake);
+        if (snake->body_len <= 0 || strcmp(snake->id, snake_id) == 0) {
+            continue;
+        }
+        unsigned int stamp = (unsigned int)i + 3u;
+        if (stamp == 0) {
+            okay = false;
+            break;
+        }
+        okay = core_fill_opponent_arrival(
+            board,
+            snake_id,
+            snake->id,
+            0,
+            INT_MAX,
+            optimistic_vacate,
+            arrival,
+            NULL,
+            seen,
+            stamp,
+            queue,
+            cell_count,
+            horizon
+        );
+        int reachable_food_count = 0;
+        for (int food_index = 0; food_index < board->food_count; food_index++) {
+            Coord food = board->food[food_index];
+            if (!BoardInBounds(board, food)) {
+                continue;
+            }
+            int food_time = arrival[core_coord_index(board, food)];
+            if (food_time != CORE_SPACE_TIME_NEVER) {
+                food_arrivals[reachable_food_count++] = food_time;
+            }
+        }
+        if (reachable_food_count > 1) {
+            qsort(
+                food_arrivals,
+                (size_t)reachable_food_count,
+                sizeof(int),
+                core_compare_ints
+            );
+        }
+
+        if (snake_length < own_length) {
+            int promotion_time = core_distinct_food_promotion_time(
+                food_arrivals, reachable_food_count, own_length - snake_length
+            );
+            if (promotion_time < timing->shorter_equal_promotion_time) {
+                timing->shorter_equal_promotion_time = promotion_time;
+            }
+            int body_promotion_time = snake_length >= 2
+                ? 0
+                : core_distinct_food_promotion_time(food_arrivals, reachable_food_count, 1);
+            if (body_promotion_time < timing->shorter_body_promotion_time) {
+                timing->shorter_body_promotion_time = body_promotion_time;
+            }
+        }
+
+        if (core_is_constrictor(board)) {
+            for (int body_index = 0; body_index < snake->body_len; body_index++) {
+                Coord body = snake->body[body_index];
+                if (BoardInBounds(board, body)) {
+                    int index = core_coord_index(board, body);
+                    timing->opponent_vacate[index] = CORE_SPACE_TIME_NEVER;
+                    shared_vacate[index] = CORE_SPACE_TIME_NEVER;
+                }
+            }
+            continue;
+        }
+        for (int body_index = 0; body_index < snake->body_len; body_index++) {
+            Coord body = snake->body[body_index];
+            if (!BoardInBounds(board, body)) {
+                continue;
+            }
+            int base_vacate = snake->body_len - body_index;
+            int delay = core_food_delay_fixed_point(
+                food_arrivals, reachable_food_count, base_vacate
+            );
+            int vacate_time = core_space_time_saturating_add(base_vacate, delay);
+            int index = core_coord_index(board, body);
+            if (vacate_time > timing->opponent_vacate[index]) {
+                timing->opponent_vacate[index] = vacate_time;
+            }
+            if (vacate_time > shared_vacate[index]) {
+                shared_vacate[index] = vacate_time;
+            }
+        }
+    }
+    free(arrival);
+    free(food_arrivals);
+    free(optimistic_vacate);
+    return okay;
+}
+
 static bool core_prepare_structural_opponent_arrival(
     const Board* board,
     const char* snake_id,
@@ -2299,10 +2467,21 @@ static bool core_prepare_structural_opponent_arrival(
     }
     out_timing->shorter_reachability = shorter_reachability;
     core_fill_vacate_times(board, snake_id, vacate);
-    core_fill_opponent_vacate_times(board, snake_id, opponent_vacate);
-    bool dangerous_filled = core_fill_opponent_arrival(
+    bool food_timing_filled = core_prepare_structural_food_timing(
         board,
         snake_id,
+        own_length,
+        horizon,
+        cell_count,
+        vacate,
+        out_timing,
+        seen,
+        queue
+    );
+    bool dangerous_filled = food_timing_filled && core_fill_opponent_arrival(
+        board,
+        snake_id,
+        NULL,
         own_length,
         INT_MAX,
         vacate,
@@ -2318,7 +2497,8 @@ static bool core_prepare_structural_opponent_arrival(
     bool shorter_filled = shorter_arrival != NULL && core_fill_opponent_arrival(
         board,
         snake_id,
-        2,
+        NULL,
+        1,
         own_length,
         vacate,
         shorter_arrival,
@@ -2333,7 +2513,7 @@ static bool core_prepare_structural_opponent_arrival(
     free(seen);
     free(queue);
     free(shorter_arrival);
-    if (!dangerous_filled || !shorter_filled) {
+    if (!food_timing_filled || !dangerous_filled || !shorter_filled) {
         free(timing_storage);
         free(shorter_reachability);
         memset(out_timing, 0, sizeof(*out_timing));
