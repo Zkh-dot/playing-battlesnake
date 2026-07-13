@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -336,7 +337,7 @@ def test_replay_branching_pocket_is_structurally_dominated(
         for candidate in result["root_candidates"].values()
         if candidate["allowed"] and candidate["alive_reply_count"] > 0
     ]
-    expected_root_budget = budget_ms // 2
+    expected_root_budget = budget_ms // 3
 
     assert result["move"] != bad_move
     assert result["completed_depth"] >= 1
@@ -403,6 +404,33 @@ def test_strict_minimax_does_not_claim_opportunity_policy_sufficiency() -> None:
     assert bad["structural_proof"] == "unknown"
     assert bad["proof_cutoff"] == "horizon"
     assert bad["explored_states"] > 0
+
+
+@pytest.mark.parametrize("attempt", range(3))
+def test_large_board_root_phase_enforces_the_search_reserve(attempt: int) -> None:
+    del attempt
+    board = _board(
+        30,
+        30,
+        [(0, 0), (0, 1), (1, 1)],
+        [(29, 29), (29, 28), (28, 28)],
+    )
+    budget_ms = 10
+
+    started = time.perf_counter()
+    result = minimax_diagnostics(board, "me", time_budget_ms=budget_ms)
+    wall_elapsed_ms = (time.perf_counter() - started) * 1000.0
+    deadline_candidates = [
+        candidate
+        for candidate in result["root_candidates"].values()
+        if candidate["proof_cutoff"] == "deadline"
+    ]
+
+    assert result["root_analysis_elapsed_ms"] < budget_ms
+    assert wall_elapsed_ms < budget_ms + result["search_reserved_ms"]
+    assert result["completed_depth"] >= 1
+    assert deadline_candidates
+    assert all(candidate["structural_proof"] == "unknown" for candidate in deadline_candidates)
 
 
 def test_deadline_cutoff_remains_unknown() -> None:

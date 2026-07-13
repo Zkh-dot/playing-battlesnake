@@ -18,6 +18,9 @@
 #define CORE_TERMINAL_SURVIVAL_MAX_STEP 1000.0
 #define CORE_SPACE_TIME_NEVER (INT_MAX / 2)
 
+typedef struct CoreSearchTimer CoreSearchTimer;
+static bool core_search_timed_out(const CoreSearchTimer* timer);
+
 const char* CoreNotImplementedMessage(void) {
     return "core algorithm unavailable";
 }
@@ -817,9 +820,13 @@ static bool core_fill_opponent_arrival(
     unsigned int seen_stamp,
     size_t* queue,
     size_t cell_count,
-    int max_time
+    int max_time,
+    const CoreSearchTimer* timer
 ) {
     for (size_t i = 0; i < cell_count; i++) {
+        if ((i & 63u) == 0 && timer != NULL && core_search_timed_out(timer)) {
+            return false;
+        }
         opponent_arrival[i] = CORE_SPACE_TIME_NEVER;
     }
 
@@ -834,6 +841,9 @@ static bool core_fill_opponent_arrival(
     size_t head = 0;
     size_t tail = 0;
     for (int i = 0; i < board->snake_count; i++) {
+        if (timer != NULL && core_search_timed_out(timer)) {
+            return false;
+        }
         const Snake* snake = &board->snakes[i];
         int snake_length = core_snake_length(snake);
         if (snake->body_len == 0 || strcmp(snake->id, snake_id) == 0 ||
@@ -859,6 +869,9 @@ static bool core_fill_opponent_arrival(
     }
 
     while (head < tail) {
+        if ((head & 63u) == 0 && timer != NULL && core_search_timed_out(timer)) {
+            return false;
+        }
         size_t state = queue[head++];
         int current = (int)(state % cell_count);
         int current_time = (int)(state / cell_count);
@@ -1094,7 +1107,8 @@ CoreStatus CoreSpaceTimeCompute(
             opponent_stamp,
             scratch->opponent_queue,
             cell_count,
-            max_time
+            max_time,
+            NULL
         )) {
             return CORE_ERROR;
         }
@@ -1191,9 +1205,10 @@ CoreStatus CoreSpaceTimeCompute(
     return CORE_OK;
 }
 
-typedef struct {
+struct CoreSearchTimer {
+    struct timespec start;
     struct timespec deadline;
-} CoreSearchTimer;
+};
 
 typedef struct {
     CoreSearchTimer timer;
@@ -1219,8 +1234,9 @@ static CoreSearchTimer core_search_timer_start(int time_budget_ms) {
         time_budget_ms = 1;
     }
 
-    struct timespec deadline;
-    clock_gettime(CLOCK_MONOTONIC, &deadline);
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    struct timespec deadline = start;
     deadline.tv_sec += time_budget_ms / 1000;
     deadline.tv_nsec += (long)(time_budget_ms % 1000) * 1000000L;
     while (deadline.tv_nsec >= 1000000000L) {
@@ -1228,7 +1244,27 @@ static CoreSearchTimer core_search_timer_start(int time_budget_ms) {
         deadline.tv_nsec -= 1000000000L;
     }
 
-    return (CoreSearchTimer){deadline};
+    return (CoreSearchTimer){.start = start, .deadline = deadline};
+}
+
+static CoreSearchTimer core_search_timer_prefix(
+    const CoreSearchTimer* overall,
+    int prefix_budget_ms
+) {
+    CoreSearchTimer prefix = *overall;
+    prefix.deadline = prefix.start;
+    prefix.deadline.tv_sec += prefix_budget_ms / 1000;
+    prefix.deadline.tv_nsec += (long)(prefix_budget_ms % 1000) * 1000000L;
+    while (prefix.deadline.tv_nsec >= 1000000000L) {
+        prefix.deadline.tv_sec++;
+        prefix.deadline.tv_nsec -= 1000000000L;
+    }
+    if (prefix.deadline.tv_sec > overall->deadline.tv_sec ||
+        (prefix.deadline.tv_sec == overall->deadline.tv_sec &&
+         prefix.deadline.tv_nsec > overall->deadline.tv_nsec)) {
+        prefix.deadline = overall->deadline;
+    }
+    return prefix;
 }
 
 static bool core_search_timed_out(const CoreSearchTimer* timer) {
@@ -2375,8 +2411,12 @@ static bool core_prepare_structural_food_timing(
     size_t cell_count,
     CoreStructuralOpponentTiming* timing,
     unsigned int* seen,
-    size_t* queue
+    size_t* queue,
+    const CoreSearchTimer* timer
 ) {
+    if (core_search_timed_out(timer)) {
+        return false;
+    }
     timing->shorter_equal_promotion_time = CORE_SPACE_TIME_NEVER;
     timing->shorter_body_promotion_time = CORE_SPACE_TIME_NEVER;
     if ((size_t)board->food_count > SIZE_MAX / sizeof(int)) {
@@ -2399,9 +2439,19 @@ static bool core_prepare_structural_food_timing(
         free(optimistic_vacate);
         return false;
     }
+    if (core_search_timed_out(timer)) {
+        free(arrival);
+        free(food_arrivals);
+        free(optimistic_vacate);
+        return false;
+    }
 
     bool okay = true;
     for (int i = 0; i < board->snake_count && okay; i++) {
+        if (core_search_timed_out(timer)) {
+            okay = false;
+            break;
+        }
         const Snake* snake = &board->snakes[i];
         int snake_length = core_snake_length(snake);
         if (snake->body_len <= 0 || strcmp(snake->id, snake_id) == 0) {
@@ -2425,10 +2475,18 @@ static bool core_prepare_structural_food_timing(
             stamp,
             queue,
             cell_count,
-            horizon
+            horizon,
+            timer
         );
+        if (!okay) {
+            break;
+        }
         int reachable_food_count = 0;
         for (int food_index = 0; food_index < board->food_count; food_index++) {
+            if ((food_index & 63) == 0 && core_search_timed_out(timer)) {
+                okay = false;
+                break;
+            }
             Coord food = board->food[food_index];
             if (!BoardInBounds(board, food)) {
                 continue;
@@ -2437,6 +2495,9 @@ static bool core_prepare_structural_food_timing(
             if (food_time != CORE_SPACE_TIME_NEVER) {
                 food_arrivals[reachable_food_count++] = food_time;
             }
+        }
+        if (!okay) {
+            break;
         }
         if (reachable_food_count > 1) {
             qsort(
@@ -2500,10 +2561,14 @@ static bool core_prepare_structural_opponent_arrival(
     int own_length,
     int horizon,
     CoreStructuralOpponentTiming* out_timing,
-    bool* out_considered
+    bool* out_considered,
+    const CoreSearchTimer* timer
 ) {
     memset(out_timing, 0, sizeof(*out_timing));
     *out_considered = false;
+    if (core_search_timed_out(timer)) {
+        return false;
+    }
     size_t cell_count = 0;
     if (!core_cell_count(board, &cell_count) || cell_count > SIZE_MAX / sizeof(int)) {
         return false;
@@ -2555,6 +2620,15 @@ static bool core_prepare_structural_opponent_arrival(
         free(shorter_reachability);
         return false;
     }
+    if (core_search_timed_out(timer)) {
+        free(timing_storage);
+        free(optimistic_head_vacate);
+        free(seen);
+        free(queue);
+        free(shorter_reachability);
+        memset(out_timing, 0, sizeof(*out_timing));
+        return false;
+    }
     out_timing->shorter_reachability = shorter_reachability;
     bool food_timing_filled = core_prepare_structural_food_timing(
         board,
@@ -2564,7 +2638,8 @@ static bool core_prepare_structural_opponent_arrival(
         cell_count,
         out_timing,
         seen,
-        queue
+        queue,
+        timer
     );
     /* Keep head reach and original-body occupancy as separate conservative
      * channels. Head reach ignores optional growth/body delay because an
@@ -2583,24 +2658,26 @@ static bool core_prepare_structural_opponent_arrival(
         1,
         queue,
         cell_count,
-        horizon
+        horizon,
+        timer
     );
     int* shorter_arrival = (int*)malloc(cell_count * sizeof(int));
-    bool shorter_filled = shorter_arrival != NULL &&
+    bool shorter_filled = food_timing_filled && shorter_arrival != NULL &&
         core_fill_opponent_arrival(
-        board,
-        snake_id,
-        NULL,
-        1,
-        own_length,
-        optimistic_head_vacate,
-        shorter_arrival,
-        shorter_reachability,
-        seen,
-        2,
-        queue,
-        cell_count,
-        horizon
+            board,
+            snake_id,
+            NULL,
+            1,
+            own_length,
+            optimistic_head_vacate,
+            shorter_arrival,
+            shorter_reachability,
+            seen,
+            2,
+            queue,
+            cell_count,
+            horizon,
+            timer
     );
     free(optimistic_head_vacate);
     free(seen);
@@ -2741,6 +2818,10 @@ static void core_analyze_legacy_self_trap(
     CoreRootCandidateStats* candidate,
     uint64_t* analysis_nodes
 ) {
+    if (core_search_timed_out(timer)) {
+        candidate->trap_status = CORE_TRAP_UNKNOWN;
+        return;
+    }
     CoreSearchState state;
     memset(&state, 0, sizeof(state));
     uint32_t root_cause = 0;
@@ -2761,6 +2842,11 @@ static void core_analyze_legacy_self_trap(
     candidate->relaxed_static_capacity = core_relaxed_static_capacity(
         CoreSearchStateBoard(&state), snake_id, NULL
     );
+    if (core_search_timed_out(timer)) {
+        candidate->trap_status = CORE_TRAP_UNKNOWN;
+        CoreSearchStateFree(&state);
+        return;
+    }
     if (candidate->relaxed_static_capacity < 0) {
         candidate->trap_status = CORE_TRAP_UNKNOWN;
         CoreSearchStateFree(&state);
@@ -2864,6 +2950,11 @@ static void core_analyze_self_trap(
     uint64_t* analysis_nodes,
     bool skip_capacity_deficit_proof
 ) {
+    if (core_search_timed_out(timer)) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEADLINE;
+        return;
+    }
     CoreSearchState state;
     memset(&state, 0, sizeof(state));
     uint32_t root_cause = 0;
@@ -2903,6 +2994,12 @@ static void core_analyze_self_trap(
     candidate->relaxed_static_capacity = core_relaxed_static_capacity(
         CoreSearchStateBoard(&state), snake_id, &root_in_cyclic_core
     );
+    if (core_search_timed_out(timer)) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEADLINE;
+        CoreSearchStateFree(&state);
+        return;
+    }
     if (candidate->relaxed_static_capacity < 0) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
@@ -2928,14 +3025,24 @@ static void core_analyze_self_trap(
         post_move_length,
         proof_horizon,
         &opponent_timing,
-        &opponent_closure_considered
+        &opponent_closure_considered,
+        timer
     )) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
-        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        candidate->proof_cutoff = core_search_timed_out(timer)
+            ? CORE_STRUCTURAL_CUTOFF_DEADLINE
+            : CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
         CoreSearchStateFree(&state);
         return;
     }
     candidate->opponent_closure_considered = opponent_closure_considered;
+    if (core_search_timed_out(timer)) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEADLINE;
+        core_structural_opponent_timing_free(&opponent_timing);
+        CoreSearchStateFree(&state);
+        return;
+    }
     Coord root_destination = SnakeHead(snake);
     if (opponent_closure_considered && BoardInBounds(board, root_destination) &&
         core_structural_opponent_closes_at(
@@ -2952,6 +3059,13 @@ static void core_analyze_self_trap(
         snake,
         &opponent_timing
     );
+    if (core_search_timed_out(timer)) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEADLINE;
+        core_structural_opponent_timing_free(&opponent_timing);
+        CoreSearchStateFree(&state);
+        return;
+    }
     if (structural_capacity > 0) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_SAFE;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_CAPACITY;
@@ -4342,10 +4456,11 @@ CoreStatus CoreMinimaxMoveWithStats(
     if (context.opponent_id == NULL) {
         context.opponent_id = "__missing_duel_opponent__";
     }
-    /* Root safety and minimax are both required phases. Split the move budget
-     * evenly: incomplete proofs fail conservatively as UNKNOWN and never
-     * borrow the half reserved for iterative deepening. */
-    int root_analysis_budget_ms = config.time_budget_ms / 2;
+    /* Root safety and minimax are both required phases. The structural pass
+     * gets one share and the primary search gets two: a duel root iteration
+     * must evaluate both our command and the opponent reply layer. Incomplete
+     * proofs fail conservatively as UNKNOWN and never borrow the search share. */
+    int root_analysis_budget_ms = config.time_budget_ms / 3;
     if (root_analysis_budget_ms < 1) {
         root_analysis_budget_ms = 1;
     }
@@ -4353,7 +4468,9 @@ CoreStatus CoreMinimaxMoveWithStats(
     stats->search_reserved_ms = config.time_budget_ms > root_analysis_budget_ms
         ? config.time_budget_ms - root_analysis_budget_ms
         : 0;
-    CoreSearchTimer root_analysis_timer = core_search_timer_start(root_analysis_budget_ms);
+    CoreSearchTimer root_analysis_timer = core_search_timer_prefix(
+        &context.timer, root_analysis_budget_ms
+    );
     CoreStatus policy_status = core_prepare_root_policy(
         board,
         snake_id,
