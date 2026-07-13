@@ -123,6 +123,14 @@ static void test_root_comparison_uses_only_decisive_search_bounds(void) {
         CORE_ROOT_COMPARISON_SEARCH_BOUND
     );
     assert_root_comparison(
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, -100.0, 0),
+        equal_structure,
+        root_test_value(CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_UPPER, 100.0, 0),
+        equal_structure,
+        CORE_ROOT_COMPARISON_CANDIDATE,
+        CORE_ROOT_COMPARISON_SEARCH_BOUND
+    );
+    assert_root_comparison(
         root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_UPPER, -10.0, 0),
         equal_structure,
         root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_LOWER, 10.0, 0),
@@ -181,6 +189,14 @@ static void test_root_comparison_applies_structural_lattice_to_unresolved_values
         sufficient_unknown,
         CORE_ROOT_COMPARISON_INCUMBENT,
         CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+    );
+    assert_root_comparison(
+        structurally_preferred_value,
+        safe,
+        structurally_preferred_value,
+        sufficient_unknown,
+        CORE_ROOT_COMPARISON_EQUAL,
+        CORE_ROOT_COMPARISON_NOT_COMPARED
     );
 }
 
