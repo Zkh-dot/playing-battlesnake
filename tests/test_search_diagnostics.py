@@ -38,6 +38,7 @@ EXPECTED_DIAGNOSTIC_KEYS = {
     "root_allowed_mask",
     "root_policy_applied",
     "selection_reason",
+    "root_comparison_reason",
     "root_analysis_nodes",
     "root_analysis_elapsed_ms",
     "root_analysis_budget_ms",
@@ -209,6 +210,21 @@ class SearchDiagnosticsTests(unittest.TestCase):
         self.assertGreaterEqual(diagnostics["beta_cutoffs"], 0)
         self.assertGreaterEqual(diagnostics["elapsed_ms"], 0)
         self.assertIn(diagnostics["timed_out"], {True, False})
+        self.assertIn(
+            diagnostics["root_comparison_reason"],
+            {
+                "not_compared",
+                "terminal_outcome",
+                "search_bound",
+                "structural_proof",
+                "terminal_survival",
+                "heuristic_value",
+                "structural_tiebreak",
+                "previous_pv",
+                "stable_direction",
+                "corridor_guard",
+            },
+        )
 
     def test_minimax_diagnostics_reports_root_move_scores(self) -> None:
         scenario = get_scenario("duel_open_7x7")

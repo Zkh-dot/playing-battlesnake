@@ -6,6 +6,23 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef CORE_ROOT_SELECTION_TESTING
+extern bool CoreSelectRootCandidateForTesting(
+    const Board* board,
+    const char* snake_id,
+    CoreRootPolicy policy,
+    const MoveDirection* move_order,
+    int move_count,
+    uint8_t valid_mask,
+    const CoreSearchValue values[4],
+    const CoreRootCandidateStats candidates[4],
+    MoveDirection preferred,
+    MoveDirection* out_move,
+    CoreSearchValue* out_value,
+    CoreRootComparisonReason* out_reason
+);
+#endif
+
 static Snake make_snake(const char* id, Coord* body, int body_len, int health) {
     Snake snake;
     SnakeInit(&snake, id, id, health, body, body_len);
@@ -72,6 +89,161 @@ static void assert_root_comparison(
     assert(reverse.ordering == expected_reverse);
     assert(reverse.reason == expected_reason);
 }
+
+#ifdef CORE_ROOT_SELECTION_TESTING
+static void test_partial_root_frontier_is_permutation_invariant_and_coherent(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord me_body[] = {{3, 3}, {3, 2}, {3, 1}};
+    Coord you_body[] = {{6, 6}, {6, 5}, {6, 4}};
+    Snake me = make_snake("me", me_body, 3, 90);
+    Snake you = make_snake("you", you_body, 3, 90);
+    CoreSearchValue values[4];
+    CoreRootCandidateStats candidates[4];
+    memset(values, 0, sizeof(values));
+    memset(candidates, 0, sizeof(candidates));
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        values[move] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 0.0, 0);
+        candidates[move] = root_test_stats(CORE_STRUCTURAL_PROOF_NOT_ANALYZED, 0, 0);
+    }
+    values[MOVE_DOWN].score = 100.0;
+    candidates[MOVE_DOWN] = root_test_stats(CORE_STRUCTURAL_PROOF_UNKNOWN, 1, 5);
+    candidates[MOVE_LEFT] = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 40, 5);
+    const MoveDirection orders[][2] = {
+        {MOVE_DOWN, MOVE_LEFT},
+        {MOVE_LEFT, MOVE_DOWN},
+    };
+
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    CoreRootComparison pairwise = CoreCompareRootCandidates(
+        &values[MOVE_LEFT],
+        &candidates[MOVE_LEFT],
+        &values[MOVE_DOWN],
+        &candidates[MOVE_DOWN]
+    );
+    assert(pairwise.ordering == CORE_ROOT_COMPARISON_CANDIDATE);
+    assert(pairwise.reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+    for (size_t index = 0; index < sizeof(orders) / sizeof(orders[0]); index++) {
+        MoveDirection selected = MOVE_INVALID;
+        CoreSearchValue selected_value;
+        CoreRootComparisonReason reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+        assert(CoreSelectRootCandidateForTesting(
+            board,
+            "me",
+            CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+            orders[index],
+            2,
+            (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_LEFT)),
+            values,
+            candidates,
+            MOVE_DOWN,
+            &selected,
+            &selected_value,
+            &reason
+        ));
+        assert(selected == MOVE_LEFT);
+        assert(selected_value.score == values[MOVE_LEFT].score);
+        assert(selected_value.outcome == values[MOVE_LEFT].outcome);
+        assert(selected_value.bound == values[MOVE_LEFT].bound);
+        assert(selected_value.cause == values[MOVE_LEFT].cause);
+        assert(selected_value.terminal_distance == values[MOVE_LEFT].terminal_distance);
+        assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+    }
+
+    MoveDirection selected = MOVE_INVALID;
+    CoreSearchValue selected_value;
+    CoreRootComparisonReason reason = CORE_ROOT_COMPARISON_STABLE_DIRECTION;
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+        orders[0],
+        2,
+        (uint8_t)(1u << MOVE_DOWN),
+        values,
+        candidates,
+        MOVE_LEFT,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_DOWN);
+    assert(reason == CORE_ROOT_COMPARISON_NOT_COMPARED);
+
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_WIN, CORE_VALUE_BOUND_EXACT, 999000.0, 1);
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+        orders[1],
+        2,
+        (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_LEFT)),
+        values,
+        candidates,
+        MOVE_LEFT,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_DOWN);
+    assert(selected_value.outcome == CORE_OUTCOME_WIN);
+    assert(reason == CORE_ROOT_COMPARISON_TERMINAL_OUTCOME);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+
+    board = BoardCreate(6, 6, "standard", 0);
+    Coord tie_me_body[] = {{1, 5}, {1, 4}, {2, 4}, {3, 4}, {3, 3}};
+    Coord tie_you_body[] = {{3, 5}, {2, 5}};
+    me = make_snake("me", tie_me_body, 5, 90);
+    you = make_snake("you", tie_you_body, 2, 90);
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    values[MOVE_LEFT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 1.0, 0);
+    values[MOVE_RIGHT] = values[MOVE_LEFT];
+    candidates[MOVE_LEFT] = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 30, 5);
+    candidates[MOVE_RIGHT] = candidates[MOVE_LEFT];
+    pairwise = CoreCompareRootCandidates(
+        &values[MOVE_LEFT],
+        &candidates[MOVE_LEFT],
+        &values[MOVE_RIGHT],
+        &candidates[MOVE_RIGHT]
+    );
+    assert(pairwise.ordering == CORE_ROOT_COMPARISON_EQUAL);
+    assert(pairwise.reason == CORE_ROOT_COMPARISON_NOT_COMPARED);
+
+    const MoveDirection tie_orders[][2] = {
+        {MOVE_LEFT, MOVE_RIGHT},
+        {MOVE_RIGHT, MOVE_LEFT},
+    };
+    for (size_t index = 0; index < sizeof(tie_orders) / sizeof(tie_orders[0]); index++) {
+        assert(CoreSelectRootCandidateForTesting(
+            board,
+            "me",
+            CORE_ROOT_POLICY_STRICT_MINIMAX,
+            tie_orders[index],
+            2,
+            (uint8_t)((1u << MOVE_LEFT) | (1u << MOVE_RIGHT)),
+            values,
+            candidates,
+            MOVE_RIGHT,
+            &selected,
+            &selected_value,
+            &reason
+        ));
+        assert(selected == MOVE_LEFT);
+        assert(selected_value.score == 1.0);
+        assert(selected_value.outcome == CORE_OUTCOME_UNRESOLVED);
+        assert(selected_value.bound == CORE_VALUE_BOUND_EXACT);
+        assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK);
+    }
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+#endif
 
 static void test_root_comparison_orders_exact_outcomes_before_structure(void) {
     const CoreOutcome better[] = {
@@ -1004,6 +1176,9 @@ static void test_bounded_rectangle_cycle_proves_capacity(void) {
 }
 
 int main(void) {
+#ifdef CORE_ROOT_SELECTION_TESTING
+    test_partial_root_frontier_is_permutation_invariant_and_coherent();
+#endif
     test_root_comparison_orders_exact_outcomes_before_structure();
     test_root_comparison_uses_only_decisive_search_bounds();
     test_root_comparison_matches_expected_interval_table();

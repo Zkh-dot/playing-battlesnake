@@ -84,6 +84,7 @@ typedef enum {
     CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK = 6,
     CORE_ROOT_COMPARISON_PREVIOUS_PV = 7,
     CORE_ROOT_COMPARISON_STABLE_DIRECTION = 8,
+    CORE_ROOT_COMPARISON_CORRIDOR_GUARD = 9,
 } CoreRootComparisonReason;
 
 typedef enum {
@@ -162,6 +163,7 @@ typedef struct {
     uint8_t root_allowed_mask;
     CoreRootPolicy root_policy_applied;
     CoreSelectionReason selection_reason;
+    CoreRootComparisonReason root_comparison_reason;
     uint64_t root_analysis_nodes;
     double root_analysis_elapsed_ms;
     int root_analysis_budget_ms;

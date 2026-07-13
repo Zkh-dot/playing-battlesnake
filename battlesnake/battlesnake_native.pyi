@@ -120,6 +120,7 @@ class MinimaxDiagnostics(TypedDict):
     root_allowed_mask: int
     root_policy_applied: str
     selection_reason: str
+    root_comparison_reason: str
     root_analysis_nodes: int
     root_analysis_elapsed_ms: float
     root_analysis_budget_ms: int

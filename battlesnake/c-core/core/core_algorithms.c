@@ -1223,6 +1223,7 @@ typedef struct {
     bool tt_enabled;
     bool root_best_valid;
     MoveDirection root_best_move;
+    CoreRootComparisonReason root_best_reason;
     MoveDirection root_worst_reply[4];
     bool root_move_value_valid[4];
     CoreSearchValue root_move_values[4];
@@ -1307,23 +1308,6 @@ static void core_move_to_front(MoveDirection* moves, int move_count, MoveDirecti
     moves[0] = selected;
 }
 
-static int core_preferred_order_rank(
-    const MoveDirection* moves,
-    int move_count,
-    MoveDirection move,
-    MoveDirection preferred
-) {
-    int move_index = core_find_move_index(moves, move_count, move);
-    int preferred_index = core_find_move_index(moves, move_count, preferred);
-    if (preferred_index == INT_MAX) {
-        return move_index;
-    }
-    if (move_index == preferred_index) {
-        return 0;
-    }
-    return move_index < preferred_index ? move_index + 1 : move_index;
-}
-
 static int core_move_order_score(
     CoreSearchContext* context,
     int ply,
@@ -1364,12 +1348,17 @@ static void core_order_moves(
     if (context == NULL) {
         return;
     }
-    if (!context->config.enable_move_ordering) {
+    if (ply == 0) {
+        /* Root tags are part of the policy frontier and diagnostics. Give
+         * them one canonical previous-iteration/TT order independent of the
+         * optional interior-node ordering switch. This keeps bound tags
+         * coherent while retaining the established root pruning profile. */
+        MoveDirection root_preferred = core_valid_move_direction(tt_best) ?
+            tt_best : previous_iteration_best;
+        core_move_to_front(moves, move_count, root_preferred);
         return;
     }
-    MoveDirection effective_preferred = core_valid_move_direction(tt_best) ? tt_best : previous_iteration_best;
-    if (ply == 0) {
-        core_move_to_front(moves, move_count, effective_preferred);
+    if (!context->config.enable_move_ordering) {
         return;
     }
     for (int i = 1; i < move_count; i++) {
@@ -4500,8 +4489,12 @@ static bool core_equal_score_move_is_better(
     MoveDirection candidate,
     MoveDirection current_best,
     MoveDirection preferred,
-    bool terminal_loss_tie
+    bool terminal_loss_tie,
+    CoreRootComparisonReason* out_reason
 ) {
+    if (out_reason != NULL) {
+        *out_reason = CORE_ROOT_COMPARISON_STABLE_DIRECTION;
+    }
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     size_t cell_count = board != NULL && board->width > 0 && board->height > 0 ?
         (size_t)board->width * (size_t)board->height :
@@ -4526,33 +4519,37 @@ static bool core_equal_score_move_is_better(
                     candidate_metrics.forced_steps != current_best_metrics.forced_steps ||
                     candidate_metrics.reachable != current_best_metrics.reachable
                 )) {
+                if (out_reason != NULL) {
+                    *out_reason = CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK;
+                }
                 return core_corridor_metrics_are_better(&candidate_metrics, &current_best_metrics);
             }
         }
         int candidate_tail_path = core_tail_path_after_move(board, snake_id, candidate);
         int current_best_tail_path = core_tail_path_after_move(board, snake_id, current_best);
         if (candidate_tail_path != current_best_tail_path) {
+            if (out_reason != NULL) {
+                *out_reason = CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK;
+            }
             return candidate_tail_path > current_best_tail_path;
         }
         if (terminal_loss_tie) {
             MoveDirection heading = core_current_heading(board, snake_id);
             if (core_valid_move_direction(heading)) {
                 if (candidate == heading && current_best != heading) {
+                    if (out_reason != NULL) {
+                        *out_reason = CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK;
+                    }
                     return true;
                 }
                 if (current_best == heading && candidate != heading) {
+                    if (out_reason != NULL) {
+                        *out_reason = CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK;
+                    }
                     return false;
                 }
             }
         }
-    }
-
-    bool preferred_valid = core_valid_move_direction(preferred);
-    if (preferred_valid && candidate == preferred && current_best != preferred) {
-        return true;
-    }
-    if (preferred_valid && current_best == preferred && candidate != preferred) {
-        return false;
     }
 
     int candidate_space = core_cached_reachable_after_move(
@@ -4572,11 +4569,28 @@ static bool core_equal_score_move_is_better(
         current_best
     );
     if (candidate_space != current_best_space) {
+        if (out_reason != NULL) {
+            *out_reason = CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK;
+        }
         return candidate_space > current_best_space;
     }
 
-    return core_preferred_order_rank(original_moves, move_count, candidate, preferred) <
-        core_preferred_order_rank(original_moves, move_count, current_best, preferred);
+    bool preferred_valid = core_valid_move_direction(preferred);
+    if (preferred_valid && candidate == preferred && current_best != preferred) {
+        if (out_reason != NULL) {
+            *out_reason = CORE_ROOT_COMPARISON_PREVIOUS_PV;
+        }
+        return true;
+    }
+    if (preferred_valid && current_best == preferred && candidate != preferred) {
+        if (out_reason != NULL) {
+            *out_reason = CORE_ROOT_COMPARISON_PREVIOUS_PV;
+        }
+        return false;
+    }
+
+    return core_find_move_index(original_moves, move_count, candidate) <
+        core_find_move_index(original_moves, move_count, current_best);
 }
 
 static uint8_t core_remove_outcome_dominated_roots(
@@ -4727,7 +4741,86 @@ static uint8_t core_remove_numerically_dominated_roots(
     return active_mask & (uint8_t)~dominated_mask;
 }
 
-static bool core_select_layered_root_candidate(
+typedef struct {
+    MoveDirection move;
+    CoreSearchValue value;
+    CoreRootComparisonReason reason;
+} CoreRootSelection;
+
+static bool core_active_values_are_exact_unresolved(
+    const CoreSearchContext* context,
+    uint8_t active_mask
+) {
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((active_mask & (1u << move)) == 0) {
+            continue;
+        }
+        const CoreSearchValue* value = &context->root_move_values[move];
+        if (value->bound != CORE_VALUE_BOUND_EXACT || value->outcome != CORE_OUTCOME_UNRESOLVED) {
+            return false;
+        }
+    }
+    return active_mask != 0;
+}
+
+static bool core_active_values_are_exact(const CoreSearchContext* context, uint8_t active_mask) {
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((active_mask & (1u << move)) != 0 &&
+            context->root_move_values[move].bound != CORE_VALUE_BOUND_EXACT) {
+            return false;
+        }
+    }
+    return active_mask != 0;
+}
+
+static bool core_numeric_layer_has_exact_heuristic_preference(
+    const CoreSearchContext* context,
+    uint8_t before_mask,
+    uint8_t after_mask
+) {
+    for (int winner = MOVE_UP; winner <= MOVE_RIGHT; winner++) {
+        const CoreSearchValue* winner_value = &context->root_move_values[winner];
+        if ((after_mask & (1u << winner)) == 0 ||
+            winner_value->bound != CORE_VALUE_BOUND_EXACT ||
+            winner_value->outcome != CORE_OUTCOME_UNRESOLVED) {
+            continue;
+        }
+        for (int loser = MOVE_UP; loser <= MOVE_RIGHT; loser++) {
+            const CoreSearchValue* loser_value = &context->root_move_values[loser];
+            if ((before_mask & (1u << loser)) == 0 || (after_mask & (1u << loser)) != 0 ||
+                loser_value->bound != CORE_VALUE_BOUND_EXACT ||
+                loser_value->outcome != CORE_OUTCOME_UNRESOLVED) {
+                continue;
+            }
+            if (winner_value->score > loser_value->score) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static uint8_t core_keep_strict_numeric_maxima(
+    const CoreSearchContext* context,
+    uint8_t active_mask
+) {
+    double maximum = -DBL_MAX;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((active_mask & (1u << move)) != 0 &&
+            context->root_move_values[move].score > maximum) {
+            maximum = context->root_move_values[move].score;
+        }
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((active_mask & (1u << move)) != 0 &&
+            context->root_move_values[move].score != maximum) {
+            active_mask &= (uint8_t)~(1u << move);
+        }
+    }
+    return active_mask;
+}
+
+static bool core_select_root_candidate(
     const Board* board,
     const char* snake_id,
     const MoveDirection* original_moves,
@@ -4735,11 +4828,9 @@ static bool core_select_layered_root_candidate(
     int* reachable_spaces,
     MoveDirection preferred,
     const CoreSearchContext* context,
-    MoveDirection* out_move,
-    CoreSearchValue* out_value
+    CoreRootSelection* out_selection
 ) {
-    if (context->stats == NULL ||
-        context->stats->root_policy_applied != CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY) {
+    if (context->stats == NULL || out_selection == NULL) {
         return false;
     }
 
@@ -4753,18 +4844,70 @@ static bool core_select_layered_root_candidate(
         return false;
     }
 
-    active_mask = core_remove_outcome_dominated_roots(context, active_mask);
-    active_mask = core_remove_structurally_dominated_roots(context, active_mask);
-    active_mask = core_keep_longest_exact_forced_losses(context, active_mask);
-    active_mask = core_remove_numerically_dominated_roots(context, active_mask);
+    CoreRootComparisonReason decisive_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+    if (context->stats->root_policy_applied == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY) {
+        uint8_t before = active_mask;
+        active_mask = core_remove_outcome_dominated_roots(context, active_mask);
+        if (active_mask != before) {
+            decisive_reason = core_active_values_are_exact(context, before) ?
+                CORE_ROOT_COMPARISON_TERMINAL_OUTCOME : CORE_ROOT_COMPARISON_SEARCH_BOUND;
+        }
+
+        before = active_mask;
+        active_mask = core_remove_structurally_dominated_roots(context, active_mask);
+        if (active_mask != before && decisive_reason == CORE_ROOT_COMPARISON_NOT_COMPARED) {
+            decisive_reason = CORE_ROOT_COMPARISON_STRUCTURAL_PROOF;
+        }
+
+        before = active_mask;
+        active_mask = core_keep_longest_exact_forced_losses(context, active_mask);
+        if (active_mask != before && decisive_reason == CORE_ROOT_COMPARISON_NOT_COMPARED) {
+            decisive_reason = CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL;
+        }
+
+        before = active_mask;
+        active_mask = core_remove_numerically_dominated_roots(context, active_mask);
+        if (active_mask != before && decisive_reason == CORE_ROOT_COMPARISON_NOT_COMPARED) {
+            decisive_reason = core_numeric_layer_has_exact_heuristic_preference(
+                context,
+                before,
+                active_mask
+            ) ? CORE_ROOT_COMPARISON_HEURISTIC_VALUE : CORE_ROOT_COMPARISON_SEARCH_BOUND;
+        }
+    } else {
+        uint8_t before = active_mask;
+        active_mask = core_keep_strict_numeric_maxima(context, active_mask);
+        if (active_mask != before) {
+            const CoreSearchValue* selected_value = NULL;
+            for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+                if ((active_mask & (1u << move)) != 0) {
+                    selected_value = &context->root_move_values[move];
+                    break;
+                }
+            }
+            if (selected_value != NULL && selected_value->bound == CORE_VALUE_BOUND_EXACT &&
+                selected_value->outcome != CORE_OUTCOME_UNRESOLVED) {
+                decisive_reason = selected_value->outcome == CORE_OUTCOME_LOSS ?
+                    CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL : CORE_ROOT_COMPARISON_TERMINAL_OUTCOME;
+            } else {
+                decisive_reason = core_active_values_are_exact_unresolved(context, active_mask) ?
+                    CORE_ROOT_COMPARISON_HEURISTIC_VALUE : CORE_ROOT_COMPARISON_SEARCH_BOUND;
+            }
+        }
+    }
 
     MoveDirection selected = MOVE_INVALID;
+    CoreRootComparisonReason fallback_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         if ((active_mask & (1u << move)) == 0) {
             continue;
         }
-        if (!core_valid_move_direction(selected) ||
-            core_equal_score_move_is_better(
+        if (!core_valid_move_direction(selected)) {
+            selected = (MoveDirection)move;
+            continue;
+        }
+        CoreRootComparisonReason comparison_reason = CORE_ROOT_COMPARISON_STABLE_DIRECTION;
+        bool candidate_is_better = core_equal_score_move_is_better(
                 board,
                 snake_id,
                 original_moves,
@@ -4774,18 +4917,83 @@ static bool core_select_layered_root_candidate(
                 selected,
                 preferred,
                 context->root_move_values[move].outcome == CORE_OUTCOME_LOSS &&
-                    context->root_move_values[selected].outcome == CORE_OUTCOME_LOSS
-            )) {
+                    context->root_move_values[selected].outcome == CORE_OUTCOME_LOSS,
+                &comparison_reason
+            );
+        if (comparison_reason == CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK ||
+            (comparison_reason == CORE_ROOT_COMPARISON_PREVIOUS_PV &&
+             fallback_reason != CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK) ||
+            (comparison_reason == CORE_ROOT_COMPARISON_STABLE_DIRECTION &&
+             fallback_reason == CORE_ROOT_COMPARISON_NOT_COMPARED)) {
+            fallback_reason = comparison_reason;
+        }
+        if (candidate_is_better) {
             selected = (MoveDirection)move;
         }
     }
     if (!core_valid_move_direction(selected)) {
         return false;
     }
-    *out_move = selected;
-    *out_value = context->root_move_values[selected];
+    out_selection->move = selected;
+    out_selection->value = context->root_move_values[selected];
+    out_selection->reason = decisive_reason != CORE_ROOT_COMPARISON_NOT_COMPARED ?
+        decisive_reason : fallback_reason;
     return true;
 }
+
+#ifdef CORE_ROOT_SELECTION_TESTING
+bool CoreSelectRootCandidateForTesting(
+    const Board* board,
+    const char* snake_id,
+    CoreRootPolicy policy,
+    const MoveDirection* move_order,
+    int move_count,
+    uint8_t valid_mask,
+    const CoreSearchValue values[4],
+    const CoreRootCandidateStats candidates[4],
+    MoveDirection preferred,
+    MoveDirection* out_move,
+    CoreSearchValue* out_value,
+    CoreRootComparisonReason* out_reason
+) {
+    if (board == NULL || snake_id == NULL || move_order == NULL || move_count <= 0 ||
+        values == NULL || candidates == NULL || out_move == NULL || out_value == NULL ||
+        out_reason == NULL) {
+        return false;
+    }
+    CoreSearchStats stats;
+    CoreSearchStatsInit(&stats);
+    stats.root_policy_applied = policy;
+    CoreSearchContext context;
+    memset(&context, 0, sizeof(context));
+    context.stats = &stats;
+    int reachable_spaces[4] = {-1, -1, -1, -1};
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        context.root_move_value_valid[move] = (valid_mask & (1u << move)) != 0;
+        context.root_move_values[move] = values[move];
+        stats.root_candidates[move] = candidates[move];
+    }
+    CoreRootSelection selection;
+    memset(&selection, 0, sizeof(selection));
+    selection.move = MOVE_INVALID;
+    if (!core_select_root_candidate(
+        board,
+        snake_id,
+        move_order,
+        move_count,
+        reachable_spaces,
+        preferred,
+        &context,
+        &selection
+    )) {
+        return false;
+    }
+    *out_move = selection.move;
+    *out_value = selection.value;
+    *out_reason = selection.reason;
+    return true;
+}
+#endif
 
 static uint32_t core_transition_cause(
     const char* snake_id,
@@ -5189,7 +5397,8 @@ static CoreStatus core_minimax_search(
                     own_move,
                     best_move,
                     tie_preferred,
-                    worst_reply.outcome == CORE_OUTCOME_LOSS
+                    worst_reply.outcome == CORE_OUTCOME_LOSS,
+                    NULL
                 )
             )
         ) {
@@ -5200,9 +5409,10 @@ static CoreStatus core_minimax_search(
             alpha = best_value.score;
         }
         if (ply == 0) {
-            MoveDirection policy_move = MOVE_INVALID;
-            CoreSearchValue policy_value = core_unresolved_value(0.0);
-            if (core_select_layered_root_candidate(
+            CoreRootSelection selection;
+            memset(&selection, 0, sizeof(selection));
+            selection.move = MOVE_INVALID;
+            if (core_select_root_candidate(
                 board,
                 snake_id,
                 original_own_moves,
@@ -5210,14 +5420,15 @@ static CoreStatus core_minimax_search(
                 original_reachable_spaces,
                 tie_preferred,
                 context,
-                &policy_move,
-                &policy_value
+                &selection
             )) {
                 context->root_best_valid = true;
-                context->root_best_move = policy_move;
+                context->root_best_move = selection.move;
+                context->root_best_reason = selection.reason;
             } else if (core_valid_move_direction(best_move)) {
                 context->root_best_valid = true;
                 context->root_best_move = best_move;
+                context->root_best_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
             }
         }
         if (alpha >= beta) {
@@ -5239,7 +5450,10 @@ static CoreStatus core_minimax_search(
     MoveDirection selected_move = best_move;
     CoreSearchValue selected_value = best_value;
     if (ply == 0) {
-        (void)core_select_layered_root_candidate(
+        CoreRootSelection selection;
+        memset(&selection, 0, sizeof(selection));
+        selection.move = MOVE_INVALID;
+        if (core_select_root_candidate(
             board,
             snake_id,
             original_own_moves,
@@ -5247,9 +5461,14 @@ static CoreStatus core_minimax_search(
             original_reachable_spaces,
             tie_preferred,
             context,
-            &selected_move,
-            &selected_value
-        );
+            &selection
+        )) {
+            selected_move = selection.move;
+            selected_value = selection.value;
+            context->root_best_valid = true;
+            context->root_best_move = selection.move;
+            context->root_best_reason = selection.reason;
+        }
     }
     *out_value = selected_value;
     if (out_best_move != NULL) {
@@ -5366,6 +5585,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     }
     context.root_best_valid = true;
     context.root_best_move = completed_best;
+    context.root_best_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
     bool fixed_depth_requested = config.fixed_depth > 0;
     int max_depth = fixed_depth_requested ? config.fixed_depth : CORE_MINIMAX_MAX_DEPTH;
     size_t tt_capacity = fixed_depth_requested ? (1u << 12) : (1u << 20);
@@ -5389,6 +5609,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     }
     int completed_depth = 0;
     CoreSearchValue completed_value = core_unresolved_value(0.0);
+    CoreRootComparisonReason completed_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
     bool timed_out = false;
     bool completed_root_move_score_valid[4] = {false, false, false, false};
     CoreSearchValue completed_root_move_values[4];
@@ -5431,6 +5652,7 @@ CoreStatus CoreMinimaxMoveWithStats(
         if (iteration_timed_out) {
             if (completed_depth == 0 && context.root_best_valid) {
                 completed_best = context.root_best_move;
+                completed_reason = context.root_best_reason;
                 if (context.root_move_value_valid[completed_best]) {
                     completed_value = context.root_move_values[completed_best];
                     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
@@ -5452,6 +5674,7 @@ CoreStatus CoreMinimaxMoveWithStats(
         }
         completed_depth = depth;
         completed_value = value;
+        completed_reason = context.root_best_reason;
         for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
             completed_root_move_score_valid[move] = context.root_move_value_valid[move];
             completed_root_move_values[move] = context.root_move_values[move];
@@ -5473,6 +5696,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     }
     stats->score = completed_value.score;
     stats->value = completed_value;
+    stats->root_comparison_reason = completed_reason;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         stats->root_move_score_valid[move] = completed_root_move_score_valid[move];
         stats->root_move_scores[move] = completed_root_move_values[move].score;
@@ -5526,6 +5750,7 @@ CoreStatus CoreMinimaxMoveWithStats(
             stats->score = completed_value.score;
             stats->value = completed_value;
             stats->selection_reason = CORE_SELECTION_CORRIDOR_GUARD;
+            stats->root_comparison_reason = CORE_ROOT_COMPARISON_CORRIDOR_GUARD;
         }
     }
     stats->move = completed_best;

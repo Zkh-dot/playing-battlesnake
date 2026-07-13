@@ -512,6 +512,21 @@ static const char* selection_reason_name(CoreSelectionReason reason) {
     }
 }
 
+static const char* root_comparison_reason_name(CoreRootComparisonReason reason) {
+    switch (reason) {
+        case CORE_ROOT_COMPARISON_TERMINAL_OUTCOME: return "terminal_outcome";
+        case CORE_ROOT_COMPARISON_SEARCH_BOUND: return "search_bound";
+        case CORE_ROOT_COMPARISON_STRUCTURAL_PROOF: return "structural_proof";
+        case CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL: return "terminal_survival";
+        case CORE_ROOT_COMPARISON_HEURISTIC_VALUE: return "heuristic_value";
+        case CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK: return "structural_tiebreak";
+        case CORE_ROOT_COMPARISON_PREVIOUS_PV: return "previous_pv";
+        case CORE_ROOT_COMPARISON_STABLE_DIRECTION: return "stable_direction";
+        case CORE_ROOT_COMPARISON_CORRIDOR_GUARD: return "corridor_guard";
+        default: return "not_compared";
+    }
+}
+
 static PyObject* cause_list(uint32_t causes) {
     static const struct {
         uint32_t bit;
@@ -783,6 +798,7 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         dict_set_int(result, "root_allowed_mask", stats.root_allowed_mask) < 0 ||
         dict_set_string(result, "root_policy_applied", root_policy_name(stats.root_policy_applied)) < 0 ||
         dict_set_string(result, "selection_reason", selection_reason_name(stats.selection_reason)) < 0 ||
+        dict_set_string(result, "root_comparison_reason", root_comparison_reason_name(stats.root_comparison_reason)) < 0 ||
         dict_set_u64(result, "root_analysis_nodes", stats.root_analysis_nodes) < 0 ||
         dict_set_double(result, "root_analysis_elapsed_ms", stats.root_analysis_elapsed_ms) < 0 ||
         dict_set_int(result, "root_analysis_budget_ms", stats.root_analysis_budget_ms) < 0 ||
