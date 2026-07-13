@@ -1604,7 +1604,9 @@ static bool core_body_seen(const Coord* seen, int seen_count, int body_len, cons
     return false;
 }
 
-#define CORE_STRUCTURAL_PROOF_MAX_STATES 200000u
+/* Keep exhaustive failure proofs bounded so legacy root/refutation analysis
+ * retains time to complete. Exhaustion is reported as UNKNOWN, never SAFE. */
+#define CORE_STRUCTURAL_PROOF_MAX_STATES 4096u
 
 typedef struct {
     CoreStructuralProofResult result;
@@ -1662,8 +1664,8 @@ static CoreStructuralProofOutcome core_prove_structural_node(
         !context->use_opponent_closure) {
         return core_structural_outcome(CORE_STRUCTURAL_PROOF_SAFE, CORE_STRUCTURAL_CUTOFF_CYCLE, depth);
     }
-    if (depth >= context->horizon) {
-        return core_structural_outcome(CORE_STRUCTURAL_PROOF_SAFE, CORE_STRUCTURAL_CUTOFF_HORIZON, depth);
+    if (depth > context->horizon) {
+        return core_structural_outcome(CORE_STRUCTURAL_PROOF_UNKNOWN, CORE_STRUCTURAL_CUTOFF_HORIZON, depth);
     }
     memcpy(
         context->ancestor_bodies + (size_t)ancestor_count * (size_t)context->body_len,
@@ -1761,6 +1763,10 @@ static bool core_prepare_structural_opponent_arrival(
         return false;
     }
     size_t state_count = ((size_t)horizon + 1) * cell_count;
+    if (state_count > SIZE_MAX / sizeof(unsigned int) || state_count > SIZE_MAX / sizeof(size_t)) {
+        free(arrival);
+        return false;
+    }
     int* vacate = (int*)calloc(cell_count, sizeof(int));
     unsigned int* seen = (unsigned int*)calloc(state_count, sizeof(unsigned int));
     size_t* queue = (size_t*)malloc(state_count * sizeof(size_t));
@@ -1793,6 +1799,113 @@ static bool core_prepare_structural_opponent_arrival(
     }
     *out_arrival = arrival;
     return true;
+}
+
+static int core_rectangle_perimeter_index(
+    Coord coord,
+    int min_x,
+    int min_y,
+    int max_x,
+    int max_y
+) {
+    int width = max_x - min_x + 1;
+    int height = max_y - min_y + 1;
+    if (coord.y == min_y && coord.x >= min_x && coord.x <= max_x) {
+        return coord.x - min_x;
+    }
+    if (coord.x == max_x && coord.y > min_y && coord.y <= max_y) {
+        return width - 1 + coord.y - min_y;
+    }
+    if (coord.y == max_y && coord.x >= min_x && coord.x < max_x) {
+        return width + height - 2 + max_x - coord.x;
+    }
+    if (coord.x == min_x && coord.y > min_y && coord.y < max_y) {
+        return 2 * width + height - 3 + max_y - coord.y;
+    }
+    return -1;
+}
+
+static Coord core_rectangle_perimeter_coord(
+    int index,
+    int min_x,
+    int min_y,
+    int max_x,
+    int max_y
+) {
+    int width = max_x - min_x + 1;
+    int height = max_y - min_y + 1;
+    if (index < width) {
+        return (Coord){min_x + index, min_y};
+    }
+    index -= width;
+    if (index < height - 1) {
+        return (Coord){max_x, min_y + 1 + index};
+    }
+    index -= height - 1;
+    if (index < width - 1) {
+        return (Coord){max_x - 1 - index, max_y};
+    }
+    index -= width - 1;
+    return (Coord){min_x, max_y - 1 - index};
+}
+
+/* A snake occupying a proper contiguous segment of a rectangle perimeter can
+ * follow that perimeter forever. The certificate is valid only if every cell
+ * on the cycle remains outside all modeled opponent arrival deadlines. */
+static int core_structural_rectangle_capacity(
+    const Board* board,
+    const Snake* snake,
+    const int* opponent_arrival
+) {
+    if (snake == NULL || snake->body_len < 2) {
+        return 0;
+    }
+    int min_x = snake->body[0].x;
+    int max_x = min_x;
+    int min_y = snake->body[0].y;
+    int max_y = min_y;
+    for (int i = 1; i < snake->body_len; i++) {
+        Coord body = snake->body[i];
+        if (body.x < min_x) min_x = body.x;
+        if (body.x > max_x) max_x = body.x;
+        if (body.y < min_y) min_y = body.y;
+        if (body.y > max_y) max_y = body.y;
+    }
+    int width = max_x - min_x + 1;
+    int height = max_y - min_y + 1;
+    if (width < 2 || height < 2 || !BoardInBounds(board, (Coord){min_x, min_y}) ||
+        !BoardInBounds(board, (Coord){max_x, max_y})) {
+        return 0;
+    }
+    size_t capacity_size = 2 * (size_t)width + 2 * (size_t)height - 4;
+    if (capacity_size > (size_t)INT_MAX || capacity_size <= (size_t)snake->body_len) {
+        return 0;
+    }
+    int capacity = (int)capacity_size;
+    int head_index = core_rectangle_perimeter_index(snake->body[0], min_x, min_y, max_x, max_y);
+    int neck_index = core_rectangle_perimeter_index(snake->body[1], min_x, min_y, max_x, max_y);
+    if (head_index < 0 || neck_index < 0) {
+        return 0;
+    }
+    int body_step = (int)(((int64_t)neck_index - (int64_t)head_index + capacity) % capacity);
+    if (body_step != 1 && body_step != capacity - 1) {
+        return 0;
+    }
+    int expected = head_index;
+    for (int i = 1; i < snake->body_len; i++) {
+        int index = core_rectangle_perimeter_index(snake->body[i], min_x, min_y, max_x, max_y);
+        expected = (expected + body_step) % capacity;
+        if (index != expected) {
+            return 0;
+        }
+    }
+    for (int index = 0; index < capacity; index++) {
+        Coord coord = core_rectangle_perimeter_coord(index, min_x, min_y, max_x, max_y);
+        if (opponent_arrival[core_coord_index(board, coord)] != CORE_SPACE_TIME_NEVER) {
+            return 0;
+        }
+    }
+    return capacity;
 }
 
 /* Preserve the pre-structural-proof diagnostic contract while callers migrate
@@ -1982,6 +2095,21 @@ static void core_analyze_self_trap(
         opponent_arrival[core_coord_index(board, root_destination)] <= 1) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNSAFE;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEAD_END;
+        free(opponent_arrival);
+        CoreSearchStateFree(&state);
+        return;
+    }
+    int structural_capacity = core_structural_rectangle_capacity(
+        CoreSearchStateBoard(&state),
+        snake,
+        opponent_arrival
+    );
+    if (structural_capacity > 0) {
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_SAFE;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_CAPACITY;
+        candidate->structural_capacity = structural_capacity;
+        candidate->explored_states = 1;
+        (*analysis_nodes)++;
         free(opponent_arrival);
         CoreSearchStateFree(&state);
         return;

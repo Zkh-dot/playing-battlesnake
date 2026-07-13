@@ -312,7 +312,53 @@ static void test_repeatable_loop_is_structurally_safe(void) {
     assert(BoardAddSnake(board, &you));
     assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
     assert(stats.root_candidates[MOVE_RIGHT].structural_proof == CORE_STRUCTURAL_PROOF_SAFE);
+    assert(stats.root_candidates[MOVE_RIGHT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_CYCLE);
     assert(stats.root_candidates[MOVE_RIGHT].explored_states > 1);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
+static void test_horizon_without_certificate_is_unknown(void) {
+    Board* board = BoardCreate(10, 1, "standard", 0);
+    Coord me_body[] = {{2, 0}, {1, 0}, {0, 0}};
+    Coord you_body[] = {{9, 0}};
+    Snake me = make_snake("me", me_body, 3, 90);
+    Snake you = make_snake("you", you_body, 1, 90);
+    CoreSearchConfig config = CoreSearchConfigDefault(1000);
+    CoreSearchStats stats;
+    MoveDirection move = MOVE_INVALID;
+
+    config.fixed_depth = 1;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
+    assert(stats.root_candidates[MOVE_RIGHT].structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN);
+    assert(stats.root_candidates[MOVE_RIGHT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_HORIZON);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
+static void test_permanent_rectangle_cycle_proves_capacity(void) {
+    Board* board = BoardCreate(4, 3, "standard", 0);
+    Coord me_body[] = {{1, 0}, {0, 0}, {0, 1}, {0, 2}};
+    Coord you_body[] = {{1, 1}};
+    Snake me = make_snake("me", me_body, 4, 90);
+    Snake you = make_snake("you", you_body, 1, 90);
+    CoreSearchConfig config = CoreSearchConfigDefault(1000);
+    CoreSearchStats stats;
+    MoveDirection move = MOVE_INVALID;
+
+    config.fixed_depth = 1;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
+    assert(stats.root_candidates[MOVE_RIGHT].structural_proof == CORE_STRUCTURAL_PROOF_SAFE);
+    assert(stats.root_candidates[MOVE_RIGHT].proof_cutoff == CORE_STRUCTURAL_CUTOFF_CAPACITY);
+    assert(stats.root_candidates[MOVE_RIGHT].structural_capacity == 6);
 
     SnakeFree(&me);
     SnakeFree(&you);
@@ -338,5 +384,7 @@ int main(void) {
     test_default_search_config_uses_ladder_policy();
     test_branching_pocket_proves_every_branch_dies();
     test_repeatable_loop_is_structurally_safe();
+    test_horizon_without_certificate_is_unknown();
+    test_permanent_rectangle_cycle_proves_capacity();
     return 0;
 }

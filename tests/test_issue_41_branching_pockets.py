@@ -48,7 +48,7 @@ def test_repeatable_loop_is_not_rejected_as_unsafe() -> None:
     candidate = _candidate(board, "right")
 
     assert candidate["structural_proof"] == "safe"
-    assert candidate["proof_cutoff"] in {"cycle", "horizon", "capacity"}
+    assert candidate["proof_cutoff"] == "cycle"
     assert candidate["explored_states"] > 1
 
 
@@ -64,3 +64,46 @@ def test_equal_length_opponent_closes_root_doorway() -> None:
 
     assert candidate["opponent_closure_considered"] is True
     assert candidate["structural_proof"] != "safe"
+
+
+def test_horizon_exhaustion_without_certificate_is_unknown() -> None:
+    board = _board(
+        10,
+        1,
+        [(2, 0), (1, 0), (0, 0)],
+        [(9, 0)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["structural_proof"] == "unknown"
+    assert candidate["proof_cutoff"] == "horizon"
+
+
+def test_equal_length_opponent_closure_prevents_horizon_false_safety() -> None:
+    board = _board(
+        5,
+        1,
+        [(1, 0), (0, 0)],
+        [(4, 0), (3, 0)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
+def test_permanent_rectangle_cycle_proves_capacity() -> None:
+    board = _board(
+        4,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(1, 1)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["structural_proof"] == "safe"
+    assert candidate["proof_cutoff"] == "capacity"
+    assert candidate["structural_capacity"] == 6
