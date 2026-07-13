@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, TypedDict
+from typing import Iterable, Literal, TypedDict
 
 
 class Coord:
@@ -65,7 +65,9 @@ RIGHT: str
 class RootCandidateDiagnostics(TypedDict):
     evaluated: bool
     allowed: bool
-    rejection_reason: str
+    rejection_reason: Literal[
+        "none", "no_surviving_reply", "proven_short_self_trap", "structurally_dominated"
+    ]
     safe_by_board_rules: bool
     reply_outcomes: dict[str, str]
     alive_reply_mask: int
@@ -74,6 +76,12 @@ class RootCandidateDiagnostics(TypedDict):
     immediate_causes: list[str]
     trap_status: str
     trap_horizon: int
+    structural_proof: str
+    proof_cutoff: str
+    proof_horizon: int
+    explored_states: int
+    structural_capacity: int
+    opponent_closure_considered: bool
     post_move_length: int
     relaxed_static_capacity: int
     refutation_status: str
@@ -114,6 +122,9 @@ class MinimaxDiagnostics(TypedDict):
     selection_reason: str
     root_analysis_nodes: int
     root_analysis_elapsed_ms: float
+    root_analysis_budget_ms: int
+    # Scheduled search interval; a noninterruptible leaf may still complete no depth.
+    search_reserved_ms: int
 
 def reachable_space(board: Board, start: Coord, snake_id: str) -> int: ...
 def shortest_path(board: Board, start: Coord, goal: Coord, snake_id: str) -> list[Coord]: ...

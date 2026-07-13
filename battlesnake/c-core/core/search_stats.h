@@ -33,6 +33,27 @@ typedef enum {
 } CoreTrapStatus;
 
 typedef enum {
+    CORE_STRUCTURAL_PROOF_NOT_ANALYZED = 0,
+    CORE_STRUCTURAL_PROOF_SAFE = 1,
+    CORE_STRUCTURAL_PROOF_UNSAFE = 2,
+    CORE_STRUCTURAL_PROOF_UNKNOWN = 3,
+} CoreStructuralProofResult;
+
+typedef enum {
+    CORE_STRUCTURAL_CUTOFF_NONE = 0,
+    CORE_STRUCTURAL_CUTOFF_CAPACITY = 1,
+    CORE_STRUCTURAL_CUTOFF_CYCLE = 2,
+    CORE_STRUCTURAL_CUTOFF_HORIZON = 3,
+    CORE_STRUCTURAL_CUTOFF_DEAD_END = 4,
+    CORE_STRUCTURAL_CUTOFF_DEADLINE = 5,
+    CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT = 6,
+    CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE = 7,
+    CORE_STRUCTURAL_CUTOFF_POLICY_SUFFICIENT = 8,
+    CORE_STRUCTURAL_CUTOFF_SURVIVABILITY = 9,
+    CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO = 10,
+} CoreStructuralProofCutoff;
+
+typedef enum {
     CORE_REFUTATION_NOT_ANALYZED = 0,
     CORE_REFUTATION_PROVEN_REFUTABLE = 1,
     CORE_REFUTATION_NOT_REFUTABLE = 2,
@@ -43,6 +64,7 @@ typedef enum {
     CORE_ROOT_REJECTION_NONE = 0,
     CORE_ROOT_REJECTION_NO_SURVIVING_REPLY = 1,
     CORE_ROOT_REJECTION_PROVEN_SHORT_SELF_TRAP = 2,
+    CORE_ROOT_REJECTION_STRUCTURALLY_DOMINATED = 3,
 } CoreRootRejectionReason;
 
 typedef enum {
@@ -67,6 +89,12 @@ typedef struct {
     uint32_t immediate_causes;
     CoreTrapStatus trap_status;
     int trap_horizon;
+    CoreStructuralProofResult structural_proof;
+    CoreStructuralProofCutoff proof_cutoff;
+    int proof_horizon;
+    uint64_t explored_states;
+    int structural_capacity;
+    bool opponent_closure_considered;
     int post_move_length;
     int relaxed_static_capacity;
     CoreRefutationStatus refutation_status;
@@ -107,6 +135,10 @@ typedef struct {
     CoreSelectionReason selection_reason;
     uint64_t root_analysis_nodes;
     double root_analysis_elapsed_ms;
+    int root_analysis_budget_ms;
+    /* Scheduled interval after the structural prefix; it does not guarantee
+     * that a noninterruptible search leaf completes a depth. */
+    int search_reserved_ms;
 } CoreSearchStats;
 
 typedef struct {

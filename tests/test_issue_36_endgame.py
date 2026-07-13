@@ -56,11 +56,14 @@ class Issue36EndgameTests(unittest.TestCase):
                 )
                 root_scores = result["root_move_scores"]
 
-                self.assertIn(str(raw["bad_move"]), root_scores)
-                self.assertLess(
-                    root_scores[str(raw["bad_move"])],
-                    root_scores[str(result["move"])],
-                )
+                bad_move = str(raw["bad_move"])
+                bad_candidate = result["root_candidates"][bad_move]
+                if bad_candidate["rejection_reason"] == "structurally_dominated":
+                    self.assertNotIn(bad_move, root_scores)
+                    self.assertFalse(bad_candidate["allowed"])
+                else:
+                    self.assertIn(bad_move, root_scores)
+                    self.assertLess(root_scores[bad_move], root_scores[str(result["move"])])
 
     def test_b085baae_turn_344_terminal_loss_tie_prefers_open_corridor(self) -> None:
         raw = next(
@@ -84,6 +87,55 @@ class Issue36EndgameTests(unittest.TestCase):
 
 
 class Issue36DepthBudgetTests(unittest.TestCase):
+    def test_safe_certificate_dominates_capacity_sufficient_unsafe_root(self) -> None:
+        raw = next(
+            position
+            for position in _positions()
+            if str(position["game_id"]).startswith("923544bf") and int(position["turn"]) == 323
+        )
+        board = _board_from_issue_30_fixture(raw)
+        result = minimax_diagnostics(
+            board,
+            str(raw["snake_id"]),
+            time_budget_ms=5000,
+            fixed_depth=1,
+        )
+
+        unsafe = result["root_candidates"]["left"]
+        safe = result["root_candidates"]["right"]
+        self.assertEqual(unsafe["structural_proof"], "unsafe")
+        self.assertGreaterEqual(
+            int(unsafe["relaxed_static_capacity"]), int(unsafe["post_move_length"])
+        )
+        self.assertEqual(safe["structural_proof"], "safe")
+        self.assertFalse(unsafe["allowed"])
+        self.assertEqual(unsafe["rejection_reason"], "structurally_dominated")
+        self.assertTrue(safe["allowed"])
+
+    def test_t344_structural_work_guard_is_board_derived(self) -> None:
+        raw = next(
+            position
+            for position in _positions()
+            if str(position["game_id"]).startswith("b085baae") and int(position["turn"]) == 344
+        )
+        board = _board_from_issue_30_fixture(raw)
+        result = minimax_diagnostics(
+            board,
+            str(raw["snake_id"]),
+            time_budget_ms=5000,
+            fixed_depth=1,
+        )
+
+        for move in ("up", "left"):
+            candidate = result["root_candidates"][move]
+            expected_limit = (
+                int(candidate["post_move_length"]) + board.width + board.height
+            ) * board.width * board.height
+            self.assertEqual(candidate["structural_proof"], "unknown")
+            self.assertEqual(candidate["proof_cutoff"], "resource_limit")
+            self.assertNotEqual(candidate["proof_cutoff"], "bounded_lasso")
+            self.assertEqual(int(candidate["explored_states"]), expected_limit)
+
     def test_issue36_positions_complete_production_like_fixed_depth(self) -> None:
         for raw in _positions():
             with self.subTest(game_id=raw["game_id"], turn=raw["turn"]):
