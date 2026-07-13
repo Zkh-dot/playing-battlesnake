@@ -13,6 +13,18 @@ def _snake(snake_id: str, head: tuple[int, int]) -> dict[str, object]:
     }
 
 
+def test_builder_defaults_are_repository_relative() -> None:
+    assert build_issue_41_fixtures.EXPORT_DIR == (
+        build_issue_41_fixtures.REPO_ROOT / "exports" / "zkh-dot_lost_games"
+    )
+    assert build_issue_41_fixtures.OUTPUT_PATH == (
+        build_issue_41_fixtures.REPO_ROOT
+        / "tests"
+        / "fixtures"
+        / "issue_41_branching_pocket_positions.json"
+    )
+
+
 def test_recorded_move_is_derived_from_adjacent_replay_frames() -> None:
     current = {"Turn": 41, "Snakes": [_snake("me", (3, 3))]}
     following = {"Turn": 42, "Snakes": [_snake("me", (3, 2))]}

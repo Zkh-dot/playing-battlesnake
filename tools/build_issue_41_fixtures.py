@@ -11,9 +11,7 @@ from typing import Any
 
 OUR_NAME = "scvnak"
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPORT_DIR = Path(
-    "/home/sergei-scv/temp/playing-battlesnake/exports/zkh-dot_lost_games"
-)
+EXPORT_DIR = REPO_ROOT / "exports" / "zkh-dot_lost_games"
 OUTPUT_PATH = REPO_ROOT / "tests" / "fixtures" / "issue_41_branching_pocket_positions.json"
 POSITIONS = [
     ("7351410a-0ddf-4889-9f23-b66b2ef76c2f", 169),

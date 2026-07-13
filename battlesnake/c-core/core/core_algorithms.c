@@ -3167,6 +3167,17 @@ static CoreRootReplyClosureResult core_root_reply_closes_all_continuations(
     return CORE_ROOT_REPLY_CLOSURE_OPEN;
 }
 
+static bool core_is_guaranteed_terminal_non_loss(
+    const CoreRootCandidateStats* candidate,
+    uint8_t complete_opponent_reply_mask
+) {
+    uint8_t terminal_non_loss_mask = candidate->win_reply_mask | candidate->draw_reply_mask;
+    return complete_opponent_reply_mask != 0 &&
+        candidate->opponent_reply_mask == complete_opponent_reply_mask &&
+        candidate->opponent_reply_mask == terminal_non_loss_mask &&
+        candidate->both_alive_reply_mask == 0 && candidate->loss_reply_mask == 0;
+}
+
 static CoreStatus core_prepare_root_policy(
     const Board* board,
     const char* snake_id,
@@ -3303,8 +3314,9 @@ static CoreStatus core_prepare_root_policy(
                 CoreRootCandidateStats* candidate = &stats->root_candidates[move];
                 if ((allowed_mask & (1u << move)) == 0 ||
                     candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE ||
-                    (candidate->opponent_reply_mask != 0 &&
-                     candidate->opponent_reply_mask == candidate->draw_reply_mask) ||
+                    core_is_guaranteed_terminal_non_loss(
+                        candidate, profile.opponent_command_mask
+                    ) ||
                     candidate->relaxed_static_capacity >= candidate->post_move_length) {
                     continue;
                 }
