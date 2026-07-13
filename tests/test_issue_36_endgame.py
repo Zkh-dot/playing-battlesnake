@@ -108,7 +108,7 @@ class Issue36DepthBudgetTests(unittest.TestCase):
             ) * board.width * board.height
             self.assertEqual(candidate["structural_proof"], "unknown")
             self.assertEqual(candidate["proof_cutoff"], "resource_limit")
-            self.assertLessEqual(int(candidate["explored_states"]), expected_limit)
+            self.assertEqual(int(candidate["explored_states"]), expected_limit)
 
     def test_issue36_positions_complete_production_like_fixed_depth(self) -> None:
         for raw in _positions():
