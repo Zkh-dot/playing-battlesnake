@@ -2494,13 +2494,15 @@ static bool core_prepare_structural_opponent_arrival(
         horizon
     );
     int* shorter_arrival = (int*)malloc(cell_count * sizeof(int));
-    bool shorter_filled = shorter_arrival != NULL && core_fill_opponent_arrival(
+    int* optimistic_shorter_vacate = (int*)calloc(cell_count, sizeof(int));
+    bool shorter_filled = shorter_arrival != NULL && optimistic_shorter_vacate != NULL &&
+        core_fill_opponent_arrival(
         board,
         snake_id,
         NULL,
         1,
         own_length,
-        vacate,
+        optimistic_shorter_vacate,
         shorter_arrival,
         shorter_reachability,
         seen,
@@ -2513,6 +2515,7 @@ static bool core_prepare_structural_opponent_arrival(
     free(seen);
     free(queue);
     free(shorter_arrival);
+    free(optimistic_shorter_vacate);
     if (!food_timing_filled || !dangerous_filled || !shorter_filled) {
         free(timing_storage);
         free(shorter_reachability);
