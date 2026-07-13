@@ -342,7 +342,7 @@ static void test_horizon_without_certificate_is_unknown(void) {
     BoardFree(board);
 }
 
-static void test_permanent_rectangle_cycle_proves_capacity(void) {
+static void test_bounded_rectangle_cycle_proves_capacity(void) {
     Board* board = BoardCreate(4, 3, "standard", 0);
     Coord me_body[] = {{1, 0}, {0, 0}, {0, 1}, {0, 2}};
     Coord you_body[] = {{1, 1}};
@@ -385,6 +385,6 @@ int main(void) {
     test_branching_pocket_proves_every_branch_dies();
     test_repeatable_loop_is_structurally_safe();
     test_horizon_without_certificate_is_unknown();
-    test_permanent_rectangle_cycle_proves_capacity();
+    test_bounded_rectangle_cycle_proves_capacity();
     return 0;
 }

@@ -1850,9 +1850,11 @@ static Coord core_rectangle_perimeter_coord(
 }
 
 /* A snake occupying a proper contiguous segment of a rectangle perimeter can
- * follow that perimeter forever. The certificate is valid only if every cell
- * on the cycle remains outside all modeled opponent arrival deadlines. */
-static int core_structural_rectangle_capacity(
+ * sustain a self-cycle before any equal-or-longer opponent contests it. Here
+ * CORE_SPACE_TIME_NEVER means "not reached within the bounded proof horizon",
+ * not permanent opponent unreachability; later interaction remains minimax's
+ * responsibility. */
+static int core_structural_bounded_cycle_capacity(
     const Board* board,
     const Snake* snake,
     const int* opponent_arrival
@@ -2099,7 +2101,7 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
-    int structural_capacity = core_structural_rectangle_capacity(
+    int structural_capacity = core_structural_bounded_cycle_capacity(
         CoreSearchStateBoard(&state),
         snake,
         opponent_arrival

@@ -94,7 +94,7 @@ def test_equal_length_opponent_closure_prevents_horizon_false_safety() -> None:
     assert candidate["structural_proof"] != "safe"
 
 
-def test_permanent_rectangle_cycle_proves_capacity() -> None:
+def test_bounded_rectangle_cycle_proves_capacity() -> None:
     board = _board(
         4,
         3,
@@ -104,6 +104,22 @@ def test_permanent_rectangle_cycle_proves_capacity() -> None:
 
     candidate = _candidate(board, "right")
 
+    assert candidate["structural_proof"] == "safe"
+    assert candidate["proof_cutoff"] == "capacity"
+    assert candidate["structural_capacity"] == 6
+
+
+def test_distant_equal_length_opponent_does_not_preempt_bounded_cycle_capacity() -> None:
+    board = _board(
+        12,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(11, 2), (10, 2), (9, 2), (8, 2)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
     assert candidate["structural_proof"] == "safe"
     assert candidate["proof_cutoff"] == "capacity"
     assert candidate["structural_capacity"] == 6
