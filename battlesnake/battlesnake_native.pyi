@@ -122,6 +122,8 @@ class MinimaxDiagnostics(TypedDict):
     selection_reason: str
     root_analysis_nodes: int
     root_analysis_elapsed_ms: float
+    root_analysis_budget_ms: int
+    search_reserved_ms: int
 
 def reachable_space(board: Board, start: Coord, snake_id: str) -> int: ...
 def shortest_path(board: Board, start: Coord, goal: Coord, snake_id: str) -> list[Coord]: ...

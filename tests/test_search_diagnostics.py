@@ -40,6 +40,8 @@ EXPECTED_DIAGNOSTIC_KEYS = {
     "selection_reason",
     "root_analysis_nodes",
     "root_analysis_elapsed_ms",
+    "root_analysis_budget_ms",
+    "search_reserved_ms",
 }
 
 

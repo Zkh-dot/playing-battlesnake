@@ -336,10 +336,15 @@ def test_replay_branching_pocket_is_structurally_dominated(
         for candidate in result["root_candidates"].values()
         if candidate["allowed"] and candidate["alive_reply_count"] > 0
     ]
+    expected_root_budget = budget_ms // 2
 
     assert result["move"] != bad_move
+    assert result["completed_depth"] >= 1
+    assert result["root_analysis_budget_ms"] == expected_root_budget
+    assert result["search_reserved_ms"] == budget_ms - expected_root_budget
     assert bad["relaxed_static_capacity"] < bad["post_move_length"]
     assert bad["structural_proof"] != "safe"
+    assert bad["proof_cutoff"] == "policy_sufficient"
     assert bad["allowed"] is False
     assert bad["rejection_reason"] == "structurally_dominated"
     assert any(candidate["structural_proof"] == "safe" for candidate in allowed)

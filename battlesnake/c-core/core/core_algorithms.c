@@ -1572,10 +1572,49 @@ static bool core_relaxed_root_state(
     return true;
 }
 
-static int core_relaxed_static_capacity(
+typedef struct {
+    size_t cell_count;
+    unsigned char* blocked;
+    unsigned char* visited;
+    unsigned char* degree;
+    int* queue;
+} CoreRelaxedCapacityWorkspace;
+
+static void core_relaxed_capacity_workspace_free(CoreRelaxedCapacityWorkspace* workspace) {
+    free(workspace->blocked);
+    free(workspace->visited);
+    free(workspace->degree);
+    free(workspace->queue);
+    memset(workspace, 0, sizeof(*workspace));
+}
+
+static bool core_relaxed_capacity_workspace_init(
+    CoreRelaxedCapacityWorkspace* workspace,
+    size_t cell_count
+) {
+    if (workspace->cell_count == cell_count && workspace->blocked != NULL &&
+        workspace->visited != NULL && workspace->degree != NULL && workspace->queue != NULL) {
+        return true;
+    }
+    core_relaxed_capacity_workspace_free(workspace);
+    workspace->blocked = (unsigned char*)malloc(cell_count * sizeof(unsigned char));
+    workspace->visited = (unsigned char*)malloc(cell_count * sizeof(unsigned char));
+    workspace->degree = (unsigned char*)malloc(cell_count * sizeof(unsigned char));
+    workspace->queue = (int*)malloc(cell_count * sizeof(int));
+    if (workspace->blocked == NULL || workspace->visited == NULL ||
+        workspace->degree == NULL || workspace->queue == NULL) {
+        core_relaxed_capacity_workspace_free(workspace);
+        return false;
+    }
+    workspace->cell_count = cell_count;
+    return true;
+}
+
+static int core_relaxed_static_capacity_with_workspace(
     const Board* board,
     const char* snake_id,
-    bool* out_head_in_cyclic_core
+    bool* out_head_in_cyclic_core,
+    CoreRelaxedCapacityWorkspace* workspace
 ) {
     if (out_head_in_cyclic_core != NULL) {
         *out_head_in_cyclic_core = false;
@@ -1585,15 +1624,19 @@ static int core_relaxed_static_capacity(
     if (snake == NULL || snake->body_len == 0 || !core_cell_count(board, &cell_count)) {
         return 0;
     }
-    unsigned char* blocked = (unsigned char*)calloc(cell_count, sizeof(unsigned char));
-    unsigned char* visited = (unsigned char*)calloc(cell_count, sizeof(unsigned char));
-    int* queue = (int*)malloc(cell_count * sizeof(int));
-    if (blocked == NULL || visited == NULL || queue == NULL) {
-        free(blocked);
-        free(visited);
-        free(queue);
+    CoreRelaxedCapacityWorkspace local_workspace = {0};
+    CoreRelaxedCapacityWorkspace* active_workspace = workspace != NULL
+        ? workspace
+        : &local_workspace;
+    if (!core_relaxed_capacity_workspace_init(active_workspace, cell_count)) {
         return -1;
     }
+    unsigned char* blocked = active_workspace->blocked;
+    unsigned char* visited = active_workspace->visited;
+    unsigned char* degree = active_workspace->degree;
+    int* queue = active_workspace->queue;
+    memset(blocked, 0, cell_count * sizeof(unsigned char));
+    memset(visited, 0, cell_count * sizeof(unsigned char));
     for (int i = 0; i < snake->body_len; i++) {
         if (BoardInBounds(board, snake->body[i])) {
             blocked[core_coord_index(board, snake->body[i])] = 1;
@@ -1625,13 +1668,7 @@ static int core_relaxed_static_capacity(
         /* The connected component may only be cyclic beyond a narrow doorway.
          * Peel its acyclic fringe so opponent closure stays enforced until the
          * head actually enters the cyclic core through an uncontested edge. */
-        unsigned char* degree = (unsigned char*)calloc(cell_count, sizeof(unsigned char));
-        if (degree == NULL) {
-            free(blocked);
-            free(visited);
-            free(queue);
-            return -1;
-        }
+        memset(degree, 0, cell_count * sizeof(unsigned char));
         int peel_read = 0;
         int peel_write = 0;
         for (size_t raw_index = 0; raw_index < cell_count; raw_index++) {
@@ -1670,12 +1707,21 @@ static int core_relaxed_static_capacity(
             }
         }
         *out_head_in_cyclic_core = blocked[start] != 2;
-        free(degree);
     }
-    free(blocked);
-    free(visited);
-    free(queue);
+    if (workspace == NULL) {
+        core_relaxed_capacity_workspace_free(&local_workspace);
+    }
     return write;
+}
+
+static int core_relaxed_static_capacity(
+    const Board* board,
+    const char* snake_id,
+    bool* out_head_in_cyclic_core
+) {
+    return core_relaxed_static_capacity_with_workspace(
+        board, snake_id, out_head_in_cyclic_core, NULL
+    );
 }
 
 static bool core_body_seen(const Coord* seen, int seen_count, int body_len, const Snake* snake) {
@@ -1704,6 +1750,40 @@ typedef struct {
     unsigned int* component_marks;
     unsigned int component_stamp;
 } CoreBiconnectedContext;
+
+typedef struct {
+    size_t cell_count;
+    unsigned char* blocked;
+    int* storage;
+    unsigned int* marks;
+} CoreBiconnectedWorkspace;
+
+static void core_biconnected_workspace_free(CoreBiconnectedWorkspace* workspace) {
+    free(workspace->blocked);
+    free(workspace->storage);
+    free(workspace->marks);
+    memset(workspace, 0, sizeof(*workspace));
+}
+
+static bool core_biconnected_workspace_init(
+    CoreBiconnectedWorkspace* workspace,
+    size_t cell_count
+) {
+    if (workspace->cell_count == cell_count && workspace->blocked != NULL &&
+        workspace->storage != NULL && workspace->marks != NULL) {
+        return true;
+    }
+    core_biconnected_workspace_free(workspace);
+    workspace->blocked = (unsigned char*)malloc(cell_count * sizeof(unsigned char));
+    workspace->storage = (int*)malloc(cell_count * 7 * sizeof(int));
+    workspace->marks = (unsigned int*)malloc(cell_count * sizeof(unsigned int));
+    if (workspace->blocked == NULL || workspace->storage == NULL || workspace->marks == NULL) {
+        core_biconnected_workspace_free(workspace);
+        return false;
+    }
+    workspace->cell_count = cell_count;
+    return true;
+}
 
 static void core_record_biconnected_component(
     CoreBiconnectedContext* context,
@@ -1792,7 +1872,8 @@ static int core_head_biconnected_capacity(
     const Board* board,
     const char* snake_id,
     uint8_t* out_neighbor_mask,
-    bool* out_head_is_articulation
+    bool* out_head_is_articulation,
+    CoreBiconnectedWorkspace* workspace
 ) {
     *out_neighbor_mask = 0;
     *out_head_is_articulation = false;
@@ -1802,15 +1883,15 @@ static int core_head_biconnected_capacity(
         cell_count > SIZE_MAX / (7 * sizeof(int))) {
         return 0;
     }
-    unsigned char* blocked = (unsigned char*)calloc(cell_count, sizeof(unsigned char));
-    int* storage = (int*)calloc(cell_count * 7, sizeof(int));
-    unsigned int* marks = (unsigned int*)calloc(cell_count, sizeof(unsigned int));
-    if (blocked == NULL || storage == NULL || marks == NULL) {
-        free(blocked);
-        free(storage);
-        free(marks);
+    if (!core_biconnected_workspace_init(workspace, cell_count)) {
         return -1;
     }
+    unsigned char* blocked = workspace->blocked;
+    int* storage = workspace->storage;
+    unsigned int* marks = workspace->marks;
+    memset(blocked, 0, cell_count * sizeof(unsigned char));
+    memset(storage, 0, cell_count * 7 * sizeof(int));
+    memset(marks, 0, cell_count * sizeof(unsigned int));
     for (int snake_index = 0; snake_index < board->snake_count; snake_index++) {
         const Snake* occupied = &board->snakes[snake_index];
         for (int body = 0; body < occupied->body_len; body++) {
@@ -1845,9 +1926,6 @@ static int core_head_biconnected_capacity(
     *out_neighbor_mask = context.best_start_neighbor_mask;
     *out_head_is_articulation = context.start_component_count > 1;
     int capacity = context.best_capacity;
-    free(blocked);
-    free(storage);
-    free(marks);
     return capacity;
 }
 
@@ -1914,6 +1992,8 @@ typedef struct {
     Coord* ancestor_bodies;
     uint64_t explored_states;
     uint64_t* analysis_nodes;
+    CoreRelaxedCapacityWorkspace capacity_workspace;
+    CoreBiconnectedWorkspace biconnected_workspace;
 } CoreStructuralProofContext;
 
 static CoreStructuralProofOutcome core_structural_outcome(
@@ -1933,6 +2013,8 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     int safe_steps_remaining,
     int minimum_capacity,
     bool region_established,
+    int known_capacity,
+    int known_cyclic_core,
     CoreStructuralProofContext* context
 ) {
     if (core_search_timed_out(context->timer)) {
@@ -1959,10 +2041,16 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     context->explored_states++;
     (*context->analysis_nodes)++;
 
-    bool head_in_cyclic_core = false;
-    int capacity = core_relaxed_static_capacity(
-        board, context->snake_id, &head_in_cyclic_core
-    );
+    bool head_in_cyclic_core = known_cyclic_core > 0;
+    int capacity = known_capacity;
+    if (capacity < 0 || known_cyclic_core < 0) {
+        capacity = core_relaxed_static_capacity_with_workspace(
+            board,
+            context->snake_id,
+            &head_in_cyclic_core,
+            &context->capacity_workspace
+        );
+    }
     if (capacity < 0) {
         return core_structural_outcome(
             CORE_STRUCTURAL_PROOF_UNKNOWN, CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE, depth, 0
@@ -1981,7 +2069,8 @@ static CoreStructuralProofOutcome core_prove_structural_node(
             board,
             context->snake_id,
             &component_neighbor_mask,
-            &head_is_articulation
+            &head_is_articulation,
+            &context->biconnected_workspace
         );
         if (component_capacity < 0) {
             return core_structural_outcome(
@@ -2125,8 +2214,11 @@ static CoreStructuralProofOutcome core_prove_structural_node(
         const Snake* child = BoardFindSnakeConst(CoreSearchStateBoard(state), context->snake_id);
         if (child != NULL && child->body_len == context->body_len) {
             bool child_cyclic_core = false;
-            int child_capacity = core_relaxed_static_capacity(
-                CoreSearchStateBoard(state), context->snake_id, &child_cyclic_core
+            int child_capacity = core_relaxed_static_capacity_with_workspace(
+                CoreSearchStateBoard(state),
+                context->snake_id,
+                &child_cyclic_core,
+                &context->capacity_workspace
             );
             if (child_capacity < 0) {
                 (void)CoreSearchStateUnmake(state);
@@ -2185,6 +2277,8 @@ static CoreStructuralProofOutcome core_prove_structural_node(
                 safe_steps_remaining >= 0 ? safe_steps_remaining - 1 : safe_steps_remaining,
                 minimum_capacity,
                 region_established,
+                ordered_moves[ordered].capacity,
+                ordered_moves[ordered].cyclic_core ? 1 : 0,
                 context
             );
         }
@@ -2767,9 +2861,9 @@ static void core_analyze_self_trap(
     MoveDirection root_move,
     const CoreSearchTimer* timer,
     CoreRootCandidateStats* candidate,
-    uint64_t* analysis_nodes
+    uint64_t* analysis_nodes,
+    bool skip_capacity_deficit_proof
 ) {
-    core_analyze_legacy_self_trap(board, snake_id, root_move, timer, candidate, analysis_nodes);
     CoreSearchState state;
     memset(&state, 0, sizeof(state));
     uint32_t root_cause = 0;
@@ -2805,12 +2899,24 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
+    bool root_in_cyclic_core = false;
     candidate->relaxed_static_capacity = core_relaxed_static_capacity(
-        CoreSearchStateBoard(&state), snake_id, NULL
+        CoreSearchStateBoard(&state), snake_id, &root_in_cyclic_core
     );
     if (candidate->relaxed_static_capacity < 0) {
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        CoreSearchStateFree(&state);
+        return;
+    }
+    if (skip_capacity_deficit_proof &&
+        candidate->relaxed_static_capacity < candidate->post_move_length) {
+        /* A completed SAFE candidate is already sufficient for the only
+         * policy comparison that can dominate this capacity-deficient root.
+         * Do not spend the bounded proof phase trying to upgrade it: UNKNOWN
+         * is the conservative result, and minimax retains its reserved half. */
+        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_POLICY_SUFFICIENT;
         CoreSearchStateFree(&state);
         return;
     }
@@ -2856,55 +2962,69 @@ static void core_analyze_self_trap(
         CoreSearchStateFree(&state);
         return;
     }
-    if ((size_t)post_move_length > SIZE_MAX / (size_t)post_move_length ||
-        (size_t)post_move_length * (size_t)post_move_length > SIZE_MAX / sizeof(Coord)) {
-        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
-        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT;
-        core_structural_opponent_timing_free(&opponent_timing);
-        CoreSearchStateFree(&state);
-        return;
-    }
-    Coord* short_ancestors = (Coord*)malloc(
-        (size_t)post_move_length * (size_t)post_move_length * sizeof(Coord)
-    );
-    if (short_ancestors == NULL) {
-        candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
-        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
-        core_structural_opponent_timing_free(&opponent_timing);
-        CoreSearchStateFree(&state);
-        return;
-    }
-    CoreStructuralProofContext short_context = {
-        .snake_id = snake_id,
-        .timer = timer,
-        .opponent_timing = opponent_timing,
-        .body_len = post_move_length,
-        .horizon = post_move_length,
-        .ancestor_capacity = post_move_length,
-        .require_capacity_sufficient = false,
-        .max_states = (uint64_t)post_move_length * (uint64_t)cell_count,
-        .use_opponent_closure = opponent_closure_considered,
-        .ancestor_bodies = short_ancestors,
-        .explored_states = 0,
-        .analysis_nodes = analysis_nodes,
-    };
-    CoreStructuralProofOutcome short_outcome = core_prove_structural_node(
-        &state, 1, 0, -1, 0, false, &short_context
-    );
-    free(short_ancestors);
-    if (short_outcome.result != CORE_STRUCTURAL_PROOF_UNKNOWN) {
-        candidate->structural_proof = short_outcome.result;
-        candidate->proof_cutoff = short_outcome.cutoff;
-        candidate->explored_states = short_context.explored_states;
-        candidate->structural_capacity = short_outcome.proved_capacity;
-        core_structural_opponent_timing_free(&opponent_timing);
-        CoreSearchStateFree(&state);
-        return;
-    }
-    /* A static capacity jump caused by our tail vacating is not itself proof
-     * that the head crossed a defensible doorway. Until such a doorway or an
-     * exact uncontested cycle is certified, deficit roots remain UNKNOWN. */
+    /* The short proof exists to distinguish a capacity-deficient dead pocket
+     * from an unproved one. Capacity-sufficient roots go directly to the
+     * longer certificate; replaying the same body-turnover prefix would spend
+     * the bounded phase twice without adding evidence. */
     if (candidate->relaxed_static_capacity < post_move_length) {
+        if ((size_t)post_move_length > SIZE_MAX / (size_t)post_move_length ||
+            (size_t)post_move_length * (size_t)post_move_length > SIZE_MAX / sizeof(Coord)) {
+            candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+            candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT;
+            core_structural_opponent_timing_free(&opponent_timing);
+            CoreSearchStateFree(&state);
+            return;
+        }
+        Coord* short_ancestors = (Coord*)malloc(
+            (size_t)post_move_length * (size_t)post_move_length * sizeof(Coord)
+        );
+        if (short_ancestors == NULL) {
+            candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+            candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+            core_structural_opponent_timing_free(&opponent_timing);
+            CoreSearchStateFree(&state);
+            return;
+        }
+        CoreStructuralProofContext short_context = {
+            .snake_id = snake_id,
+            .timer = timer,
+            .opponent_timing = opponent_timing,
+            .body_len = post_move_length,
+            .horizon = post_move_length,
+            .ancestor_capacity = post_move_length,
+            .require_capacity_sufficient = false,
+            .max_states = (uint64_t)post_move_length * (uint64_t)cell_count,
+            .use_opponent_closure = opponent_closure_considered,
+            .ancestor_bodies = short_ancestors,
+            .explored_states = 0,
+            .analysis_nodes = analysis_nodes,
+        };
+        CoreStructuralProofOutcome short_outcome = core_prove_structural_node(
+            &state,
+            1,
+            0,
+            -1,
+            0,
+            false,
+            candidate->relaxed_static_capacity,
+            root_in_cyclic_core ? 1 : 0,
+            &short_context
+        );
+        core_relaxed_capacity_workspace_free(&short_context.capacity_workspace);
+        core_biconnected_workspace_free(&short_context.biconnected_workspace);
+        free(short_ancestors);
+        if (short_outcome.result != CORE_STRUCTURAL_PROOF_UNKNOWN) {
+            candidate->structural_proof = short_outcome.result;
+            candidate->proof_cutoff = short_outcome.cutoff;
+            candidate->explored_states = short_context.explored_states;
+            candidate->structural_capacity = short_outcome.proved_capacity;
+            core_structural_opponent_timing_free(&opponent_timing);
+            CoreSearchStateFree(&state);
+            return;
+        }
+        /* A static capacity jump caused by our tail vacating is not itself proof
+         * that the head crossed a defensible doorway. Until such a doorway or an
+         * exact uncontested cycle is certified, deficit roots remain UNKNOWN. */
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = short_outcome.cutoff;
         candidate->explored_states = short_context.explored_states;
@@ -2964,8 +3084,12 @@ static void core_analyze_self_trap(
         candidate->relaxed_static_capacity < post_move_length ? -2 : -1,
         0,
         false,
+        candidate->relaxed_static_capacity,
+        root_in_cyclic_core ? 1 : 0,
         &context
     );
+    core_relaxed_capacity_workspace_free(&context.capacity_workspace);
+    core_biconnected_workspace_free(&context.biconnected_workspace);
     candidate->structural_proof = outcome.result;
     candidate->proof_cutoff = outcome.cutoff;
     candidate->explored_states = context.explored_states;
@@ -3183,6 +3307,7 @@ static CoreStatus core_prepare_root_policy(
     const char* snake_id,
     CoreRootPolicy requested_policy,
     const CoreSearchTimer* timer,
+    bool allow_policy_sufficient_cutoff,
     uint8_t strict_mask,
     CoreSearchStats* stats,
     uint8_t* out_allowed_mask
@@ -3231,13 +3356,57 @@ static CoreStatus core_prepare_root_policy(
         candidate->alive_reply_mask = command->alive_reply_mask;
         candidate->alive_reply_count = command->alive_reply_count;
         candidate->immediate_causes = command->immediate_causes;
-        core_analyze_self_trap(
+        core_analyze_legacy_self_trap(
             board,
             snake_id,
             (MoveDirection)move,
             timer,
             candidate,
             &stats->root_analysis_nodes
+        );
+    }
+
+    /* Analyze roots most likely to establish a positive certificate first.
+     * This is proof scheduling, not a decision heuristic: all policy ordering
+     * still uses the resulting SAFE/UNSAFE/UNKNOWN lattice. */
+    int analysis_order[4] = {MOVE_UP, MOVE_DOWN, MOVE_LEFT, MOVE_RIGHT};
+    for (int index = 1; index < 4; index++) {
+        int move = analysis_order[index];
+        const CoreRootCandidateStats* candidate = &stats->root_candidates[move];
+        bool capacity_sufficient =
+            candidate->relaxed_static_capacity >= candidate->post_move_length;
+        int insert = index;
+        while (insert > 0) {
+            const CoreRootCandidateStats* previous =
+                &stats->root_candidates[analysis_order[insert - 1]];
+            bool previous_sufficient =
+                previous->relaxed_static_capacity >= previous->post_move_length;
+            if (previous_sufficient != capacity_sufficient) {
+                if (previous_sufficient) {
+                    break;
+                }
+            } else if (previous->relaxed_static_capacity >=
+                       candidate->relaxed_static_capacity) {
+                break;
+            }
+            analysis_order[insert] = analysis_order[insert - 1];
+            insert--;
+        }
+        analysis_order[insert] = move;
+    }
+    bool safe_alive_certificate_found = false;
+    for (int index = 0; index < 4; index++) {
+        int move = analysis_order[index];
+        CoreRootCandidateStats* candidate = &stats->root_candidates[move];
+        const CoreDuelRootCommandProfile* command = &profile.commands[move];
+        core_analyze_self_trap(
+            board,
+            snake_id,
+            (MoveDirection)move,
+            timer,
+            candidate,
+            &stats->root_analysis_nodes,
+            safe_alive_certificate_found && allow_policy_sufficient_cutoff
         );
         CoreRootReplyClosureResult root_reply_closure =
             core_root_reply_closes_all_continuations(
@@ -3254,6 +3423,10 @@ static CoreStatus core_prepare_root_policy(
         } else if (root_reply_closure == CORE_ROOT_REPLY_CLOSURE_UNKNOWN) {
             candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
             candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        }
+        if (candidate->alive_reply_count > 0 &&
+            candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE) {
+            safe_alive_certificate_found = true;
         }
     }
 
@@ -4168,11 +4341,24 @@ CoreStatus CoreMinimaxMoveWithStats(
     if (context.opponent_id == NULL) {
         context.opponent_id = "__missing_duel_opponent__";
     }
+    /* Root safety and minimax are both required phases. Split the move budget
+     * evenly: incomplete proofs fail conservatively as UNKNOWN and never
+     * borrow the half reserved for iterative deepening. */
+    int root_analysis_budget_ms = config.time_budget_ms / 2;
+    if (root_analysis_budget_ms < 1) {
+        root_analysis_budget_ms = 1;
+    }
+    stats->root_analysis_budget_ms = root_analysis_budget_ms;
+    stats->search_reserved_ms = config.time_budget_ms > root_analysis_budget_ms
+        ? config.time_budget_ms - root_analysis_budget_ms
+        : 0;
+    CoreSearchTimer root_analysis_timer = core_search_timer_start(root_analysis_budget_ms);
     CoreStatus policy_status = core_prepare_root_policy(
         board,
         snake_id,
         config.root_policy,
-        &context.timer,
+        &root_analysis_timer,
+        config.fixed_depth == 0,
         root_allowed_mask,
         stats,
         &root_allowed_mask

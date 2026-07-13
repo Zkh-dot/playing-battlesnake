@@ -473,6 +473,7 @@ static const char* structural_cutoff_name(CoreStructuralProofCutoff cutoff) {
         case CORE_STRUCTURAL_CUTOFF_DEADLINE: return "deadline";
         case CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT: return "resource_limit";
         case CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE: return "allocation_failure";
+        case CORE_STRUCTURAL_CUTOFF_POLICY_SUFFICIENT: return "policy_sufficient";
         default: return "none";
     }
 }
@@ -781,7 +782,9 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         dict_set_string(result, "root_policy_applied", root_policy_name(stats.root_policy_applied)) < 0 ||
         dict_set_string(result, "selection_reason", selection_reason_name(stats.selection_reason)) < 0 ||
         dict_set_u64(result, "root_analysis_nodes", stats.root_analysis_nodes) < 0 ||
-        dict_set_double(result, "root_analysis_elapsed_ms", stats.root_analysis_elapsed_ms) < 0) {
+        dict_set_double(result, "root_analysis_elapsed_ms", stats.root_analysis_elapsed_ms) < 0 ||
+        dict_set_int(result, "root_analysis_budget_ms", stats.root_analysis_budget_ms) < 0 ||
+        dict_set_int(result, "search_reserved_ms", stats.search_reserved_ms) < 0) {
         Py_DECREF(result);
         return NULL;
     }

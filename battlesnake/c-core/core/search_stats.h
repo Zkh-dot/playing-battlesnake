@@ -48,6 +48,7 @@ typedef enum {
     CORE_STRUCTURAL_CUTOFF_DEADLINE = 5,
     CORE_STRUCTURAL_CUTOFF_RESOURCE_LIMIT = 6,
     CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE = 7,
+    CORE_STRUCTURAL_CUTOFF_POLICY_SUFFICIENT = 8,
 } CoreStructuralProofCutoff;
 
 typedef enum {
@@ -132,6 +133,8 @@ typedef struct {
     CoreSelectionReason selection_reason;
     uint64_t root_analysis_nodes;
     double root_analysis_elapsed_ms;
+    int root_analysis_budget_ms;
+    int search_reserved_ms;
 } CoreSearchStats;
 
 typedef struct {
