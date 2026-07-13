@@ -1675,6 +1675,7 @@ typedef struct {
     int start;
     int best_capacity;
     uint8_t best_start_neighbor_mask;
+    int start_component_count;
     unsigned int* component_marks;
     unsigned int component_stamp;
 } CoreBiconnectedContext;
@@ -1705,8 +1706,12 @@ static void core_record_biconnected_component(
         }
     }
     if (!contains_start || capacity <= context->best_capacity) {
+        if (contains_start) {
+            context->start_component_count++;
+        }
         return;
     }
+    context->start_component_count++;
     uint8_t neighbor_mask = 0;
     Coord start = {context->start % context->board->width,
                    context->start / context->board->width};
@@ -1761,9 +1766,11 @@ static void core_biconnected_dfs(CoreBiconnectedContext* context, int vertex) {
 static int core_head_biconnected_capacity(
     const Board* board,
     const char* snake_id,
-    uint8_t* out_neighbor_mask
+    uint8_t* out_neighbor_mask,
+    bool* out_head_is_articulation
 ) {
     *out_neighbor_mask = 0;
+    *out_head_is_articulation = false;
     const Snake* snake = BoardFindSnakeConst(board, snake_id);
     size_t cell_count = 0;
     if (snake == NULL || snake->body_len == 0 || !core_cell_count(board, &cell_count) ||
@@ -1802,6 +1809,7 @@ static int core_head_biconnected_capacity(
         .start = start,
         .best_capacity = 0,
         .best_start_neighbor_mask = 0,
+        .start_component_count = 0,
         .component_marks = marks,
         .component_stamp = 0,
     };
@@ -1810,6 +1818,7 @@ static int core_head_biconnected_capacity(
     }
     core_biconnected_dfs(&context, start);
     *out_neighbor_mask = context.best_start_neighbor_mask;
+    *out_head_is_articulation = context.start_component_count > 1;
     int capacity = context.best_capacity;
     free(blocked);
     free(storage);
@@ -1892,14 +1901,19 @@ static CoreStructuralProofOutcome core_prove_structural_node(
         );
     }
     bool capacity_sufficient = capacity >= context->body_len;
-    if (capacity_sufficient && head_in_cyclic_core && !region_established) {
+    bool was_region_established = region_established;
+    if (capacity_sufficient && head_in_cyclic_core) {
         /* Static reachability may see through an opponent-controlled doorway.
          * Establish the region only from the actual occupied state, inside a
          * large enough biconnected block, with two legal next continuations
          * whose entry deadlines are still uncontested. */
         uint8_t component_neighbor_mask = 0;
+        bool head_is_articulation = false;
         int component_capacity = core_head_biconnected_capacity(
-            board, context->snake_id, &component_neighbor_mask
+            board,
+            context->snake_id,
+            &component_neighbor_mask,
+            &head_is_articulation
         );
         if (component_capacity < 0) {
             return core_structural_outcome(
@@ -1909,44 +1923,52 @@ static CoreStructuralProofOutcome core_prove_structural_node(
                 0
             );
         }
-        int uncontested_continuations = 0;
-        Coord structural_head = SnakeHead(snake);
-        const char* structural_ids[1] = {context->snake_id};
-        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
-            if ((component_neighbor_mask & (1u << move)) == 0) {
-                continue;
-            }
-            Coord destination = MoveStep(structural_head, (MoveDirection)move);
-            int arrival = context->opponent_arrival[core_coord_index(board, destination)];
-            if (!context->use_opponent_closure || arrival == CORE_SPACE_TIME_NEVER ||
-                arrival > depth + 1) {
-                MoveDirection structural_moves[1] = {(MoveDirection)move};
-                if (!CoreSearchStateMakeMoves(state, structural_ids, structural_moves, 1)) {
-                    return core_structural_outcome(
-                        CORE_STRUCTURAL_PROOF_UNKNOWN,
-                        CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE,
-                        depth,
-                        0
+        if (component_capacity < context->body_len || head_is_articulation) {
+            region_established = false;
+        } else if (!region_established) {
+            int uncontested_continuations = 0;
+            Coord structural_head = SnakeHead(snake);
+            const char* structural_ids[1] = {context->snake_id};
+            for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+                if ((component_neighbor_mask & (1u << move)) == 0) {
+                    continue;
+                }
+                Coord destination = MoveStep(structural_head, (MoveDirection)move);
+                int arrival = context->opponent_arrival[core_coord_index(board, destination)];
+                if (!context->use_opponent_closure || arrival == CORE_SPACE_TIME_NEVER ||
+                    arrival > depth + 1) {
+                    MoveDirection structural_moves[1] = {(MoveDirection)move};
+                    if (!CoreSearchStateMakeMoves(state, structural_ids, structural_moves, 1)) {
+                        return core_structural_outcome(
+                            CORE_STRUCTURAL_PROOF_UNKNOWN,
+                            CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE,
+                            depth,
+                            0
+                        );
+                    }
+                    const Snake* continuation = BoardFindSnakeConst(
+                        CoreSearchStateBoard(state), context->snake_id
                     );
-                }
-                const Snake* continuation = BoardFindSnakeConst(
-                    CoreSearchStateBoard(state), context->snake_id
-                );
-                if (continuation != NULL && continuation->body_len == context->body_len) {
-                    uncontested_continuations++;
-                }
-                if (!CoreSearchStateUnmake(state)) {
-                    return core_structural_outcome(
-                        CORE_STRUCTURAL_PROOF_UNKNOWN,
-                        CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE,
-                        depth,
-                        0
-                    );
+                    if (continuation != NULL && continuation->body_len == context->body_len) {
+                        uncontested_continuations++;
+                    }
+                    if (!CoreSearchStateUnmake(state)) {
+                        return core_structural_outcome(
+                            CORE_STRUCTURAL_PROOF_UNKNOWN,
+                            CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE,
+                            depth,
+                            0
+                        );
+                    }
                 }
             }
+            region_established = uncontested_continuations >= 2;
         }
-        region_established = component_capacity >= context->body_len &&
-            uncontested_continuations >= 2;
+    } else {
+        region_established = false;
+    }
+    if (was_region_established && !region_established && safe_steps_remaining >= 0) {
+        safe_steps_remaining = -2;
     }
     if (capacity_sufficient) {
         if (context->require_capacity_sufficient && safe_steps_remaining == -1 &&
@@ -2779,6 +2801,53 @@ static bool core_structural_alternative(
     return false;
 }
 
+typedef enum {
+    CORE_ROOT_REPLY_CLOSURE_UNKNOWN = -1,
+    CORE_ROOT_REPLY_CLOSURE_OPEN = 0,
+    CORE_ROOT_REPLY_CLOSURE_CLOSED = 1,
+} CoreRootReplyClosureResult;
+
+static CoreRootReplyClosureResult core_root_reply_closes_all_continuations(
+    const Board* board,
+    const char* snake_id,
+    const char* opponent_id,
+    MoveDirection root_move,
+    uint8_t both_alive_reply_mask
+) {
+    if (both_alive_reply_mask == 0) {
+        return CORE_ROOT_REPLY_CLOSURE_OPEN;
+    }
+    CoreSearchState state;
+    if (!CoreSearchStateInit(&state, board)) {
+        return CORE_ROOT_REPLY_CLOSURE_UNKNOWN;
+    }
+    const char* ids[2] = {snake_id, opponent_id};
+    for (int reply = MOVE_UP; reply <= MOVE_RIGHT; reply++) {
+        if ((both_alive_reply_mask & (1u << reply)) == 0) {
+            continue;
+        }
+        MoveDirection moves[2] = {root_move, (MoveDirection)reply};
+        if (!CoreSearchStateMakeMoves(&state, ids, moves, 2)) {
+            CoreSearchStateFree(&state);
+            return CORE_ROOT_REPLY_CLOSURE_UNKNOWN;
+        }
+        MoveDirection continuations[4];
+        int continuation_count = BoardSafeMoves(
+            CoreSearchStateBoard(&state), snake_id, continuations
+        );
+        if (!CoreSearchStateUnmake(&state)) {
+            CoreSearchStateFree(&state);
+            return CORE_ROOT_REPLY_CLOSURE_UNKNOWN;
+        }
+        if (continuation_count == 0) {
+            CoreSearchStateFree(&state);
+            return CORE_ROOT_REPLY_CLOSURE_CLOSED;
+        }
+    }
+    CoreSearchStateFree(&state);
+    return CORE_ROOT_REPLY_CLOSURE_OPEN;
+}
+
 static CoreStatus core_prepare_root_policy(
     const Board* board,
     const char* snake_id,
@@ -2809,6 +2878,16 @@ static CoreStatus core_prepare_root_policy(
     if (profile_status != CORE_OK) {
         return profile_status;
     }
+    const char* opponent_id = NULL;
+    for (int i = 0; i < board->snake_count; i++) {
+        if (strcmp(board->snakes[i].id, snake_id) != 0) {
+            opponent_id = board->snakes[i].id;
+            break;
+        }
+    }
+    if (opponent_id == NULL) {
+        return CORE_ERROR;
+    }
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         CoreRootCandidateStats* candidate = &stats->root_candidates[move];
         const CoreDuelRootCommandProfile* command = &profile.commands[move];
@@ -2830,6 +2909,22 @@ static CoreStatus core_prepare_root_policy(
             candidate,
             &stats->root_analysis_nodes
         );
+        CoreRootReplyClosureResult root_reply_closure =
+            core_root_reply_closes_all_continuations(
+            board,
+            snake_id,
+            opponent_id,
+            (MoveDirection)move,
+            command->both_alive_reply_mask
+        );
+        if (root_reply_closure == CORE_ROOT_REPLY_CLOSURE_CLOSED) {
+            candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNSAFE;
+            candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_DEAD_END;
+            candidate->opponent_closure_considered = true;
+        } else if (root_reply_closure == CORE_ROOT_REPLY_CLOSURE_UNKNOWN) {
+            candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
+            candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_ALLOCATION_FAILURE;
+        }
     }
 
     uint8_t allowed_mask = strict_mask;
@@ -2851,16 +2946,6 @@ static CoreStatus core_prepare_root_policy(
             }
         }
 
-        const char* opponent_id = NULL;
-        for (int i = 0; i < board->snake_count; i++) {
-            if (strcmp(board->snakes[i].id, snake_id) != 0) {
-                opponent_id = board->snakes[i].id;
-                break;
-            }
-        }
-        if (opponent_id == NULL) {
-            return CORE_ERROR;
-        }
         for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
             CoreRootCandidateStats* candidate = &stats->root_candidates[move];
             if ((allowed_mask & (1u << move)) == 0 ||

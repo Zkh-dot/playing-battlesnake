@@ -307,6 +307,34 @@ def test_static_cycle_is_not_safe_before_uncontested_repetition() -> None:
     assert candidate["structural_proof"] != "safe"
 
 
+def test_actual_root_reply_can_close_every_continuation() -> None:
+    board = _board(
+        5,
+        5,
+        [(3, 4), (3, 3), (3, 2), (3, 1), (4, 1), (4, 0), (3, 0), (2, 0)],
+        [(1, 3), (2, 3), (2, 2), (1, 2), (1, 1), (1, 0), (0, 0), (0, 1)],
+    )
+
+    candidate = _candidate(board, "left")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
+def test_established_region_is_cleared_after_topology_loss() -> None:
+    board = _board(
+        5,
+        5,
+        [(2, 2), (3, 2), (4, 2), (4, 3), (3, 3), (3, 4), (2, 4), (1, 4)],
+        [(2, 0), (3, 0), (4, 0), (4, 1), (3, 1), (2, 1), (1, 1), (0, 1)],
+    )
+
+    candidate = _candidate(board, "up")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
 def test_strict_minimax_preserves_replay_root_candidates(position: dict[str, object]) -> None:
     bad_move = str(position["evidence"]["recorded_bad_move"])
