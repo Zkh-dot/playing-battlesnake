@@ -112,11 +112,17 @@ def should_run_diagnostics(board: Board, snake_id: str) -> bool:
     }
     food = {(coord.x, coord.y) for coord in board.food}
     head = board.head(snake_id)
+    own_body = {(coord.x, coord.y) for coord in snake.body}
     for move in selected_candidates:
         destination = board.step(head, move)
         start = (destination.x, destination.y)
-        blocked = occupied - {start}
-        capacity = _flood_capacity(board.width, board.height, start, blocked)
+        if start in own_body:
+            # Whether a tail cell vacates depends on eating and duplicate-tail
+            # state.  Zero is always a truthful lower bound and fails open.
+            capacity = 0
+        else:
+            blocked = occupied - {start}
+            capacity = _flood_capacity(board.width, board.height, start, blocked)
         post_move_length = int(snake.length) + (start in food)
         if capacity < post_move_length:
             return True
@@ -222,10 +228,15 @@ def _replay_structure_error(export: object) -> str | None:
     if "Width" not in game or "Height" not in game:
         return "game is missing Width or Height"
     try:
-        int(game["Width"])
-        int(game["Height"])
+        width = int(game["Width"])
+        height = int(game["Height"])
     except (TypeError, ValueError):
         return "game Width or Height is not an integer"
+    if width <= 0 or height <= 0:
+        return "game Width and Height must be positive"
+    ruleset_error = _ruleset_structure_error(game)
+    if ruleset_error is not None:
+        return ruleset_error
     if not isinstance(frames, list):
         return "frames is not an array"
     for index, frame in enumerate(frames):
@@ -265,6 +276,32 @@ def _replay_structure_error(export: object) -> str | None:
                 int(snake.get("Health", 100))
             except (TypeError, ValueError):
                 return f"frame {index} Snakes[{snake_index}] Health is not an integer"
+    return None
+
+
+def _ruleset_structure_error(game: dict[str, Any]) -> str | None:
+    if "RulesetName" in game and not isinstance(game["RulesetName"], str):
+        return "game RulesetName is not a string"
+    ruleset = game.get("Ruleset")
+    if ruleset is None:
+        return None
+    if not isinstance(ruleset, dict):
+        return "game Ruleset is not an object"
+    if "name" in ruleset and not isinstance(ruleset["name"], str):
+        return "game Ruleset.name is not a string"
+    settings = ruleset.get("settings")
+    if settings is not None and not isinstance(settings, dict):
+        return "game Ruleset.settings is not an object"
+    hazard_values = []
+    if "hazardDamagePerTurn" in ruleset:
+        hazard_values.append(ruleset["hazardDamagePerTurn"])
+    if isinstance(settings, dict) and "hazardDamagePerTurn" in settings:
+        hazard_values.append(settings["hazardDamagePerTurn"])
+    try:
+        for value in hazard_values:
+            int(value)
+    except (TypeError, ValueError, OverflowError):
+        return "game hazardDamagePerTurn is not an integer"
     return None
 
 
@@ -310,7 +347,17 @@ def main(
         )
         _print_summary(summary, as_json=args.json)
         return 2
-    paths = export_paths(args.export_root)
+    try:
+        paths = export_paths(args.export_root)
+    except OSError as error:
+        _record_error(
+            summary,
+            kind="unreadable_export_root",
+            path=args.export_root,
+            detail=str(error),
+        )
+        _print_summary(summary, as_json=args.json)
+        return 2
     summary["files_discovered"] = len(paths)
     cutoff_counts: Counter[str] = Counter()
     stop = False
@@ -321,6 +368,14 @@ def main(
             _record_error(
                 summary,
                 kind="unreadable_export",
+                path=path,
+                detail=str(error),
+            )
+            continue
+        except UnicodeDecodeError as error:
+            _record_error(
+                summary,
+                kind="invalid_encoding",
                 path=path,
                 detail=str(error),
             )
@@ -359,40 +414,62 @@ def main(
             turn = int(frame.get("Turn", -1))
             if args.turns and turn not in args.turns:
                 continue
-            alive = _alive_snakes(frame)
-            if len(alive) != 2:
-                continue
-            ours = [snake for snake in alive if snake.get("Name") == args.snake_name]
-            if len(ours) != 1:
-                continue
-            snake_id = str(ours[0]["ID"])
-            actual_move = _actual_move(frame, following, snake_id)
-            summary["standard_duel_root_frames"] += 1
-            alive_frame = dict(frame)
-            alive_frame["Snakes"] = alive
-            board = _board_from_frame(game, alive_frame)
-            if not args.no_prefilter and not should_run_diagnostics(board, snake_id):
-                summary["prefiltered_root_frames"] += 1
-            else:
-                diagnostics = run_diagnostics(
-                    board, snake_id, time_budget_ms=args.budget_ms
+            try:
+                alive = _alive_snakes(frame)
+                if len(alive) != 2:
+                    continue
+                ours = [
+                    snake for snake in alive if snake.get("Name") == args.snake_name
+                ]
+                if len(ours) != 1:
+                    continue
+                snake_id = str(ours[0]["ID"])
+                actual_move = _actual_move(frame, following, snake_id)
+                alive_frame = dict(frame)
+                alive_frame["Snakes"] = alive
+                board = _board_from_frame(game, alive_frame)
+            except (KeyError, TypeError, ValueError, OverflowError, AttributeError) as error:
+                _record_error(
+                    summary,
+                    kind="malformed_replay",
+                    path=path,
+                    detail=f"T{turn} board conversion failed: {error}",
                 )
-                summary["diagnostics_root_frames"] += 1
-                audit = audit_diagnostics(diagnostics)
-                summary["unknown_candidate_proofs"] += audit.unknown_candidates
-                for candidate in diagnostics["root_candidates"].values():
-                    if candidate["structural_proof"] == "unknown":
-                        cutoff_counts[str(candidate.get("proof_cutoff", "none"))] += 1
-                if audit.violation:
-                    summary["violations"].append(
-                        {
-                            "game_id": game_id,
-                            "turn": turn,
-                            "actual_move": actual_move,
-                            "selected_move": audit.selected_move,
-                            "safe_alternatives": list(audit.safe_alternatives),
-                        }
+                break
+            summary["standard_duel_root_frames"] += 1
+            try:
+                if not args.no_prefilter and not should_run_diagnostics(board, snake_id):
+                    summary["prefiltered_root_frames"] += 1
+                else:
+                    diagnostics = run_diagnostics(
+                        board, snake_id, time_budget_ms=args.budget_ms
                     )
+                    summary["diagnostics_root_frames"] += 1
+                    audit = audit_diagnostics(diagnostics)
+                    summary["unknown_candidate_proofs"] += audit.unknown_candidates
+                    for candidate in diagnostics["root_candidates"].values():
+                        if candidate["structural_proof"] == "unknown":
+                            cutoff_counts[
+                                str(candidate.get("proof_cutoff", "none"))
+                            ] += 1
+                    if audit.violation:
+                        summary["violations"].append(
+                            {
+                                "game_id": game_id,
+                                "turn": turn,
+                                "actual_move": actual_move,
+                                "selected_move": audit.selected_move,
+                                "safe_alternatives": list(audit.safe_alternatives),
+                            }
+                        )
+            except (KeyError, TypeError, ValueError, OverflowError, AttributeError) as error:
+                _record_error(
+                    summary,
+                    kind="malformed_replay",
+                    path=path,
+                    detail=f"T{turn} root processing failed: {error}",
+                )
+                break
             if (
                 args.limit is not None
                 and summary["standard_duel_root_frames"] >= args.limit

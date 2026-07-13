@@ -181,7 +181,7 @@ def _board(
 
 
 def test_prefilter_skips_only_when_static_lower_bounds_rule_out_deficiency() -> None:
-    open_board = _board(7, 7, [(1, 1), (1, 0)], [(5, 5), (5, 4)])
+    open_board = _board(7, 7, [(3, 3)], [(5, 5), (5, 4)])
     pocket_board = _board(
         5,
         5,
@@ -218,6 +218,17 @@ def test_prefilter_considers_every_candidate_allowed_by_a_diagnostics_record() -
     # A synthetic diagnostics record can select an immediate-loss command even
     # though production normally rejects it.  The checker predicate does not
     # include that policy assumption, so the prefilter must fail open here.
+    assert should_run_diagnostics(board, "me") is True
+
+
+def test_prefilter_does_not_unblock_non_vacating_own_body() -> None:
+    board = _board(
+        7,
+        7,
+        [(3, 3), (3, 2), (3, 1)],
+        [(6, 6), (6, 5)],
+    )
+
     assert should_run_diagnostics(board, "me") is True
 
 
@@ -422,6 +433,40 @@ def test_prefilter_and_exhaustive_mode_report_same_violation(
     assert prefiltered["diagnostics_root_frames"] == 2
 
 
+def test_self_collision_prefilter_matches_exhaustive_violation(
+    tmp_path: Path, capsys
+) -> None:
+    path = tmp_path / "self-collision.json"
+    _write_export(path)
+    export = json.loads(path.read_text(encoding="utf-8"))
+    export["game"]["Width"] = 7
+    export["game"]["Height"] = 7
+    export["frames"][0]["Snakes"] = [
+        _raw_snake("me", "scvnak", [(3, 3), (3, 2), (3, 1)]),
+        _raw_snake("opponent", "opponent", [(6, 6), (6, 5)]),
+    ]
+    export["frames"][1]["Snakes"] = [
+        _raw_snake("me", "scvnak", [(4, 3), (3, 3), (3, 2)]),
+        _raw_snake("opponent", "opponent", [(5, 6), (6, 6)]),
+    ]
+    path.write_text(json.dumps(export), encoding="utf-8")
+
+    prefiltered_exit = main(
+        ["--export-root", str(tmp_path), "--turn", "7", "--json"],
+        diagnostics_fn=_pre_fix_diagnostics,
+    )
+    prefiltered = json.loads(capsys.readouterr().out)
+    exhaustive_exit = main(
+        ["--export-root", str(tmp_path), "--turn", "7", "--json", "--no-prefilter"],
+        diagnostics_fn=_pre_fix_diagnostics,
+    )
+    exhaustive = json.loads(capsys.readouterr().out)
+
+    assert prefiltered_exit == exhaustive_exit == 1
+    assert prefiltered["violations"] == exhaustive["violations"]
+    assert prefiltered["diagnostics_root_frames"] == 1
+
+
 def test_missing_export_root_is_an_explicit_input_error(tmp_path: Path, capsys) -> None:
     exit_code = main(["--export-root", str(tmp_path / "missing"), "--json"])
     output = json.loads(capsys.readouterr().out)
@@ -435,6 +480,7 @@ def test_invalid_json_and_malformed_replay_are_explicit_errors(
     tmp_path: Path, capsys
 ) -> None:
     (tmp_path / "invalid.json").write_text("{", encoding="utf-8")
+    (tmp_path / "invalid-encoding.json").write_bytes(b"\xff")
     (tmp_path / "malformed.json").write_text(
         json.dumps({"game": {"Width": 5}, "frames": {}}), encoding="utf-8"
     )
@@ -452,8 +498,36 @@ def test_invalid_json_and_malformed_replay_are_explicit_errors(
     output = json.loads(capsys.readouterr().out)
 
     assert exit_code == 2
-    assert output["error_count"] == 3
+    assert output["error_count"] == 4
     assert {error["kind"] for error in output["errors"]} == {
+        "invalid_encoding",
         "invalid_json",
         "malformed_replay",
     }
+
+
+def test_semantically_invalid_ruleset_values_are_structured_errors(
+    tmp_path: Path, capsys
+) -> None:
+    invalid_hazard = tmp_path / "invalid-hazard.json"
+    _write_export(invalid_hazard)
+    hazard_export = json.loads(invalid_hazard.read_text(encoding="utf-8"))
+    hazard_export["game"]["Ruleset"] = {
+        "name": "standard",
+        "hazardDamagePerTurn": "bad",
+    }
+    invalid_hazard.write_text(json.dumps(hazard_export), encoding="utf-8")
+
+    invalid_name = tmp_path / "invalid-ruleset-name.json"
+    _write_export(invalid_name)
+    name_export = json.loads(invalid_name.read_text(encoding="utf-8"))
+    del name_export["game"]["RulesetName"]
+    name_export["game"]["Ruleset"] = {"name": ["standard"]}
+    invalid_name.write_text(json.dumps(name_export), encoding="utf-8")
+
+    exit_code = main(["--export-root", str(tmp_path), "--json"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["error_count"] == 2
+    assert all(error["kind"] == "malformed_replay" for error in output["errors"])
