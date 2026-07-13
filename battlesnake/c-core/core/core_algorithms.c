@@ -10,6 +10,7 @@
 
 #include <float.h>
 #include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -1451,6 +1452,22 @@ static CoreSearchValue core_terminal_value(
     return value;
 }
 
+static bool core_valid_outcome(CoreOutcome outcome) {
+    return outcome == CORE_OUTCOME_UNRESOLVED || outcome == CORE_OUTCOME_WIN ||
+        outcome == CORE_OUTCOME_DRAW || outcome == CORE_OUTCOME_LOSS;
+}
+
+static bool core_valid_value_bound(CoreValueBound bound) {
+    return bound == CORE_VALUE_BOUND_EXACT || bound == CORE_VALUE_BOUND_LOWER ||
+        bound == CORE_VALUE_BOUND_UPPER;
+}
+
+static bool core_valid_structural_proof(CoreStructuralProofResult proof) {
+    return proof == CORE_STRUCTURAL_PROOF_NOT_ANALYZED ||
+        proof == CORE_STRUCTURAL_PROOF_SAFE || proof == CORE_STRUCTURAL_PROOF_UNSAFE ||
+        proof == CORE_STRUCTURAL_PROOF_UNKNOWN;
+}
+
 static int core_outcome_rank(CoreOutcome outcome) {
     switch (outcome) {
         case CORE_OUTCOME_WIN:
@@ -1483,7 +1500,9 @@ static int core_structural_rank(const CoreRootCandidateStats* candidate) {
         return 0;
     }
     if (candidate->structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN) {
-        return candidate->relaxed_static_capacity >= candidate->post_move_length ? 2 : 1;
+        bool has_sufficient_capacity = candidate->post_move_length > 0 &&
+            candidate->relaxed_static_capacity >= candidate->post_move_length;
+        return has_sufficient_capacity ? 2 : 1;
     }
     return 1;
 }
@@ -1509,7 +1528,20 @@ CoreRootComparison CoreCompareRootCandidates(
         incumbent_value == NULL || incumbent_stats == NULL
     ) {
         return core_root_comparison(
-            CORE_ROOT_COMPARISON_EQUAL,
+            CORE_ROOT_COMPARISON_INCOMPARABLE,
+            CORE_ROOT_COMPARISON_NOT_COMPARED
+        );
+    }
+    if (
+        !core_valid_outcome(candidate_value->outcome) ||
+        !core_valid_value_bound(candidate_value->bound) ||
+        !core_valid_outcome(incumbent_value->outcome) ||
+        !core_valid_value_bound(incumbent_value->bound) ||
+        !core_valid_structural_proof(candidate_stats->structural_proof) ||
+        !core_valid_structural_proof(incumbent_stats->structural_proof)
+    ) {
+        return core_root_comparison(
+            CORE_ROOT_COMPARISON_INCOMPARABLE,
             CORE_ROOT_COMPARISON_NOT_COMPARED
         );
     }
@@ -1520,7 +1552,9 @@ CoreRootComparison CoreCompareRootCandidates(
     int incumbent_upper = 0;
     core_outcome_interval(candidate_value, &candidate_lower, &candidate_upper);
     core_outcome_interval(incumbent_value, &incumbent_lower, &incumbent_upper);
-    if (candidate_lower > incumbent_upper) {
+    bool same_outcome_interval = candidate_lower == incumbent_lower &&
+        candidate_upper == incumbent_upper;
+    if (!same_outcome_interval && candidate_lower >= incumbent_upper) {
         CoreRootComparisonReason reason =
             candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
             incumbent_value->bound == CORE_VALUE_BOUND_EXACT ?
@@ -1528,13 +1562,19 @@ CoreRootComparison CoreCompareRootCandidates(
                 CORE_ROOT_COMPARISON_SEARCH_BOUND;
         return core_root_comparison(CORE_ROOT_COMPARISON_CANDIDATE, reason);
     }
-    if (candidate_upper < incumbent_lower) {
+    if (!same_outcome_interval && incumbent_lower >= candidate_upper) {
         CoreRootComparisonReason reason =
             candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
             incumbent_value->bound == CORE_VALUE_BOUND_EXACT ?
                 CORE_ROOT_COMPARISON_TERMINAL_OUTCOME :
                 CORE_ROOT_COMPARISON_SEARCH_BOUND;
         return core_root_comparison(CORE_ROOT_COMPARISON_INCUMBENT, reason);
+    }
+    if (!same_outcome_interval) {
+        return core_root_comparison(
+            CORE_ROOT_COMPARISON_INCOMPARABLE,
+            CORE_ROOT_COMPARISON_SEARCH_BOUND
+        );
     }
 
     if (
@@ -1583,6 +1623,26 @@ CoreRootComparison CoreCompareRootCandidates(
         candidate_value->outcome == CORE_OUTCOME_UNRESOLVED &&
         incumbent_value->outcome == CORE_OUTCOME_UNRESOLVED
     ) {
+        bool candidate_finite = isfinite(candidate_value->score);
+        bool incumbent_finite = isfinite(incumbent_value->score);
+        if (candidate_finite && !incumbent_finite) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_CANDIDATE,
+                CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+            );
+        }
+        if (!candidate_finite && incumbent_finite) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_INCUMBENT,
+                CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+            );
+        }
+        if (!candidate_finite && !incumbent_finite) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_INCOMPARABLE,
+                CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+            );
+        }
         if (candidate_value->score > incumbent_value->score) {
             return core_root_comparison(
                 CORE_ROOT_COMPARISON_CANDIDATE,
