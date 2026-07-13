@@ -2035,6 +2035,8 @@ typedef struct {
     bool lasso_survivability_failed;
     bool allow_lasso_early;
     bool bounded_lasso_found;
+    int bounded_lasso_depth;
+    int bounded_lasso_capacity;
     uint64_t explored_states;
     uint64_t* analysis_nodes;
     CoreRelaxedCapacityWorkspace capacity_workspace;
@@ -2076,7 +2078,13 @@ static CoreLassoResult core_validate_bounded_lasso(
         return CORE_LASSO_NOT_PROVED;
     }
     for (int left = loop_start; left < depth; left++) {
+        if (core_search_timed_out(context->timer)) {
+            return CORE_LASSO_DEADLINE;
+        }
         for (int right = left + 1; right < depth; right++) {
+            if (((right - left) & 63) == 0 && core_search_timed_out(context->timer)) {
+                return CORE_LASSO_DEADLINE;
+            }
             if (CoordEquals(context->path_heads[left], context->path_heads[right])) {
                 return CORE_LASSO_NOT_PROVED;
             }
@@ -2155,17 +2163,30 @@ static CoreLassoResult core_validate_bounded_lasso(
         if (grow) body_len++;
         if (step == depth) {
             bool wholly_resident = body_len < loop_length;
+            bool residency_deadline = false;
             for (int segment = 0; wholly_resident && segment < body_len; segment++) {
+                if (core_search_timed_out(context->timer)) {
+                    residency_deadline = true;
+                    break;
+                }
                 bool on_loop = false;
                 for (int loop = loop_start; loop < depth; loop++) {
+                    if (((loop - loop_start) & 63) == 0 &&
+                        core_search_timed_out(context->timer)) {
+                        residency_deadline = true;
+                        break;
+                    }
                     if (CoordEquals(body[segment], context->path_heads[loop])) {
                         on_loop = true;
                         break;
                     }
                 }
+                if (residency_deadline) break;
                 wholly_resident = on_loop;
             }
-            if (wholly_resident) {
+            if (residency_deadline) {
+                result = CORE_LASSO_DEADLINE;
+            } else if (wholly_resident) {
                 *out_capacity = loop_length;
                 result = CORE_LASSO_PROVED;
             } else {
@@ -2334,6 +2355,8 @@ static CoreStructuralProofOutcome core_prove_structural_node(
         if (lasso == CORE_LASSO_PROVED) {
             if (!context->bounded_lasso_found) {
                 context->bounded_lasso_found = true;
+                context->bounded_lasso_depth = depth;
+                context->bounded_lasso_capacity = loop_capacity;
             }
             if (context->allow_lasso_early) {
                 return core_structural_outcome(
@@ -3451,6 +3474,15 @@ static void core_analyze_self_trap(
                 ? CORE_STRUCTURAL_CUTOFF_SURVIVABILITY : short_outcome.cutoff;
             candidate->explored_states = short_context.explored_states;
             candidate->structural_capacity = short_outcome.proved_capacity;
+            if (!optional_food_uncertain &&
+                candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE &&
+                short_context.bounded_lasso_found &&
+                (short_outcome.cutoff == CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO ||
+                 optional_food_count > 0 || short_context.lasso_survivability_failed)) {
+                candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO;
+                candidate->proof_horizon = short_context.bounded_lasso_depth;
+                candidate->structural_capacity = short_context.bounded_lasso_capacity;
+            }
             core_structural_opponent_timing_free(&opponent_timing);
             CoreSearchStateFree(&state);
             return;
@@ -3549,8 +3581,14 @@ static void core_analyze_self_trap(
         ? CORE_STRUCTURAL_CUTOFF_SURVIVABILITY : outcome.cutoff;
     candidate->explored_states = context.explored_states;
     candidate->structural_capacity = outcome.proved_capacity;
-    if (outcome.cutoff == CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO) {
-        candidate->proof_horizon = outcome.depth;
+    if (!optional_food_uncertain &&
+        candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE &&
+        context.bounded_lasso_found &&
+        (outcome.cutoff == CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO ||
+         optional_food_count > 0 || context.lasso_survivability_failed)) {
+        candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_BOUNDED_LASSO;
+        candidate->proof_horizon = context.bounded_lasso_depth;
+        candidate->structural_capacity = context.bounded_lasso_capacity;
     }
     free(ancestor_bodies);
     free(path_heads);

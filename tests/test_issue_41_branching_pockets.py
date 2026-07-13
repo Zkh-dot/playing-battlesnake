@@ -536,6 +536,43 @@ def test_t439_fixed_depth_uses_root_dominance_before_search_scores() -> None:
     assert strict["root_candidates"][bad_move]["allowed"] is True
 
 
+@pytest.mark.parametrize("policy", ["standard_ladder_opportunity", "strict_minimax"])
+@pytest.mark.parametrize(
+    ("position_index", "move", "expected_horizon", "expected_capacity"),
+    [(0, "left", 54, 20), (1, "up", 47, 46)],
+    ids=["T169", "T439"],
+)
+def test_fixed_depth_reports_the_bounded_certificate_that_validates_safe(
+    policy: str,
+    position_index: int,
+    move: str,
+    expected_horizon: int,
+    expected_capacity: int,
+) -> None:
+    position = _positions()[position_index]
+
+    result = minimax_diagnostics(
+        _fixture_board(position),
+        str(position["snake_id"]),
+        time_budget_ms=5000,
+        fixed_depth=1,
+        root_policy=policy,
+    )
+    candidate = result["root_candidates"][move]
+
+    assert candidate["structural_proof"] == "safe"
+    assert candidate["proof_cutoff"] == "bounded_lasso"
+    assert candidate["proof_horizon"] == expected_horizon
+    assert candidate["structural_capacity"] == expected_capacity
+    if policy == "strict_minimax":
+        assert candidate["allowed"] is True
+        assert all(
+            root["allowed"]
+            for root in result["root_candidates"].values()
+            if root["alive_reply_count"] > 0
+        )
+
+
 def test_strict_minimax_does_not_claim_opportunity_policy_sufficiency() -> None:
     position = _positions()[1]
     bad_move = str(position["evidence"]["recorded_bad_move"])
