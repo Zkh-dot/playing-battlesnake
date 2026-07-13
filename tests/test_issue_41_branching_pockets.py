@@ -682,6 +682,27 @@ def test_established_region_is_cleared_after_topology_loss() -> None:
     assert candidate["structural_proof"] != "safe"
 
 
+def test_leaving_established_region_rechecks_the_arrival_doorway() -> None:
+    board = _board(
+        6,
+        6,
+        [(4, 1), (5, 1), (5, 2), (5, 3), (5, 4), (4, 4),
+         (3, 4), (2, 4), (2, 5), (1, 5), (0, 5), (0, 4)],
+        [(3, 3), (2, 3), (1, 3), (1, 2), (1, 1), (1, 0)],
+    )
+
+    candidate = minimax_diagnostics(
+        board, "me", time_budget_ms=300
+    )["root_candidates"]["left"]
+
+    # A parent state can be inside an established biconnected region while
+    # this transition leaves it through a doorway the opponent reaches first.
+    # The child must not inherit the parent's closure exemption.
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+    assert candidate["proof_cutoff"] != "bounded_lasso"
+
+
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
 def test_strict_minimax_preserves_replay_root_candidates(position: dict[str, object]) -> None:
     bad_move = str(position["evidence"]["recorded_bad_move"])

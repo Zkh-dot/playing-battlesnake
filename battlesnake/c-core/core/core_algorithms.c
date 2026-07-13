@@ -2302,6 +2302,26 @@ static CoreStructuralProofOutcome core_prove_structural_node(
     } else {
         region_established = false;
     }
+    if (was_region_established && !region_established) {
+        /* The parent could omit per-cell closure checks only while its head
+         * remained inside the established biconnected region.  This arrival
+         * has left that region, so restore the normal doorway obligation for
+         * both the immediate proof and any later lasso replay. */
+        context->path_closure_required[depth] = true;
+        if (context->use_opponent_closure && core_structural_opponent_closes_at(
+                &context->opponent_timing,
+                core_coord_index(board, SnakeHead(snake)),
+                depth,
+                depth
+            )) {
+            return core_structural_outcome(
+                CORE_STRUCTURAL_PROOF_UNSAFE,
+                CORE_STRUCTURAL_CUTOFF_DEAD_END,
+                depth,
+                0
+            );
+        }
+    }
     if (was_region_established && !region_established && safe_steps_remaining >= 0) {
         safe_steps_remaining = -2;
     }
