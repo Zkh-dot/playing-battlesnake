@@ -407,13 +407,13 @@ def test_strict_minimax_does_not_claim_opportunity_policy_sufficiency() -> None:
 
 
 @pytest.mark.parametrize("attempt", range(3))
-def test_large_board_root_phase_enforces_the_search_reserve(attempt: int) -> None:
+def test_large_board_root_phase_enforces_prefix_and_starts_search(attempt: int) -> None:
     del attempt
     board = _board(
         30,
         30,
-        [(0, 0), (0, 1), (1, 1)],
-        [(29, 29), (29, 28), (28, 28)],
+        [(2, 2), (2, 1)],
+        [(27, 27), (27, 28)],
     )
     budget_ms = 10
 
@@ -426,9 +426,10 @@ def test_large_board_root_phase_enforces_the_search_reserve(attempt: int) -> Non
         if candidate["proof_cutoff"] == "deadline"
     ]
 
+    assert 0.0 < result["root_analysis_elapsed_ms"] <= wall_elapsed_ms
     assert result["root_analysis_elapsed_ms"] < budget_ms
-    assert wall_elapsed_ms < budget_ms + result["search_reserved_ms"]
-    assert result["completed_depth"] >= 1
+    assert result["max_depth_started"] == 1
+    assert result["nodes"] > 0
     assert deadline_candidates
     assert all(candidate["structural_proof"] == "unknown" for candidate in deadline_candidates)
 

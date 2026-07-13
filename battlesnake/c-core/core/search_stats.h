@@ -134,6 +134,8 @@ typedef struct {
     uint64_t root_analysis_nodes;
     double root_analysis_elapsed_ms;
     int root_analysis_budget_ms;
+    /* Scheduled interval after the structural prefix; it does not guarantee
+     * that a noninterruptible search leaf completes a depth. */
     int search_reserved_ms;
 } CoreSearchStats;
 

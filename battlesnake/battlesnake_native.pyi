@@ -123,6 +123,7 @@ class MinimaxDiagnostics(TypedDict):
     root_analysis_nodes: int
     root_analysis_elapsed_ms: float
     root_analysis_budget_ms: int
+    # Scheduled search interval; a noninterruptible leaf may still complete no depth.
     search_reserved_ms: int
 
 def reachable_space(board: Board, start: Coord, snake_id: str) -> int: ...

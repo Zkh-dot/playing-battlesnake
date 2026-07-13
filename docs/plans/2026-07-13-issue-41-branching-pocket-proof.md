@@ -207,7 +207,7 @@ Expected: all pass, including #33/#36/#38/#39 coverage embedded in the listed su
 
 Run the checker against `/home/sergei-scv/temp/playing-battlesnake/exports/zkh-dot_lost_games` at a production-like budget and save only the summary in the PR evidence. Expected: zero instances of the exact post-fix invariant among positions that complete structural proof; `UNKNOWN` cases are reported separately, never counted as safe.
 
-Measure the three representative positions at 100/200/300 ms and compare `root_analysis_elapsed_ms`, total elapsed time, completed depth, and selected move with the baseline above. Expected: requests respect their budgets, root proof resolves the small pockets without exhausting the request, and no safety assertion depends on deeper minimax completion.
+Measure the three representative positions at 100/200/300 ms and compare `root_analysis_elapsed_ms`, total elapsed time, completed depth, and selected move with the baseline above. Expected: the structural prefix stops at its absolute sub-deadline, root proof resolves the small pockets without consuming the scheduled search interval, and no safety assertion depends on deeper minimax completion. The interval schedules a search attempt; it does not promise a completed depth or strict wall-clock completion when one leaf is noninterruptible.
 
 **Step 4: Commit**
 

@@ -3011,7 +3011,8 @@ static void core_analyze_self_trap(
         /* A completed SAFE candidate is already sufficient for the only
          * policy comparison that can dominate this capacity-deficient root.
          * Do not spend the bounded proof phase trying to upgrade it: UNKNOWN
-         * is the conservative result, and minimax retains its reserved half. */
+         * is the conservative result; minimax retains its scheduled search
+         * interval. */
         candidate->structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN;
         candidate->proof_cutoff = CORE_STRUCTURAL_CUTOFF_POLICY_SUFFICIENT;
         CoreSearchStateFree(&state);
@@ -4459,7 +4460,9 @@ CoreStatus CoreMinimaxMoveWithStats(
     /* Root safety and minimax are both required phases. The structural pass
      * gets one share and the primary search gets two: a duel root iteration
      * must evaluate both our command and the opponent reply layer. Incomplete
-     * proofs fail conservatively as UNKNOWN and never borrow the search share. */
+     * proofs fail conservatively as UNKNOWN and never borrow the scheduled
+     * search interval. A noninterruptible leaf may still prevent a completed
+     * depth or finish after the overall deadline. */
     int root_analysis_budget_ms = config.time_budget_ms / 3;
     if (root_analysis_budget_ms < 1) {
         root_analysis_budget_ms = 1;
