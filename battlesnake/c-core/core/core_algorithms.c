@@ -2279,7 +2279,6 @@ static bool core_prepare_structural_food_timing(
     int own_length,
     int horizon,
     size_t cell_count,
-    int* shared_vacate,
     CoreStructuralOpponentTiming* timing,
     unsigned int* seen,
     size_t* queue
@@ -2375,7 +2374,6 @@ static bool core_prepare_structural_food_timing(
                 if (BoardInBounds(board, body)) {
                     int index = core_coord_index(board, body);
                     timing->opponent_vacate[index] = CORE_SPACE_TIME_NEVER;
-                    shared_vacate[index] = CORE_SPACE_TIME_NEVER;
                 }
             }
             continue;
@@ -2393,9 +2391,6 @@ static bool core_prepare_structural_food_timing(
             int index = core_coord_index(board, body);
             if (vacate_time > timing->opponent_vacate[index]) {
                 timing->opponent_vacate[index] = vacate_time;
-            }
-            if (vacate_time > shared_vacate[index]) {
-                shared_vacate[index] = vacate_time;
             }
         }
     }
@@ -2452,39 +2447,42 @@ static bool core_prepare_structural_opponent_arrival(
         memset(out_timing, 0, sizeof(*out_timing));
         return false;
     }
-    int* vacate = (int*)calloc(cell_count, sizeof(int));
+    int* optimistic_head_vacate = (int*)calloc(cell_count, sizeof(int));
     unsigned int* seen = (unsigned int*)calloc(state_count, sizeof(unsigned int));
     size_t* queue = (size_t*)malloc(state_count * sizeof(size_t));
     unsigned char* shorter_reachability = (unsigned char*)calloc(state_count, 1);
-    if (vacate == NULL || seen == NULL || queue == NULL || shorter_reachability == NULL) {
+    if (optimistic_head_vacate == NULL || seen == NULL || queue == NULL ||
+        shorter_reachability == NULL) {
         free(timing_storage);
         memset(out_timing, 0, sizeof(*out_timing));
-        free(vacate);
+        free(optimistic_head_vacate);
         free(seen);
         free(queue);
         free(shorter_reachability);
         return false;
     }
     out_timing->shorter_reachability = shorter_reachability;
-    core_fill_vacate_times(board, snake_id, vacate);
     bool food_timing_filled = core_prepare_structural_food_timing(
         board,
         snake_id,
         own_length,
         horizon,
         cell_count,
-        vacate,
         out_timing,
         seen,
         queue
     );
+    /* Keep head reach and original-body occupancy as separate conservative
+     * channels. Head reach ignores optional growth/body delay because an
+     * adversary may skip food to arrive sooner. The maximal multi-food fixed
+     * point above is used only by opponent_vacate. */
     bool dangerous_filled = food_timing_filled && core_fill_opponent_arrival(
         board,
         snake_id,
         NULL,
         own_length,
         INT_MAX,
-        vacate,
+        optimistic_head_vacate,
         dangerous_arrival,
         NULL,
         seen,
@@ -2494,15 +2492,14 @@ static bool core_prepare_structural_opponent_arrival(
         horizon
     );
     int* shorter_arrival = (int*)malloc(cell_count * sizeof(int));
-    int* optimistic_shorter_vacate = (int*)calloc(cell_count, sizeof(int));
-    bool shorter_filled = shorter_arrival != NULL && optimistic_shorter_vacate != NULL &&
+    bool shorter_filled = shorter_arrival != NULL &&
         core_fill_opponent_arrival(
         board,
         snake_id,
         NULL,
         1,
         own_length,
-        optimistic_shorter_vacate,
+        optimistic_head_vacate,
         shorter_arrival,
         shorter_reachability,
         seen,
@@ -2511,11 +2508,10 @@ static bool core_prepare_structural_opponent_arrival(
         cell_count,
         horizon
     );
-    free(vacate);
+    free(optimistic_head_vacate);
     free(seen);
     free(queue);
     free(shorter_arrival);
-    free(optimistic_shorter_vacate);
     if (!food_timing_filled || !dangerous_filled || !shorter_filled) {
         free(timing_storage);
         free(shorter_reachability);

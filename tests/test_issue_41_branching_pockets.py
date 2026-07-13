@@ -239,6 +239,21 @@ def test_two_reachable_meals_keep_shorter_tail_in_doorway() -> None:
     assert candidate["structural_proof"] != "safe"
 
 
+def test_equal_opponent_can_skip_optional_food_to_contest_earlier() -> None:
+    board = _board(
+        7,
+        5,
+        [(1, 0), (0, 0), (0, 1), (0, 2), (0, 3), (0, 4)],
+        [(2, 2), (3, 2), (4, 2), (4, 1), (5, 1), (5, 0)],
+        food=[(3, 4), (6, 3)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
 def test_replay_has_safe_full_body_certificate_but_bad_move_does_not(
     position: dict[str, object],
