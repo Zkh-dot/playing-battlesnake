@@ -293,6 +293,20 @@ def test_static_cyclic_region_does_not_bypass_contested_doorway() -> None:
     assert candidate["structural_proof"] != "safe"
 
 
+def test_static_cycle_is_not_safe_before_uncontested_repetition() -> None:
+    board = _board(
+        5,
+        3,
+        [(1, 0), (0, 0), (0, 1), (0, 2)],
+        [(3, 1), (4, 1), (4, 2), (3, 2)],
+    )
+
+    candidate = _candidate(board, "right")
+
+    assert candidate["opponent_closure_considered"] is True
+    assert candidate["structural_proof"] != "safe"
+
+
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
 def test_strict_minimax_preserves_replay_root_candidates(position: dict[str, object]) -> None:
     bad_move = str(position["evidence"]["recorded_bad_move"])

@@ -189,7 +189,7 @@ def test_profile_reports_head_to_head_draw_loss_and_mutual_wall_death() -> None:
     assert duel_root_profile(walls, "me")["up"]["reply_outcomes"]["up"] == "draw"
 
 
-def test_structural_dominance_can_exclude_draw_when_safe_win_exists() -> None:
+def test_rule_a_preserves_a_command_that_guarantees_a_draw() -> None:
     board = Board(
         width=5,
         height=5,
@@ -210,9 +210,9 @@ def test_structural_dominance_can_exclude_draw_when_safe_win_exists() -> None:
 
     assert set(guaranteed_draw["reply_outcomes"].values()) == {"draw"}
     assert guaranteed_draw["alive_reply_count"] == 0
-    assert guaranteed_draw["allowed"] is False
-    assert guaranteed_draw["rejection_reason"] == "structurally_dominated"
-    assert guaranteed_draw["minimax_outcome"] is None
+    assert guaranteed_draw["allowed"] is True
+    assert guaranteed_draw["rejection_reason"] == "none"
+    assert guaranteed_draw["minimax_outcome"] == "draw"
 
 
 def test_profile_distinguishes_starvation_hazard_and_length_two_reverse() -> None:

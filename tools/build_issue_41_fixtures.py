@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -58,8 +59,8 @@ def _recorded_move(
     return moves[delta]
 
 
-def _position(game_id: str, turn: int) -> dict[str, Any]:
-    source = EXPORT_DIR / f"{game_id}.json"
+def _position(game_id: str, turn: int, export_dir: Path = EXPORT_DIR) -> dict[str, Any]:
+    source = export_dir / f"{game_id}.json"
     export = json.loads(source.read_text(encoding="utf-8"))
     game = export["game"]
     frame = _frame(export, game_id, turn)
@@ -94,13 +95,23 @@ def _position(game_id: str, turn: int) -> dict[str, Any]:
     }
 
 
-def main() -> int:
-    positions = [_position(*spec) for spec in POSITIONS]
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(json.dumps({"positions": positions}, indent=1) + "\n", encoding="utf-8")
-    print(f"wrote {len(positions)} positions to {OUTPUT_PATH}")
+def main(export_dir: Path = EXPORT_DIR, output_path: Path = OUTPUT_PATH) -> int:
+    positions = [_position(*spec, export_dir=export_dir) for spec in POSITIONS]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps({"positions": positions}, indent=1) + "\n", encoding="utf-8"
+    )
+    print(f"wrote {len(positions)} positions to {output_path}")
     return 0
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--export-dir", type=Path, default=EXPORT_DIR)
+    parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    args = _parse_args()
+    raise SystemExit(main(export_dir=args.export_dir, output_path=args.output))
