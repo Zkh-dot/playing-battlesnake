@@ -4048,17 +4048,6 @@ static CoreRootReplyClosureResult core_root_reply_closes_all_continuations(
     return CORE_ROOT_REPLY_CLOSURE_OPEN;
 }
 
-static bool core_is_guaranteed_terminal_non_loss(
-    const CoreRootCandidateStats* candidate,
-    uint8_t complete_opponent_reply_mask
-) {
-    uint8_t terminal_non_loss_mask = candidate->win_reply_mask | candidate->draw_reply_mask;
-    return complete_opponent_reply_mask != 0 &&
-        candidate->opponent_reply_mask == complete_opponent_reply_mask &&
-        candidate->opponent_reply_mask == terminal_non_loss_mask &&
-        candidate->both_alive_reply_mask == 0 && candidate->loss_reply_mask == 0;
-}
-
 static CoreStatus core_prepare_root_policy(
     const Board* board,
     const char* snake_id,
@@ -4228,34 +4217,11 @@ static CoreStatus core_prepare_root_policy(
                 &stats->root_analysis_nodes
             );
             if (candidate->refutation_status == CORE_REFUTATION_PROVEN_REFUTABLE) {
+                /* This bounded adversarial certificate is stronger than the
+                 * generic structural lattice: it proves the root's short
+                 * worst outcome before heuristic-depth minimax begins. */
                 allowed_mask &= (uint8_t)~(1u << move);
                 candidate->rejection_reason = CORE_ROOT_REJECTION_PROVEN_SHORT_SELF_TRAP;
-            }
-        }
-
-        bool has_safe_alive_alternative = false;
-        for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
-            const CoreRootCandidateStats* candidate = &stats->root_candidates[move];
-            if ((allowed_mask & (1u << move)) != 0 && candidate->alive_reply_count > 0 &&
-                candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE) {
-                has_safe_alive_alternative = true;
-                break;
-            }
-        }
-        if (has_safe_alive_alternative) {
-            for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
-                CoreRootCandidateStats* candidate = &stats->root_candidates[move];
-                if ((allowed_mask & (1u << move)) == 0 ||
-                    candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE ||
-                    core_is_guaranteed_terminal_non_loss(
-                        candidate, profile.opponent_command_mask
-                    ) ||
-                    (candidate->structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN &&
-                     candidate->relaxed_static_capacity >= candidate->post_move_length)) {
-                    continue;
-                }
-                allowed_mask &= (uint8_t)~(1u << move);
-                candidate->rejection_reason = CORE_ROOT_REJECTION_STRUCTURALLY_DOMINATED;
             }
         }
     }
@@ -4611,6 +4577,214 @@ static bool core_equal_score_move_is_better(
 
     return core_preferred_order_rank(original_moves, move_count, candidate, preferred) <
         core_preferred_order_rank(original_moves, move_count, current_best, preferred);
+}
+
+static uint8_t core_remove_outcome_dominated_roots(
+    const CoreSearchContext* context,
+    uint8_t active_mask
+) {
+    uint8_t dominated_mask = 0;
+    for (int incumbent = MOVE_UP; incumbent <= MOVE_RIGHT; incumbent++) {
+        if ((active_mask & (1u << incumbent)) == 0) {
+            continue;
+        }
+        int incumbent_lower = 0;
+        int incumbent_upper = 0;
+        core_outcome_interval(
+            &context->root_move_values[incumbent],
+            &incumbent_lower,
+            &incumbent_upper
+        );
+        for (int candidate = MOVE_UP; candidate <= MOVE_RIGHT; candidate++) {
+            if (candidate == incumbent || (active_mask & (1u << candidate)) == 0) {
+                continue;
+            }
+            int candidate_lower = 0;
+            int candidate_upper = 0;
+            core_outcome_interval(
+                &context->root_move_values[candidate],
+                &candidate_lower,
+                &candidate_upper
+            );
+            if (candidate_lower > incumbent_upper) {
+                dominated_mask |= (uint8_t)(1u << incumbent);
+                break;
+            }
+        }
+    }
+    return active_mask & (uint8_t)~dominated_mask;
+}
+
+static uint8_t core_remove_structurally_dominated_roots(
+    const CoreSearchContext* context,
+    uint8_t active_mask
+) {
+    uint8_t dominated_mask = 0;
+    for (int incumbent = MOVE_UP; incumbent <= MOVE_RIGHT; incumbent++) {
+        if ((active_mask & (1u << incumbent)) == 0 ||
+            context->root_move_values[incumbent].outcome != CORE_OUTCOME_UNRESOLVED) {
+            continue;
+        }
+        const CoreRootCandidateStats* incumbent_stats =
+            &context->stats->root_candidates[incumbent];
+        for (int candidate = MOVE_UP; candidate <= MOVE_RIGHT; candidate++) {
+            if (candidate == incumbent || (active_mask & (1u << candidate)) == 0 ||
+                context->root_move_values[candidate].outcome != CORE_OUTCOME_UNRESOLVED) {
+                continue;
+            }
+            const CoreRootCandidateStats* candidate_stats =
+                &context->stats->root_candidates[candidate];
+            bool incumbent_is_deficient_unknown =
+                incumbent_stats->structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN &&
+                (incumbent_stats->post_move_length <= 0 ||
+                 incumbent_stats->relaxed_static_capacity < incumbent_stats->post_move_length);
+            bool candidate_dominates =
+                candidate_stats->structural_proof == CORE_STRUCTURAL_PROOF_SAFE &&
+                (incumbent_stats->structural_proof == CORE_STRUCTURAL_PROOF_UNSAFE ||
+                 incumbent_is_deficient_unknown);
+            if (candidate_dominates) {
+                dominated_mask |= (uint8_t)(1u << incumbent);
+                break;
+            }
+        }
+    }
+    return active_mask & (uint8_t)~dominated_mask;
+}
+
+static uint8_t core_keep_longest_exact_forced_losses(
+    const CoreSearchContext* context,
+    uint8_t active_mask
+) {
+    bool all_exact_losses = active_mask != 0;
+    uint16_t longest_distance = 0;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((active_mask & (1u << move)) == 0) {
+            continue;
+        }
+        const CoreSearchValue* value = &context->root_move_values[move];
+        if (value->bound != CORE_VALUE_BOUND_EXACT || value->outcome != CORE_OUTCOME_LOSS) {
+            all_exact_losses = false;
+            break;
+        }
+        if (value->terminal_distance > longest_distance) {
+            longest_distance = value->terminal_distance;
+        }
+    }
+    if (!all_exact_losses) {
+        return active_mask;
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((active_mask & (1u << move)) != 0 &&
+            context->root_move_values[move].terminal_distance < longest_distance) {
+            active_mask &= (uint8_t)~(1u << move);
+        }
+    }
+    return active_mask;
+}
+
+static void core_numeric_interval(
+    const CoreSearchValue* value,
+    double* out_lower,
+    double* out_upper
+) {
+    *out_lower = value->bound == CORE_VALUE_BOUND_UPPER ? -DBL_MAX : value->score;
+    *out_upper = value->bound == CORE_VALUE_BOUND_LOWER ? DBL_MAX : value->score;
+}
+
+static uint8_t core_remove_numerically_dominated_roots(
+    const CoreSearchContext* context,
+    uint8_t active_mask
+) {
+    uint8_t dominated_mask = 0;
+    for (int incumbent = MOVE_UP; incumbent <= MOVE_RIGHT; incumbent++) {
+        if ((active_mask & (1u << incumbent)) == 0) {
+            continue;
+        }
+        double incumbent_lower = 0.0;
+        double incumbent_upper = 0.0;
+        core_numeric_interval(
+            &context->root_move_values[incumbent],
+            &incumbent_lower,
+            &incumbent_upper
+        );
+        for (int candidate = MOVE_UP; candidate <= MOVE_RIGHT; candidate++) {
+            if (candidate == incumbent || (active_mask & (1u << candidate)) == 0) {
+                continue;
+            }
+            double candidate_lower = 0.0;
+            double candidate_upper = 0.0;
+            core_numeric_interval(
+                &context->root_move_values[candidate],
+                &candidate_lower,
+                &candidate_upper
+            );
+            if (candidate_lower > incumbent_upper) {
+                dominated_mask |= (uint8_t)(1u << incumbent);
+                break;
+            }
+        }
+    }
+    return active_mask & (uint8_t)~dominated_mask;
+}
+
+static bool core_select_layered_root_candidate(
+    const Board* board,
+    const char* snake_id,
+    const MoveDirection* original_moves,
+    int move_count,
+    int* reachable_spaces,
+    MoveDirection preferred,
+    const CoreSearchContext* context,
+    MoveDirection* out_move,
+    CoreSearchValue* out_value
+) {
+    if (context->stats == NULL ||
+        context->stats->root_policy_applied != CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY) {
+        return false;
+    }
+
+    uint8_t active_mask = 0;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if (context->root_move_value_valid[move]) {
+            active_mask |= (uint8_t)(1u << move);
+        }
+    }
+    if (active_mask == 0) {
+        return false;
+    }
+
+    active_mask = core_remove_outcome_dominated_roots(context, active_mask);
+    active_mask = core_remove_structurally_dominated_roots(context, active_mask);
+    active_mask = core_keep_longest_exact_forced_losses(context, active_mask);
+    active_mask = core_remove_numerically_dominated_roots(context, active_mask);
+
+    MoveDirection selected = MOVE_INVALID;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((active_mask & (1u << move)) == 0) {
+            continue;
+        }
+        if (!core_valid_move_direction(selected) ||
+            core_equal_score_move_is_better(
+                board,
+                snake_id,
+                original_moves,
+                move_count,
+                reachable_spaces,
+                (MoveDirection)move,
+                selected,
+                preferred,
+                context->root_move_values[move].outcome == CORE_OUTCOME_LOSS &&
+                    context->root_move_values[selected].outcome == CORE_OUTCOME_LOSS
+            )) {
+            selected = (MoveDirection)move;
+        }
+    }
+    if (!core_valid_move_direction(selected)) {
+        return false;
+    }
+    *out_move = selected;
+    *out_value = context->root_move_values[selected];
+    return true;
 }
 
 static uint32_t core_transition_cause(
@@ -5025,9 +5199,26 @@ static CoreStatus core_minimax_search(
         if (best_value.score > alpha) {
             alpha = best_value.score;
         }
-        if (ply == 0 && core_valid_move_direction(best_move)) {
-            context->root_best_valid = true;
-            context->root_best_move = best_move;
+        if (ply == 0) {
+            MoveDirection policy_move = MOVE_INVALID;
+            CoreSearchValue policy_value = core_unresolved_value(0.0);
+            if (core_select_layered_root_candidate(
+                board,
+                snake_id,
+                original_own_moves,
+                own_move_count,
+                original_reachable_spaces,
+                tie_preferred,
+                context,
+                &policy_move,
+                &policy_value
+            )) {
+                context->root_best_valid = true;
+                context->root_best_move = policy_move;
+            } else if (core_valid_move_direction(best_move)) {
+                context->root_best_valid = true;
+                context->root_best_move = best_move;
+            }
         }
         if (alpha >= beta) {
             break;
@@ -5045,12 +5236,27 @@ static CoreStatus core_minimax_search(
         bound = CORE_TT_LOWER;
     }
     best_value.bound = bound;
-    *out_value = best_value;
+    MoveDirection selected_move = best_move;
+    CoreSearchValue selected_value = best_value;
+    if (ply == 0) {
+        (void)core_select_layered_root_candidate(
+            board,
+            snake_id,
+            original_own_moves,
+            own_move_count,
+            original_reachable_spaces,
+            tie_preferred,
+            context,
+            &selected_move,
+            &selected_value
+        );
+    }
+    *out_value = selected_value;
     if (out_best_move != NULL) {
-        *out_best_move = best_move;
+        *out_best_move = selected_move;
     }
     if (context->config.enable_move_ordering && ply >= 0 && ply <= CORE_MINIMAX_MAX_DEPTH) {
-        context->principal_variation[ply] = best_move;
+        context->principal_variation[ply] = selected_move;
     }
     if (tt_node_enabled) {
         bool tt_collision = false;
