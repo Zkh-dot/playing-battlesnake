@@ -93,9 +93,11 @@ typedef enum {
     CORE_ROOT_COMPARISON_INCOMPARABLE = 2,
 } CoreRootComparisonOrdering;
 
-/* INCOMPARABLE is a semantic result, not a tie. Root selection must retain a
- * maximal candidate set (or an equivalent partial-order treatment) before it
- * applies structural tie-breaks, previous-PV preference, or stable direction. */
+/* INCOMPARABLE is a semantic result, not a tie. This pairwise comparator only
+ * applies lower layers when both search records are exact with the same
+ * outcome. Task 2 root selection must retain a global maximal candidate set
+ * (or use an equivalent layered treatment) before structural tie-breaks,
+ * previous-PV preference, or stable direction. */
 typedef struct {
     CoreRootComparisonOrdering ordering;
     CoreRootComparisonReason reason;

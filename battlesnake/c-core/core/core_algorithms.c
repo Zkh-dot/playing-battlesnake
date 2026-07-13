@@ -1507,6 +1507,31 @@ static int core_structural_rank(const CoreRootCandidateStats* candidate) {
     return 1;
 }
 
+static bool core_search_value_semantically_equal(
+    const CoreSearchValue* candidate,
+    const CoreSearchValue* incumbent
+) {
+    return candidate->score == incumbent->score && candidate->outcome == incumbent->outcome &&
+        candidate->terminal_distance == incumbent->terminal_distance &&
+        candidate->cause == incumbent->cause && candidate->bound == incumbent->bound;
+}
+
+static bool core_root_structure_semantically_equal(
+    const CoreRootCandidateStats* candidate,
+    const CoreRootCandidateStats* incumbent
+) {
+    return candidate->trap_status == incumbent->trap_status &&
+        candidate->trap_horizon == incumbent->trap_horizon &&
+        candidate->structural_proof == incumbent->structural_proof &&
+        candidate->proof_cutoff == incumbent->proof_cutoff &&
+        candidate->proof_horizon == incumbent->proof_horizon &&
+        candidate->structural_capacity == incumbent->structural_capacity &&
+        candidate->opponent_closure_considered == incumbent->opponent_closure_considered &&
+        candidate->post_move_length == incumbent->post_move_length &&
+        candidate->relaxed_static_capacity == incumbent->relaxed_static_capacity &&
+        candidate->refutation_status == incumbent->refutation_status;
+}
+
 static CoreRootComparison core_root_comparison(
     CoreRootComparisonOrdering ordering,
     CoreRootComparisonReason reason
@@ -1554,7 +1579,7 @@ CoreRootComparison CoreCompareRootCandidates(
     core_outcome_interval(incumbent_value, &incumbent_lower, &incumbent_upper);
     bool same_outcome_interval = candidate_lower == incumbent_lower &&
         candidate_upper == incumbent_upper;
-    if (!same_outcome_interval && candidate_lower >= incumbent_upper) {
+    if (!same_outcome_interval && candidate_lower > incumbent_upper) {
         CoreRootComparisonReason reason =
             candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
             incumbent_value->bound == CORE_VALUE_BOUND_EXACT ?
@@ -1562,7 +1587,7 @@ CoreRootComparison CoreCompareRootCandidates(
                 CORE_ROOT_COMPARISON_SEARCH_BOUND;
         return core_root_comparison(CORE_ROOT_COMPARISON_CANDIDATE, reason);
     }
-    if (!same_outcome_interval && incumbent_lower >= candidate_upper) {
+    if (!same_outcome_interval && incumbent_lower > candidate_upper) {
         CoreRootComparisonReason reason =
             candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
             incumbent_value->bound == CORE_VALUE_BOUND_EXACT ?
@@ -1577,10 +1602,26 @@ CoreRootComparison CoreCompareRootCandidates(
         );
     }
 
-    if (
-        candidate_value->outcome == CORE_OUTCOME_UNRESOLVED &&
-        incumbent_value->outcome == CORE_OUTCOME_UNRESOLVED
-    ) {
+    bool exact_same_outcome = candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
+        incumbent_value->bound == CORE_VALUE_BOUND_EXACT &&
+        candidate_value->outcome == incumbent_value->outcome;
+    if (!exact_same_outcome) {
+        if (
+            core_search_value_semantically_equal(candidate_value, incumbent_value) &&
+            core_root_structure_semantically_equal(candidate_stats, incumbent_stats)
+        ) {
+            return core_root_comparison(
+                CORE_ROOT_COMPARISON_EQUAL,
+                CORE_ROOT_COMPARISON_NOT_COMPARED
+            );
+        }
+        return core_root_comparison(
+            CORE_ROOT_COMPARISON_INCOMPARABLE,
+            CORE_ROOT_COMPARISON_NOT_COMPARED
+        );
+    }
+
+    if (candidate_value->outcome == CORE_OUTCOME_UNRESOLVED) {
         int candidate_structural_rank = core_structural_rank(candidate_stats);
         int incumbent_structural_rank = core_structural_rank(incumbent_stats);
         if (candidate_structural_rank > incumbent_structural_rank) {
@@ -1598,8 +1639,6 @@ CoreRootComparison CoreCompareRootCandidates(
     }
 
     if (
-        candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
-        incumbent_value->bound == CORE_VALUE_BOUND_EXACT &&
         candidate_value->outcome == CORE_OUTCOME_LOSS &&
         incumbent_value->outcome == CORE_OUTCOME_LOSS
     ) {
@@ -1618,8 +1657,6 @@ CoreRootComparison CoreCompareRootCandidates(
     }
 
     if (
-        candidate_value->bound == CORE_VALUE_BOUND_EXACT &&
-        incumbent_value->bound == CORE_VALUE_BOUND_EXACT &&
         candidate_value->outcome == CORE_OUTCOME_UNRESOLVED &&
         incumbent_value->outcome == CORE_OUTCOME_UNRESOLVED
     ) {
@@ -1657,8 +1694,17 @@ CoreRootComparison CoreCompareRootCandidates(
         }
     }
 
+    if (
+        core_search_value_semantically_equal(candidate_value, incumbent_value) &&
+        core_root_structure_semantically_equal(candidate_stats, incumbent_stats)
+    ) {
+        return core_root_comparison(
+            CORE_ROOT_COMPARISON_EQUAL,
+            CORE_ROOT_COMPARISON_NOT_COMPARED
+        );
+    }
     return core_root_comparison(
-        CORE_ROOT_COMPARISON_EQUAL,
+        CORE_ROOT_COMPARISON_INCOMPARABLE,
         CORE_ROOT_COMPARISON_NOT_COMPARED
     );
 }
