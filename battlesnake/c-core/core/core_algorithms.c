@@ -1222,6 +1222,7 @@ typedef struct {
     bool tt_enabled;
     bool root_best_valid;
     MoveDirection root_best_move;
+    MoveDirection root_worst_reply[4];
     bool root_move_value_valid[4];
     CoreSearchValue root_move_values[4];
     MoveDirection principal_variation[CORE_MINIMAX_MAX_DEPTH + 1];
@@ -3991,7 +3992,8 @@ static CoreStatus core_prepare_root_policy(
                     core_is_guaranteed_terminal_non_loss(
                         candidate, profile.opponent_command_mask
                     ) ||
-                    candidate->relaxed_static_capacity >= candidate->post_move_length) {
+                    (candidate->structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN &&
+                     candidate->relaxed_static_capacity >= candidate->post_move_length)) {
                     continue;
                 }
                 allowed_mask &= (uint8_t)~(1u << move);
@@ -4575,8 +4577,20 @@ static CoreStatus core_minimax_search(
             }
             total *= option_counts[i];
         }
+        /* Iterative deepening already preserves our previous root choice.
+         * Preserve the adversarial half of that exact root PV as well: trying
+         * the previous iteration's worst reply first can tighten child_beta
+         * sooner, but does not omit or otherwise rank the resulting values. */
+        if (ply == 0 && opponent_index >= 0 && context->config.enable_move_ordering) {
+            core_move_to_front(
+                options[opponent_index],
+                option_counts[opponent_index],
+                context->root_worst_reply[(int)own_move]
+            );
+        }
 
         CoreSearchValue worst_reply = core_unresolved_value(DBL_MAX);
+        MoveDirection worst_reply_move = MOVE_INVALID;
         bool reply_cutoff = false;
         for (int combo = 0; combo < total; combo++) {
             if (core_search_timed_out(&context->timer)) {
@@ -4691,6 +4705,9 @@ static CoreStatus core_minimax_search(
 
             if (value.score < worst_reply.score) {
                 worst_reply = value;
+                if (opponent_index >= 0) {
+                    worst_reply_move = moves[opponent_index];
+                }
             }
             if (worst_reply.score <= alpha) {
                 reply_cutoff = true;
@@ -4721,6 +4738,7 @@ static CoreStatus core_minimax_search(
         }
 
         if (ply == 0 && core_valid_move_direction(own_move)) {
+            context->root_worst_reply[(int)own_move] = worst_reply_move;
             worst_reply.bound = reply_cutoff ? CORE_VALUE_BOUND_UPPER : CORE_VALUE_BOUND_EXACT;
             context->root_move_value_valid[(int)own_move] = true;
             context->root_move_values[(int)own_move] = worst_reply;
@@ -4829,6 +4847,9 @@ CoreStatus CoreMinimaxMoveWithStats(
         context.principal_variation[depth] = MOVE_INVALID;
         context.killer_moves[depth][0] = MOVE_INVALID;
         context.killer_moves[depth][1] = MOVE_INVALID;
+    }
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        context.root_worst_reply[move] = MOVE_INVALID;
     }
     context.timer = core_search_timer_start(config.time_budget_ms);
     context.config = config;

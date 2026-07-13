@@ -87,6 +87,31 @@ class Issue36EndgameTests(unittest.TestCase):
 
 
 class Issue36DepthBudgetTests(unittest.TestCase):
+    def test_safe_certificate_dominates_capacity_sufficient_unsafe_root(self) -> None:
+        raw = next(
+            position
+            for position in _positions()
+            if str(position["game_id"]).startswith("923544bf") and int(position["turn"]) == 323
+        )
+        board = _board_from_issue_30_fixture(raw)
+        result = minimax_diagnostics(
+            board,
+            str(raw["snake_id"]),
+            time_budget_ms=5000,
+            fixed_depth=1,
+        )
+
+        unsafe = result["root_candidates"]["left"]
+        safe = result["root_candidates"]["right"]
+        self.assertEqual(unsafe["structural_proof"], "unsafe")
+        self.assertGreaterEqual(
+            int(unsafe["relaxed_static_capacity"]), int(unsafe["post_move_length"])
+        )
+        self.assertEqual(safe["structural_proof"], "safe")
+        self.assertFalse(unsafe["allowed"])
+        self.assertEqual(unsafe["rejection_reason"], "structurally_dominated")
+        self.assertTrue(safe["allowed"])
+
     def test_t344_structural_work_guard_is_board_derived(self) -> None:
         raw = next(
             position
