@@ -1348,17 +1348,13 @@ static void core_order_moves(
     if (context == NULL) {
         return;
     }
+    if (!context->config.enable_move_ordering) {
+        return;
+    }
     if (ply == 0) {
-        /* Root tags are part of the policy frontier and diagnostics. Give
-         * them one canonical previous-iteration/TT order independent of the
-         * optional interior-node ordering switch. This keeps bound tags
-         * coherent while retaining the established root pruning profile. */
         MoveDirection root_preferred = core_valid_move_direction(tt_best) ?
             tt_best : previous_iteration_best;
         core_move_to_front(moves, move_count, root_preferred);
-        return;
-    }
-    if (!context->config.enable_move_ordering) {
         return;
     }
     for (int i = 1; i < move_count; i++) {
@@ -1481,19 +1477,20 @@ static void core_outcome_interval(
     *out_upper = value->bound == CORE_VALUE_BOUND_LOWER ? 3 : rank;
 }
 
-static int core_structural_rank(const CoreRootCandidateStats* candidate) {
-    if (candidate->structural_proof == CORE_STRUCTURAL_PROOF_SAFE) {
-        return 2;
+static bool core_structure_dominates(
+    const CoreRootCandidateStats* candidate,
+    const CoreRootCandidateStats* incumbent
+) {
+    if (candidate == NULL || incumbent == NULL ||
+        candidate->structural_proof != CORE_STRUCTURAL_PROOF_SAFE) {
+        return false;
     }
-    if (candidate->structural_proof == CORE_STRUCTURAL_PROOF_UNSAFE) {
-        return 0;
-    }
-    if (candidate->structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN) {
-        bool has_sufficient_capacity = candidate->post_move_length > 0 &&
-            candidate->relaxed_static_capacity >= candidate->post_move_length;
-        return has_sufficient_capacity ? 2 : 1;
-    }
-    return 1;
+    bool incumbent_is_deficient_unknown =
+        incumbent->structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN &&
+        (incumbent->post_move_length <= 0 ||
+         incumbent->relaxed_static_capacity < incumbent->post_move_length);
+    return incumbent->structural_proof == CORE_STRUCTURAL_PROOF_UNSAFE ||
+        incumbent_is_deficient_unknown;
 }
 
 static bool core_search_value_semantically_equal(
@@ -1611,15 +1608,13 @@ CoreRootComparison CoreCompareRootCandidates(
     }
 
     if (candidate_value->outcome == CORE_OUTCOME_UNRESOLVED) {
-        int candidate_structural_rank = core_structural_rank(candidate_stats);
-        int incumbent_structural_rank = core_structural_rank(incumbent_stats);
-        if (candidate_structural_rank > incumbent_structural_rank) {
+        if (core_structure_dominates(candidate_stats, incumbent_stats)) {
             return core_root_comparison(
                 CORE_ROOT_COMPARISON_CANDIDATE,
                 CORE_ROOT_COMPARISON_STRUCTURAL_PROOF
             );
         }
-        if (candidate_structural_rank < incumbent_structural_rank) {
+        if (core_structure_dominates(incumbent_stats, candidate_stats)) {
             return core_root_comparison(
                 CORE_ROOT_COMPARISON_INCUMBENT,
                 CORE_ROOT_COMPARISON_STRUCTURAL_PROOF
@@ -4648,15 +4643,11 @@ static uint8_t core_remove_structurally_dominated_roots(
             }
             const CoreRootCandidateStats* candidate_stats =
                 &context->stats->root_candidates[candidate];
-            bool incumbent_is_deficient_unknown =
-                incumbent_stats->structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN &&
-                (incumbent_stats->post_move_length <= 0 ||
-                 incumbent_stats->relaxed_static_capacity < incumbent_stats->post_move_length);
-            bool candidate_dominates =
-                candidate_stats->structural_proof == CORE_STRUCTURAL_PROOF_SAFE &&
-                (incumbent_stats->structural_proof == CORE_STRUCTURAL_PROOF_UNSAFE ||
-                 incumbent_is_deficient_unknown);
-            if (candidate_dominates) {
+            /* The pairwise comparator applies this same relation only after
+             * exact/same-outcome checks. The global unresolved frontier may
+             * apply it to overlapping non-exact records: bounds limit search
+             * claims, not an independent structural proof. */
+            if (core_structure_dominates(candidate_stats, incumbent_stats)) {
                 dominated_mask |= (uint8_t)(1u << incumbent);
                 break;
             }
@@ -4848,26 +4839,26 @@ static bool core_select_root_candidate(
     if (context->stats->root_policy_applied == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY) {
         uint8_t before = active_mask;
         active_mask = core_remove_outcome_dominated_roots(context, active_mask);
-        if (active_mask != before) {
+        if (core_popcount4(before) > 1 && core_popcount4(active_mask) == 1) {
             decisive_reason = core_active_values_are_exact(context, before) ?
                 CORE_ROOT_COMPARISON_TERMINAL_OUTCOME : CORE_ROOT_COMPARISON_SEARCH_BOUND;
         }
 
         before = active_mask;
         active_mask = core_remove_structurally_dominated_roots(context, active_mask);
-        if (active_mask != before && decisive_reason == CORE_ROOT_COMPARISON_NOT_COMPARED) {
+        if (core_popcount4(before) > 1 && core_popcount4(active_mask) == 1) {
             decisive_reason = CORE_ROOT_COMPARISON_STRUCTURAL_PROOF;
         }
 
         before = active_mask;
         active_mask = core_keep_longest_exact_forced_losses(context, active_mask);
-        if (active_mask != before && decisive_reason == CORE_ROOT_COMPARISON_NOT_COMPARED) {
+        if (core_popcount4(before) > 1 && core_popcount4(active_mask) == 1) {
             decisive_reason = CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL;
         }
 
         before = active_mask;
         active_mask = core_remove_numerically_dominated_roots(context, active_mask);
-        if (active_mask != before && decisive_reason == CORE_ROOT_COMPARISON_NOT_COMPARED) {
+        if (core_popcount4(before) > 1 && core_popcount4(active_mask) == 1) {
             decisive_reason = core_numeric_layer_has_exact_heuristic_preference(
                 context,
                 before,
@@ -4877,7 +4868,7 @@ static bool core_select_root_candidate(
     } else {
         uint8_t before = active_mask;
         active_mask = core_keep_strict_numeric_maxima(context, active_mask);
-        if (active_mask != before) {
+        if (core_popcount4(before) > 1 && core_popcount4(active_mask) == 1) {
             const CoreSearchValue* selected_value = NULL;
             for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
                 if ((active_mask & (1u << move)) != 0) {

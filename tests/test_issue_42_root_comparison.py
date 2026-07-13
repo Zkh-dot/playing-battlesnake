@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from battlesnake.battlesnake_native import Board, Coord, Snake, minimax_diagnostics, reachable_space
+from benchmarks.scenarios import build_board, get_scenario
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "issue_41_branching_pocket_positions.json"
@@ -118,11 +119,11 @@ def test_t169_searches_deficient_root_then_structural_layer_selects_safe_root() 
     assert safe["minimax_outcome"] == "unresolved"
     assert result["root_candidates"][result["move"]]["structural_proof"] == "safe"
     assert result["move"] != "down"
-    assert result["root_comparison_reason"] == "structural_proof"
+    assert result["root_comparison_reason"] == "stable_direction"
     _assert_selected_value_is_coherent(result)
 
 
-def test_t169_default_weights_report_structural_frontier_and_ignore_move_order() -> None:
+def test_t169_default_weights_preserve_move_and_report_actual_decisive_layer() -> None:
     position = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["positions"][0]
     board = _board_from_fixture(position)
     snake_id = str(position["snake_id"])
@@ -139,8 +140,43 @@ def test_t169_default_weights_report_structural_frontier_and_ignore_move_order()
         for ordering in (False, True, False, True)
     ]
 
-    assert {result["root_comparison_reason"] for result in results} == {"structural_proof"}
-    assert len({_selected_tag(result) for result in results}) == 1
+    assert {result["move"] for result in results} == {"left"}
+    assert {result["root_comparison_reason"] for result in results} == {"previous_pv", "search_bound"}
+    assert {
+        tuple(
+            (move, candidate["minimax_bound"])
+            for move, candidate in result["root_candidates"].items()
+            if candidate["minimax_score"] is not None
+        )
+        for result in results
+    } == {
+        (("up", "exact"), ("down", "exact"), ("left", "upper")),
+        (("up", "upper"), ("down", "upper"), ("left", "exact")),
+    }
+    for result in results:
+        _assert_selected_value_is_coherent(result)
+
+
+def test_root_visitation_order_changes_tags_without_changing_semantic_result() -> None:
+    scenario = get_scenario("royale_hazard_ring_duel")
+    results = [
+        minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            time_budget_ms=5000,
+            fixed_depth=3,
+            enable_tt=False,
+            enable_move_ordering=ordering,
+        )
+        for ordering in (False, True)
+    ]
+
+    assert {result["move"] for result in results} == {"left"}
+    assert {result["root_comparison_reason"] for result in results} == {"heuristic_value"}
+    assert results[0]["root_candidates"]["up"]["minimax_bound"] == "exact"
+    assert results[1]["root_candidates"]["up"]["minimax_bound"] == "upper"
+    for result in results:
+        _assert_selected_value_is_coherent(result)
 
 
 def test_proved_win_precedes_structurally_safe_unresolved_root() -> None:

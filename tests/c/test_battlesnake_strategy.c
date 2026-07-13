@@ -123,10 +123,12 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
     );
     assert(pairwise.ordering == CORE_ROOT_COMPARISON_CANDIDATE);
     assert(pairwise.reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+    MoveDirection selected = MOVE_INVALID;
+    CoreSearchValue selected_value;
+    CoreRootComparisonReason reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
     for (size_t index = 0; index < sizeof(orders) / sizeof(orders[0]); index++) {
-        MoveDirection selected = MOVE_INVALID;
-        CoreSearchValue selected_value;
-        CoreRootComparisonReason reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+        selected = MOVE_INVALID;
+        reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
         assert(CoreSelectRootCandidateForTesting(
             board,
             "me",
@@ -150,9 +152,57 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
         assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
     }
 
-    MoveDirection selected = MOVE_INVALID;
-    CoreSearchValue selected_value;
-    CoreRootComparisonReason reason = CORE_ROOT_COMPARISON_STABLE_DIRECTION;
+    values[MOVE_UP] = root_test_value(CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_EXACT, -999000.0, 1);
+    values[MOVE_RIGHT] = values[MOVE_UP];
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 100.0, 0);
+    values[MOVE_LEFT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 0.0, 0);
+    const MoveDirection all_moves[] = {MOVE_UP, MOVE_DOWN, MOVE_LEFT, MOVE_RIGHT};
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+        all_moves,
+        4,
+        0x0f,
+        values,
+        candidates,
+        MOVE_DOWN,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_LEFT);
+    assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+
+    values[MOVE_LEFT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_UPPER, 0.0, 0);
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_LOWER, 0.0, 0);
+    pairwise = CoreCompareRootCandidates(
+        &values[MOVE_LEFT],
+        &candidates[MOVE_LEFT],
+        &values[MOVE_DOWN],
+        &candidates[MOVE_DOWN]
+    );
+    assert(pairwise.ordering == CORE_ROOT_COMPARISON_INCOMPARABLE);
+    assert(pairwise.reason == CORE_ROOT_COMPARISON_SEARCH_BOUND);
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+        orders[0],
+        2,
+        (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_LEFT)),
+        values,
+        candidates,
+        MOVE_DOWN,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_LEFT);
+    assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+
+    selected = MOVE_INVALID;
+    reason = CORE_ROOT_COMPARISON_STABLE_DIRECTION;
     assert(CoreSelectRootCandidateForTesting(
         board,
         "me",
@@ -170,6 +220,7 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
     assert(selected == MOVE_DOWN);
     assert(reason == CORE_ROOT_COMPARISON_NOT_COMPARED);
 
+    values[MOVE_LEFT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 0.0, 0);
     values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_WIN, CORE_VALUE_BOUND_EXACT, 999000.0, 1);
     assert(CoreSelectRootCandidateForTesting(
         board,
@@ -202,6 +253,7 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
     assert(BoardAddSnake(board, &you));
     values[MOVE_LEFT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 1.0, 0);
     values[MOVE_RIGHT] = values[MOVE_LEFT];
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 0.0, 0);
     candidates[MOVE_LEFT] = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 30, 5);
     candidates[MOVE_RIGHT] = candidates[MOVE_LEFT];
     pairwise = CoreCompareRootCandidates(
@@ -213,9 +265,9 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
     assert(pairwise.ordering == CORE_ROOT_COMPARISON_EQUAL);
     assert(pairwise.reason == CORE_ROOT_COMPARISON_NOT_COMPARED);
 
-    const MoveDirection tie_orders[][2] = {
-        {MOVE_LEFT, MOVE_RIGHT},
-        {MOVE_RIGHT, MOVE_LEFT},
+    const MoveDirection tie_orders[][3] = {
+        {MOVE_DOWN, MOVE_LEFT, MOVE_RIGHT},
+        {MOVE_RIGHT, MOVE_DOWN, MOVE_LEFT},
     };
     for (size_t index = 0; index < sizeof(tie_orders) / sizeof(tie_orders[0]); index++) {
         assert(CoreSelectRootCandidateForTesting(
@@ -223,8 +275,8 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
             "me",
             CORE_ROOT_POLICY_STRICT_MINIMAX,
             tie_orders[index],
-            2,
-            (uint8_t)((1u << MOVE_LEFT) | (1u << MOVE_RIGHT)),
+            3,
+            (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_LEFT) | (1u << MOVE_RIGHT)),
             values,
             candidates,
             MOVE_RIGHT,
@@ -482,6 +534,56 @@ static void test_root_comparison_applies_structural_lattice_to_unresolved_values
         CORE_ROOT_COMPARISON_CANDIDATE,
         CORE_ROOT_COMPARISON_STRUCTURAL_PROOF
     );
+}
+
+static void test_root_comparison_structural_relation_is_not_a_total_rank(void) {
+    const CoreRootCandidateStats structures[] = {
+        {.structural_proof = CORE_STRUCTURAL_PROOF_SAFE, .relaxed_static_capacity = 8,
+         .post_move_length = 4},
+        {.structural_proof = CORE_STRUCTURAL_PROOF_UNSAFE, .relaxed_static_capacity = 20,
+         .post_move_length = 4},
+        {.structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN, .relaxed_static_capacity = 3,
+         .post_move_length = 4},
+        {.structural_proof = CORE_STRUCTURAL_PROOF_UNKNOWN, .relaxed_static_capacity = 4,
+         .post_move_length = 4},
+    };
+    CoreSearchValue lower_heuristic = root_test_value(
+        CORE_OUTCOME_UNRESOLVED,
+        CORE_VALUE_BOUND_EXACT,
+        -100.0,
+        0
+    );
+    CoreSearchValue higher_heuristic = root_test_value(
+        CORE_OUTCOME_UNRESOLVED,
+        CORE_VALUE_BOUND_EXACT,
+        100.0,
+        0
+    );
+
+    for (size_t candidate = 0; candidate < 4; candidate++) {
+        for (size_t incumbent = 0; incumbent < 4; incumbent++) {
+            bool candidate_structurally_dominates = candidate == 0 &&
+                (incumbent == 1 || incumbent == 2);
+            bool incumbent_structurally_dominates = incumbent == 0 &&
+                (candidate == 1 || candidate == 2);
+            CoreRootComparison comparison = CoreCompareRootCandidates(
+                &lower_heuristic,
+                &structures[candidate],
+                &higher_heuristic,
+                &structures[incumbent]
+            );
+            if (candidate_structurally_dominates) {
+                assert(comparison.ordering == CORE_ROOT_COMPARISON_CANDIDATE);
+                assert(comparison.reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+            } else if (incumbent_structurally_dominates) {
+                assert(comparison.ordering == CORE_ROOT_COMPARISON_INCUMBENT);
+                assert(comparison.reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+            } else {
+                assert(comparison.ordering == CORE_ROOT_COMPARISON_INCUMBENT);
+                assert(comparison.reason == CORE_ROOT_COMPARISON_HEURISTIC_VALUE);
+            }
+        }
+    }
 }
 
 static void test_root_comparison_requires_non_exact_semantic_identity(void) {
@@ -1183,6 +1285,7 @@ int main(void) {
     test_root_comparison_uses_only_decisive_search_bounds();
     test_root_comparison_matches_expected_interval_table();
     test_root_comparison_applies_structural_lattice_to_unresolved_values();
+    test_root_comparison_structural_relation_is_not_a_total_rank();
     test_root_comparison_requires_non_exact_semantic_identity();
     test_root_comparison_prefers_later_exact_loss();
     test_root_comparison_uses_heuristic_only_after_structural_equality();
