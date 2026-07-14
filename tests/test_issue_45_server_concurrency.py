@@ -34,6 +34,18 @@ def _wait_for_port(port: int) -> None:
     raise RuntimeError(f"server did not listen on {port}")
 
 
+def _wait_for_server_ready(process: subprocess.Popen[bytes], server_log: object) -> None:
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"server exited during startup with status {process.returncode}")
+        startup_output = os.pread(server_log.fileno(), 4096, 0)
+        if b"battlesnake native server listening on" in startup_output:
+            return
+        time.sleep(0.02)
+    raise RuntimeError("server did not report listening readiness")
+
+
 def _start_server(
     port: int,
     server_log: object,
@@ -321,7 +333,7 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
         active: socket.socket | None = None
         queued: socket.socket | None = None
         try:
-            _wait_for_port(port)
+            _wait_for_server_ready(process, server_log)
             _wait_for_server_socket_count(process.pid, 1, exact=True)
 
             active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
