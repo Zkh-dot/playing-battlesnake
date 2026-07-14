@@ -230,6 +230,13 @@ static BsHttpResult bs_with_move_metadata(
     return result;
 }
 
+static BsHttpResult bs_with_route_metadata(BsHttpResult result, BsHttpRoute route) {
+    if (route == BS_HTTP_ROUTE_MOVE) {
+        result.is_move = true;
+    }
+    return result;
+}
+
 static ssize_t bs_find_crlf(const char* data, size_t len, size_t start) {
     if (data == 0 || start >= len) {
         return -1;
@@ -491,28 +498,39 @@ BsHttpResult BsHandleHttpRequestTimed(
     }
 
     BsHttpRequestView parsed = bs_parse_request(request, request_len);
+    BsHttpRoute route = bs_route_from_path(parsed.path);
     if (parsed.too_large) {
-        return bs_write_response(parsed.version, 413, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 413, empty_body, response, response_capacity),
+            route
+        );
     }
     if (parsed.malformed) {
         return bs_write_response(parsed.version, 400, empty_body, response, response_capacity);
     }
-    if (parsed.chunked_transfer) {
-        return bs_write_response(parsed.version, 501, empty_body, response, response_capacity);
-    }
-
-    BsHttpRoute route = bs_route_from_path(parsed.path);
     if (route == BS_HTTP_ROUTE_UNKNOWN) {
         return bs_write_response(parsed.version, 404, empty_body, response, response_capacity);
+    }
+    if (parsed.chunked_transfer) {
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 501, empty_body, response, response_capacity),
+            route
+        );
     }
 
     bool is_get = bs_slice_equals(parsed.method, "GET");
     bool is_post = bs_slice_equals(parsed.method, "POST");
     if ((route == BS_HTTP_ROUTE_INFO && !is_get) || (route != BS_HTTP_ROUTE_INFO && !is_post)) {
-        return bs_write_response(parsed.version, 405, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 405, empty_body, response, response_capacity),
+            route
+        );
     }
     if (!is_get && !is_post) {
-        return bs_write_response(parsed.version, 405, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 405, empty_body, response, response_capacity),
+            route
+        );
     }
 
     if (route == BS_HTTP_ROUTE_INFO) {
@@ -523,13 +541,22 @@ BsHttpResult BsHandleHttpRequestTimed(
     }
 
     if (!parsed.has_content_length) {
-        return bs_write_response(parsed.version, 400, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 400, empty_body, response, response_capacity),
+            route
+        );
     }
     if (parsed.body_offset > request_len || parsed.content_length > request_len - parsed.body_offset) {
-        return bs_write_response(parsed.version, 400, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 400, empty_body, response, response_capacity),
+            route
+        );
     }
     if (parsed.body_offset + parsed.content_length != request_len) {
-        return bs_write_response(parsed.version, 400, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 400, empty_body, response, response_capacity),
+            route
+        );
     }
 
     BsArenaReset(arena);
@@ -543,10 +570,16 @@ BsHttpResult BsHandleHttpRequestTimed(
         &game_request
     );
     if (parse_status == BS_JSON_MALFORMED || parse_status == BS_JSON_MISSING_REQUIRED) {
-        return bs_write_response(parsed.version, 400, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 400, empty_body, response, response_capacity),
+            route
+        );
     }
     if (parse_status != BS_JSON_OK || BsArenaHadOverflow(arena)) {
-        return bs_write_response(parsed.version, 500, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 500, empty_body, response, response_capacity),
+            route
+        );
     }
 
     struct timespec parsing_finished_at;

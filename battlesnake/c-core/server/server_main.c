@@ -5,9 +5,11 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -36,10 +38,19 @@ typedef struct {
 } BsWorkerContext;
 
 static volatile sig_atomic_t g_should_stop = 0;
+static volatile sig_atomic_t g_signal_write_fd = -1;
 
 static void handle_signal(int signal_number) {
     (void)signal_number;
+    int saved_errno = errno;
     g_should_stop = 1;
+    int write_fd = (int)g_signal_write_fd;
+    if (write_fd >= 0) {
+        const unsigned char wake_byte = 1;
+        ssize_t wake_status = write(write_fd, &wake_byte, sizeof(wake_byte));
+        (void)wake_status;
+    }
+    errno = saved_errno;
 }
 
 static bool set_signal_mask(int how, const sigset_t* mask, const char* failure_message) {
@@ -141,6 +152,41 @@ static void apply_socket_timeout(int fd, int timeout_ms) {
     (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
+static bool set_nonblocking_cloexec(int fd) {
+    int status_flags = fcntl(fd, F_GETFL);
+    if (status_flags < 0 || fcntl(fd, F_SETFL, status_flags | O_NONBLOCK) < 0) {
+        return false;
+    }
+    int descriptor_flags = fcntl(fd, F_GETFD);
+    if (descriptor_flags < 0 || fcntl(fd, F_SETFD, descriptor_flags | FD_CLOEXEC) < 0) {
+        return false;
+    }
+    return true;
+}
+
+static bool create_wakeup_pipe(int wakeup_pipe[2]) {
+    wakeup_pipe[0] = -1;
+    wakeup_pipe[1] = -1;
+    if (pipe(wakeup_pipe) != 0) {
+        return false;
+    }
+    if (!set_nonblocking_cloexec(wakeup_pipe[0])
+        || !set_nonblocking_cloexec(wakeup_pipe[1])) {
+        close(wakeup_pipe[0]);
+        close(wakeup_pipe[1]);
+        wakeup_pipe[0] = -1;
+        wakeup_pipe[1] = -1;
+        return false;
+    }
+    return true;
+}
+
+static void drain_wakeup_pipe(int read_fd) {
+    unsigned char buffer[64];
+    while (read(read_fd, buffer, sizeof(buffer)) > 0) {
+    }
+}
+
 static double elapsed_ms(struct timespec start, struct timespec end) {
     time_t seconds = end.tv_sec - start.tv_sec;
     long nanoseconds = end.tv_nsec - start.tv_nsec;
@@ -203,8 +249,8 @@ static void log_server_overload(void) {
 static BsHttpResult handle_connection(
     int client_fd,
     const BsServerConfig* config,
-    struct timespec accepted_at,
-    struct timespec worker_started_at,
+    struct timespec request_started_at,
+    bool request_started_at_valid,
     double* out_handler_ms
 ) {
     BsHttpResult result = {0};
@@ -253,10 +299,15 @@ static BsHttpResult handle_connection(
 
     struct timespec handler_started_at;
     if (clock_gettime(CLOCK_MONOTONIC, &handler_started_at) != 0) {
-        handler_started_at = worker_started_at;
+        handler_started_at = request_started_at_valid
+            ? request_started_at
+            : (struct timespec){0};
+    }
+    if (!request_started_at_valid) {
+        request_started_at = handler_started_at;
     }
     BsHttpRequestContext request_context = {
-        .elapsed_before_handle_ms = elapsed_ms_ceil_saturated(accepted_at, handler_started_at),
+        .elapsed_before_handle_ms = elapsed_ms_ceil_saturated(request_started_at, handler_started_at),
     };
     result = BsHandleHttpRequestTimed(
         request,
@@ -285,37 +336,48 @@ static void* worker_main(void* argument) {
     const BsWorkerContext* context = (const BsWorkerContext*)argument;
     BsConnectionJob job;
     while (BsConnectionQueuePop(context->queue, &job)) {
-        struct timespec worker_started_at;
-        if (clock_gettime(CLOCK_MONOTONIC, &worker_started_at) != 0) {
-            worker_started_at = job.accepted_at;
+        struct timespec worker_started_at = {0};
+        bool worker_started_at_valid = clock_gettime(
+            CLOCK_MONOTONIC,
+            &worker_started_at
+        ) == 0;
+        struct timespec request_started_at = job.accepted_at;
+        bool request_started_at_valid = job.accepted_at_valid;
+        if (!request_started_at_valid && worker_started_at_valid) {
+            request_started_at = worker_started_at;
+            request_started_at_valid = true;
         }
         double handler_ms = 0.0;
         BsHttpResult result = handle_connection(
             job.client_fd,
             context->config,
-            job.accepted_at,
-            worker_started_at,
+            request_started_at,
+            request_started_at_valid,
             &handler_ms
         );
-        struct timespec completed_at;
-        if (clock_gettime(CLOCK_MONOTONIC, &completed_at) != 0) {
-            completed_at = worker_started_at;
-        }
+        struct timespec completed_at = {0};
+        bool completed_at_valid = clock_gettime(CLOCK_MONOTONIC, &completed_at) == 0;
         close(job.client_fd);
 
         if (result.is_move) {
+            double queue_ms = job.accepted_at_valid && worker_started_at_valid
+                ? elapsed_ms(job.accepted_at, worker_started_at)
+                : 0.0;
+            double total_ms = completed_at_valid && request_started_at_valid
+                ? elapsed_ms(request_started_at, completed_at)
+                : 0.0;
             log_move_request(
                 &result,
-                elapsed_ms(job.accepted_at, worker_started_at),
+                queue_ms,
                 handler_ms,
-                elapsed_ms(job.accepted_at, completed_at)
+                total_ms
             );
         }
     }
     return 0;
 }
 
-static void reject_overloaded_connection(int client_fd) {
+static void reject_overloaded_connection(int client_fd, const BsServerConfig* config) {
     static const char response[] =
         "HTTP/1.1 503 Service Unavailable\r\n"
         "Content-Type: application/json\r\n"
@@ -323,6 +385,7 @@ static void reject_overloaded_connection(int client_fd) {
         "Content-Length: 2\r\n"
         "\r\n"
         "{}";
+    apply_socket_timeout(client_fd, config->io_timeout_ms);
     (void)write_all(client_fd, response, sizeof(response) - 1);
     close(client_fd);
     log_server_overload();
@@ -351,6 +414,10 @@ static int create_listen_socket(int port) {
         return -1;
     }
     if (listen(fd, 128) < 0) {
+        close(fd);
+        return -1;
+    }
+    if (!set_nonblocking_cloexec(fd)) {
         close(fd);
         return -1;
     }
@@ -437,6 +504,21 @@ int main(void) {
         return 1;
     }
 
+    int wakeup_pipe[2];
+    if (!create_wakeup_pipe(wakeup_pipe)) {
+        perror("failed to create signal wakeup pipe");
+        close(listen_fd);
+        BsConnectionQueueStop(&queue);
+        for (int i = 0; i < created_workers; i++) {
+            pthread_join(workers[i], 0);
+        }
+        free(workers);
+        BsConnectionQueueDestroy(&queue);
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
+        return 1;
+    }
+    g_signal_write_fd = wakeup_pipe[1];
+
     sigset_t main_signal_mask = previous_signal_mask;
     sigdelset(&main_signal_mask, SIGINT);
     sigdelset(&main_signal_mask, SIGTERM);
@@ -445,6 +527,9 @@ int main(void) {
             &main_signal_mask,
             "failed to unblock termination signals on main thread"
         )) {
+        g_signal_write_fd = -1;
+        close(wakeup_pipe[0]);
+        close(wakeup_pipe[1]);
         close(listen_fd);
         BsConnectionQueueStop(&queue);
         for (int i = 0; i < created_workers; i++) {
@@ -459,24 +544,74 @@ int main(void) {
     printf("battlesnake native server listening on 0.0.0.0:%d\n", config.port);
     fflush(stdout);
 
+    struct pollfd poll_fds[2] = {
+        {.fd = listen_fd, .events = POLLIN},
+        {.fd = wakeup_pipe[0], .events = POLLIN},
+    };
+    bool server_failed = false;
     while (!g_should_stop) {
-        int client_fd = accept(listen_fd, NULL, NULL);
-        if (client_fd < 0) {
+        int poll_status = poll(poll_fds, 2, -1);
+        if (poll_status < 0) {
             if (errno == EINTR) {
                 continue;
             }
-            perror("accept failed");
+            perror("server poll failed");
+            server_failed = true;
             break;
         }
-        BsConnectionJob job = {.client_fd = client_fd};
-        if (clock_gettime(CLOCK_MONOTONIC, &job.accepted_at) != 0) {
-            job.accepted_at = (struct timespec){0};
+
+        if ((poll_fds[1].revents & POLLIN) != 0) {
+            drain_wakeup_pipe(wakeup_pipe[0]);
         }
-        if (!BsConnectionQueueTryPush(&queue, job)) {
-            reject_overloaded_connection(client_fd);
+        if (g_should_stop) {
+            break;
+        }
+        if ((poll_fds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            fputs("signal wakeup pipe poll failure\n", stderr);
+            server_failed = true;
+            break;
+        }
+        if ((poll_fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            fputs("listen socket poll failure\n", stderr);
+            server_failed = true;
+            break;
+        }
+        if ((poll_fds[0].revents & POLLIN) == 0) {
+            continue;
+        }
+
+        while (!g_should_stop) {
+            int client_fd = accept(listen_fd, NULL, NULL);
+            if (client_fd < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+                perror("accept failed");
+                server_failed = true;
+                g_should_stop = 1;
+                break;
+            }
+            BsConnectionJob job = {.client_fd = client_fd};
+            job.accepted_at_valid = clock_gettime(CLOCK_MONOTONIC, &job.accepted_at) == 0;
+            if (!BsConnectionQueueTryPush(&queue, job)) {
+                reject_overloaded_connection(client_fd, &config);
+            }
         }
     }
 
+    bool blocked_for_cleanup = set_signal_mask(
+        SIG_BLOCK,
+        &termination_signals,
+        "failed to block termination signals for cleanup"
+    );
+    g_signal_write_fd = -1;
+    if (blocked_for_cleanup) {
+        close(wakeup_pipe[0]);
+        close(wakeup_pipe[1]);
+    }
     close(listen_fd);
     BsConnectionQueueStop(&queue);
     for (int i = 0; i < created_workers; i++) {
@@ -490,5 +625,5 @@ int main(void) {
         "failed to restore signal mask"
     );
     puts("battlesnake native server stopped");
-    return restored_signal_mask ? 0 : 1;
+    return !server_failed && blocked_for_cleanup && restored_signal_mask ? 0 : 1;
 }

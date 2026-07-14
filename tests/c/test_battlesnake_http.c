@@ -258,6 +258,8 @@ static void test_wrong_method_returns_405(void) {
     assert(BsArenaInit(&arena, 65536));
     BsHttpResult result = BsHandleHttpRequest(request, strlen(request), &arena, &config, response, sizeof(response));
     assert(result.status_code == 405);
+    assert(result.is_move);
+    assert(result.game_timeout_ms == 0);
     assert(strstr(response, "HTTP/1.1 405 Method Not Allowed") != 0);
     BsArenaFree(&arena);
 }
@@ -332,6 +334,8 @@ static void test_malformed_json_returns_400(void) {
     request_from_body_with_headers(request, sizeof(request), "POST", "/move", "Content-Length", 0, MALFORMED_BODY);
     BsHttpResult move_result = BsHandleHttpRequest(request, strlen(request), &arena, &config, response, sizeof(response));
     assert(move_result.status_code == 400);
+    assert(move_result.is_move);
+    assert(move_result.game_timeout_ms == 0);
     assert(strstr(response, "HTTP/1.1 400 Bad Request") != 0);
 
     BsArenaFree(&arena);

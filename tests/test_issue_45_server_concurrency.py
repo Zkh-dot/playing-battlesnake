@@ -33,7 +33,11 @@ def _wait_for_port(port: int) -> None:
     raise RuntimeError(f"server did not listen on {port}")
 
 
-def _start_server(port: int, server_log: object) -> subprocess.Popen[bytes]:
+def _start_server(
+    port: int,
+    server_log: object,
+    **environment_overrides: str,
+) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
         ["build/battlesnake-server"],
         env={
@@ -42,6 +46,7 @@ def _start_server(port: int, server_log: object) -> subprocess.Popen[bytes]:
             "BATTLESNAKE_WORKERS": "2",
             "BATTLESNAKE_QUEUE_CAPACITY": "8",
             "BATTLESNAKE_SEARCH_BUDGET_MS": "400",
+            **environment_overrides,
         },
         stdout=server_log,
         stderr=subprocess.STDOUT,
@@ -66,6 +71,33 @@ def _blocked_signals(pid: int, tid: int) -> int:
             if line.startswith("SigBlk:"):
                 return int(line.split()[1], 16)
     raise AssertionError(f"SigBlk missing from {status}")
+
+
+def _wait_for_server_socket_count(pid: int, expected: int, *, exact: bool = False) -> None:
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        fd_dir = f"/proc/{pid}/fd"
+        socket_count = 0
+        for entry in os.listdir(fd_dir):
+            try:
+                target = os.readlink(os.path.join(fd_dir, entry))
+            except FileNotFoundError:
+                continue
+            socket_count += target.startswith("socket:")
+        matches_expected = socket_count == expected if exact else socket_count >= expected
+        if matches_expected:
+            return
+        time.sleep(0.005)
+    raise AssertionError(f"server did not reach {expected} open sockets")
+
+
+def _receive_until_close(sock: socket.socket) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        chunk = sock.recv(4096)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
 
 
 def _move_request(body: str) -> bytes:
@@ -160,16 +192,92 @@ def test_worker_threads_block_termination_signals() -> None:
 
 def test_idle_server_exits_promptly_on_sigterm() -> None:
     subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    for _ in range(20):
+        port = _free_port()
+        with tempfile.TemporaryFile(mode="w+") as server_log:
+            process = _start_server(port, server_log)
+            try:
+                _wait_for_port(port)
+                started = time.monotonic()
+                process.terminate()
+                return_code = process.wait(timeout=1.0)
+                elapsed_ms = (time.monotonic() - started) * 1000.0
+                assert return_code == 0
+                assert elapsed_ms < 1000.0
+            finally:
+                _stop_server(process)
+
+
+def test_recognized_malformed_move_emits_one_telemetry_line() -> None:
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
     port = _free_port()
+    request = (
+        b"POST /move HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: 1\r\n\r\n"
+        b"{"
+    )
     with tempfile.TemporaryFile(mode="w+") as server_log:
         process = _start_server(port, server_log)
         try:
             _wait_for_port(port)
-            started = time.monotonic()
-            process.terminate()
-            return_code = process.wait(timeout=1.0)
-            elapsed_ms = (time.monotonic() - started) * 1000.0
-            assert return_code == 0
-            assert elapsed_ms < 1000.0
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5) as sock:
+                sock.settimeout(1.0)
+                sock.sendall(request)
+                response = _receive_until_close(sock)
+            assert response.startswith(b"HTTP/1.1 400 Bad Request\r\n")
         finally:
+            _stop_server(process)
+
+        server_log.seek(0)
+        events = [json.loads(line) for line in server_log if line.startswith("{")]
+        move_events = [event for event in events if event.get("event") == "move_request"]
+        assert len(move_events) == 1
+        assert move_events[0]["status"] == 400
+        assert move_events[0]["timeout_ms"] == 0
+
+
+def test_shutdown_drains_active_and_queued_connections() -> None:
+    if not os.path.isdir("/proc/self/task"):
+        pytest.skip("Linux /proc process state is required")
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(
+            port,
+            server_log,
+            BATTLESNAKE_WORKERS="1",
+            BATTLESNAKE_QUEUE_CAPACITY="2",
+            BATTLESNAKE_IO_TIMEOUT_MS="200",
+        )
+        active: socket.socket | None = None
+        queued: socket.socket | None = None
+        try:
+            _wait_for_port(port)
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
+            active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            queued = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            active.settimeout(2.0)
+            queued.settimeout(2.0)
+            active.sendall(b"POST /move HTTP/1.1\r\nHost: active\r\n")
+            queued.sendall(b"POST /move HTTP/1.1\r\nHost: queued\r\n")
+            _wait_for_server_socket_count(process.pid, 3)
+
+            process.terminate()
+            active_response = _receive_until_close(active)
+            queued_response = _receive_until_close(queued)
+            return_code = process.wait(timeout=1.0)
+
+            assert active_response.startswith(b"HTTP/1.1 400 Bad Request\r\n")
+            assert queued_response.startswith(b"HTTP/1.1 400 Bad Request\r\n")
+            assert return_code == 0
+            assert not os.path.exists(f"/proc/{process.pid}")
+            with pytest.raises(OSError):
+                socket.create_connection(("127.0.0.1", port), timeout=0.1)
+        finally:
+            if active is not None:
+                active.close()
+            if queued is not None:
+                queued.close()
             _stop_server(process)

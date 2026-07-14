@@ -27,16 +27,25 @@ static void* pop_in_thread(void* argument) {
 }
 
 static void wait_for_waiting_consumer(BsConnectionQueue* queue) {
-    for (int attempt = 0; attempt < 100000; attempt++) {
+    struct timespec started_at;
+    assert(clock_gettime(CLOCK_MONOTONIC, &started_at) == 0);
+    while (true) {
         assert(pthread_mutex_lock(&queue->mutex) == 0);
         size_t waiting_consumers = queue->waiting_consumers;
         assert(pthread_mutex_unlock(&queue->mutex) == 0);
         if (waiting_consumers > 0) {
             return;
         }
+        struct timespec now;
+        assert(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+        time_t seconds = now.tv_sec - started_at.tv_sec;
+        long nanoseconds = now.tv_nsec - started_at.tv_nsec;
+        if (nanoseconds < 0) {
+            seconds--;
+        }
+        assert(seconds < 2 && "consumer did not enter the queue wait state");
         sched_yield();
     }
-    assert(!"consumer did not enter the queue wait state");
 }
 
 static void wait_for_flag(PopThreadContext* context, bool* flag) {
@@ -62,6 +71,7 @@ static BsConnectionJob job_with_fd(int fd) {
     return (BsConnectionJob){
         .client_fd = fd,
         .accepted_at = {.tv_sec = fd, .tv_nsec = fd * 1000},
+        .accepted_at_valid = true,
     };
 }
 
@@ -77,8 +87,15 @@ static void test_fifo_and_capacity(void) {
     assert(BsConnectionQueuePop(&queue, &popped));
     assert(popped.client_fd == 11);
     assert(popped.accepted_at.tv_sec == 11);
+    assert(popped.accepted_at_valid);
+    BsConnectionJob invalid_time_job = job_with_fd(33);
+    invalid_time_job.accepted_at_valid = false;
+    assert(BsConnectionQueueTryPush(&queue, invalid_time_job));
     assert(BsConnectionQueuePop(&queue, &popped));
     assert(popped.client_fd == 22);
+    assert(BsConnectionQueuePop(&queue, &popped));
+    assert(popped.client_fd == 33);
+    assert(!popped.accepted_at_valid);
 
     BsConnectionQueueStop(&queue);
     assert(!BsConnectionQueuePop(&queue, &popped));

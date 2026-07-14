@@ -8,6 +8,7 @@
 typedef struct {
     int client_fd;
     struct timespec accepted_at;
+    bool accepted_at_valid;
 } BsConnectionJob;
 
 typedef struct {
