@@ -1,10 +1,13 @@
 #include "../../battlesnake/c-core/server/connection_queue.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef struct {
     BsConnectionQueue* queue;
@@ -79,12 +82,15 @@ static void test_fifo_and_capacity(void) {
     BsConnectionQueue queue;
     assert(BsConnectionQueueInit(&queue, 2));
 
+    assert(BsConnectionQueueHasCapacity(&queue));
     assert(BsConnectionQueueTryPush(&queue, job_with_fd(11)));
     assert(BsConnectionQueueTryPush(&queue, job_with_fd(22)));
+    assert(!BsConnectionQueueHasCapacity(&queue));
     assert(!BsConnectionQueueTryPush(&queue, job_with_fd(33)));
 
     BsConnectionJob popped;
     assert(BsConnectionQueuePop(&queue, &popped));
+    assert(BsConnectionQueueHasCapacity(&queue));
     assert(popped.client_fd == 11);
     assert(popped.accepted_at.tv_sec == 11);
     assert(popped.accepted_at_valid);
@@ -98,6 +104,7 @@ static void test_fifo_and_capacity(void) {
     assert(!popped.accepted_at_valid);
 
     BsConnectionQueueStop(&queue);
+    assert(!BsConnectionQueueHasCapacity(&queue));
     assert(!BsConnectionQueuePop(&queue, &popped));
     BsConnectionQueueDestroy(&queue);
 }
@@ -149,9 +156,28 @@ static void test_stop_drains_jobs_then_wakes_blocked_pop(void) {
     BsConnectionQueueDestroy(&queue);
 }
 
+static void test_stop_and_close_discards_existing_jobs(void) {
+    int descriptors[2];
+    assert(pipe(descriptors) == 0);
+
+    BsConnectionQueue queue;
+    assert(BsConnectionQueueInit(&queue, 1));
+    assert(BsConnectionQueueTryPush(&queue, job_with_fd(descriptors[0])));
+
+    BsConnectionQueueStopAndClose(&queue);
+    assert(fcntl(descriptors[0], F_GETFD) == -1);
+    assert(errno == EBADF);
+
+    BsConnectionJob popped;
+    assert(!BsConnectionQueuePop(&queue, &popped));
+    close(descriptors[1]);
+    BsConnectionQueueDestroy(&queue);
+}
+
 int main(void) {
     test_fifo_and_capacity();
     test_blocked_pop_wakes_after_push();
     test_stop_drains_jobs_then_wakes_blocked_pop();
+    test_stop_and_close_discards_existing_jobs();
     return 0;
 }

@@ -32,6 +32,13 @@ BATTLESNAKE_PORT=8000
 BATTLESNAKE_SEARCH_BUDGET_MS=400
 ```
 
+Native HTTP concurrency is bounded by `BATTLESNAKE_WORKERS` (default `2`) and
+`BATTLESNAKE_QUEUE_CAPACITY` (default `8`). Overload responses use one more
+rejection worker than request workers, capped at `64`, and a rejection queue
+with the same configured capacity. If both queues are full, the server pauses
+`accept()` until a worker signals capacity; connections remain in the kernel
+backlog rather than being accepted and silently reset.
+
 Routing behavior:
 
 - standard games with exactly two snakes use duel minimax;

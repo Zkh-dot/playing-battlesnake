@@ -35,7 +35,30 @@ typedef struct {
 typedef struct {
     BsConnectionQueue* queue;
     const BsServerConfig* config;
+    int capacity_write_fd;
 } BsWorkerContext;
+
+typedef struct BsRejectionPool BsRejectionPool;
+
+typedef struct {
+    BsRejectionPool* pool;
+    int worker_index;
+} BsRejectionWorkerContext;
+
+struct BsRejectionPool {
+    BsConnectionQueue queue;
+    const BsServerConfig* config;
+    pthread_t* workers;
+    BsRejectionWorkerContext* contexts;
+    pthread_mutex_t active_mutex;
+    int* active_fds;
+    int worker_count;
+    int capacity_write_fd;
+    int created_workers;
+    bool queue_initialized;
+    bool mutex_initialized;
+    bool stopping;
+};
 
 static volatile sig_atomic_t g_should_stop = 0;
 static volatile sig_atomic_t g_signal_write_fd = -1;
@@ -187,6 +210,12 @@ static void drain_wakeup_pipe(int read_fd) {
     }
 }
 
+static void notify_capacity(int write_fd) {
+    const unsigned char wake_byte = 1;
+    ssize_t status = write(write_fd, &wake_byte, sizeof(wake_byte));
+    (void)status;
+}
+
 static double elapsed_ms(struct timespec start, struct timespec end) {
     time_t seconds = end.tv_sec - start.tv_sec;
     long nanoseconds = end.tv_nsec - start.tv_nsec;
@@ -336,6 +365,7 @@ static void* worker_main(void* argument) {
     const BsWorkerContext* context = (const BsWorkerContext*)argument;
     BsConnectionJob job;
     while (BsConnectionQueuePop(context->queue, &job)) {
+        notify_capacity(context->capacity_write_fd);
         struct timespec worker_started_at = {0};
         bool worker_started_at_valid = clock_gettime(
             CLOCK_MONOTONIC,
@@ -377,7 +407,7 @@ static void* worker_main(void* argument) {
     return 0;
 }
 
-static void reject_overloaded_connection(int client_fd, const BsServerConfig* config) {
+static void finish_overloaded_connection(int client_fd, const BsServerConfig* config) {
     static const char response[] =
         "HTTP/1.1 503 Service Unavailable\r\n"
         "Content-Type: application/json\r\n"
@@ -419,7 +449,129 @@ static void reject_overloaded_connection(int client_fd, const BsServerConfig* co
         break;
     }
     close(client_fd);
+}
+
+static void* rejection_worker_main(void* argument) {
+    BsRejectionWorkerContext* context = (BsRejectionWorkerContext*)argument;
+    BsRejectionPool* pool = context->pool;
+    BsConnectionJob job;
+    while (BsConnectionQueuePop(&pool->queue, &job)) {
+        notify_capacity(pool->capacity_write_fd);
+        pthread_mutex_lock(&pool->active_mutex);
+        if (pool->stopping) {
+            pthread_mutex_unlock(&pool->active_mutex);
+            close(job.client_fd);
+            continue;
+        }
+        pool->active_fds[context->worker_index] = job.client_fd;
+        pthread_mutex_unlock(&pool->active_mutex);
+
+        finish_overloaded_connection(job.client_fd, pool->config);
+
+        pthread_mutex_lock(&pool->active_mutex);
+        pool->active_fds[context->worker_index] = -1;
+        pthread_mutex_unlock(&pool->active_mutex);
+    }
+    return 0;
+}
+
+static void rejection_pool_stop(BsRejectionPool* pool) {
+    if (pool == NULL || !pool->queue_initialized) {
+        return;
+    }
+    if (pool->mutex_initialized) {
+        pthread_mutex_lock(&pool->active_mutex);
+        pool->stopping = true;
+        for (int i = 0; i < pool->worker_count; i++) {
+            if (pool->active_fds[i] >= 0) {
+                (void)shutdown(pool->active_fds[i], SHUT_RDWR);
+            }
+        }
+        pthread_mutex_unlock(&pool->active_mutex);
+    }
+    BsConnectionQueueStopAndClose(&pool->queue);
+    for (int i = 0; i < pool->created_workers; i++) {
+        pthread_join(pool->workers[i], 0);
+    }
+    if (pool->mutex_initialized) {
+        pthread_mutex_destroy(&pool->active_mutex);
+    }
+    BsConnectionQueueDestroy(&pool->queue);
+    free(pool->active_fds);
+    free(pool->contexts);
+    free(pool->workers);
+    pool->active_fds = NULL;
+    pool->contexts = NULL;
+    pool->workers = NULL;
+    pool->created_workers = 0;
+    pool->mutex_initialized = false;
+    pool->queue_initialized = false;
+}
+
+static bool rejection_pool_init(
+    BsRejectionPool* pool,
+    const BsServerConfig* config,
+    int capacity_write_fd
+) {
+    memset(pool, 0, sizeof(*pool));
+    pool->config = config;
+    pool->capacity_write_fd = capacity_write_fd;
+    /* Scale rejection work from the configured request workers. The extra
+     * worker keeps one write-open rejected peer from serializing overloads. */
+    pool->worker_count = config->worker_count < 64 ? config->worker_count + 1 : 64;
+    pool->workers = calloc((size_t)pool->worker_count, sizeof(*pool->workers));
+    pool->contexts = calloc((size_t)pool->worker_count, sizeof(*pool->contexts));
+    pool->active_fds = malloc((size_t)pool->worker_count * sizeof(*pool->active_fds));
+    if (pool->workers == NULL || pool->contexts == NULL || pool->active_fds == NULL) {
+        free(pool->active_fds);
+        free(pool->contexts);
+        free(pool->workers);
+        return false;
+    }
+    for (int i = 0; i < pool->worker_count; i++) {
+        pool->active_fds[i] = -1;
+    }
+    if (!BsConnectionQueueInit(&pool->queue, config->queue_capacity)) {
+        free(pool->active_fds);
+        free(pool->contexts);
+        free(pool->workers);
+        return false;
+    }
+    pool->queue_initialized = true;
+    if (pthread_mutex_init(&pool->active_mutex, 0) != 0) {
+        BsConnectionQueueDestroy(&pool->queue);
+        free(pool->active_fds);
+        free(pool->contexts);
+        free(pool->workers);
+        pool->queue_initialized = false;
+        return false;
+    }
+    pool->mutex_initialized = true;
+
+    for (; pool->created_workers < pool->worker_count; pool->created_workers++) {
+        int index = pool->created_workers;
+        pool->contexts[index] = (BsRejectionWorkerContext){
+            .pool = pool,
+            .worker_index = index,
+        };
+        int create_status = pthread_create(
+            &pool->workers[index],
+            0,
+            rejection_worker_main,
+            &pool->contexts[index]
+        );
+        if (create_status != 0) {
+            errno = create_status;
+            rejection_pool_stop(pool);
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool rejection_pool_submit(BsRejectionPool* pool, BsConnectionJob job) {
     log_server_overload();
+    return BsConnectionQueueTryPush(&pool->queue, job);
 }
 
 static int create_listen_socket(int port) {
@@ -492,14 +644,28 @@ int main(void) {
         return 1;
     }
 
+    int capacity_pipe[2];
+    if (!create_wakeup_pipe(capacity_pipe)) {
+        perror("failed to create capacity wakeup pipe");
+        BsConnectionQueueDestroy(&queue);
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
+        return 1;
+    }
+
     pthread_t* workers = (pthread_t*)calloc((size_t)config.worker_count, sizeof(*workers));
     if (workers == 0) {
+        close(capacity_pipe[0]);
+        close(capacity_pipe[1]);
         BsConnectionQueueDestroy(&queue);
         fputs("failed to allocate server workers\n", stderr);
         set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
     }
-    BsWorkerContext worker_context = {.queue = &queue, .config = &config};
+    BsWorkerContext worker_context = {
+        .queue = &queue,
+        .config = &config,
+        .capacity_write_fd = capacity_pipe[1],
+    };
     int created_workers = 0;
     for (; created_workers < config.worker_count; created_workers++) {
         int create_status = pthread_create(
@@ -516,20 +682,40 @@ int main(void) {
                 pthread_join(workers[i], 0);
             }
             free(workers);
+            close(capacity_pipe[0]);
+            close(capacity_pipe[1]);
             BsConnectionQueueDestroy(&queue);
             set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
             return 1;
         }
     }
 
-    int listen_fd = create_listen_socket(config.port);
-    if (listen_fd < 0) {
-        perror("failed to start battlesnake native server");
+    BsRejectionPool rejection_pool;
+    if (!rejection_pool_init(&rejection_pool, &config, capacity_pipe[1])) {
+        fputs("failed to initialize overload rejection pool\n", stderr);
         BsConnectionQueueStop(&queue);
         for (int i = 0; i < created_workers; i++) {
             pthread_join(workers[i], 0);
         }
         free(workers);
+        close(capacity_pipe[0]);
+        close(capacity_pipe[1]);
+        BsConnectionQueueDestroy(&queue);
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
+        return 1;
+    }
+
+    int listen_fd = create_listen_socket(config.port);
+    if (listen_fd < 0) {
+        perror("failed to start battlesnake native server");
+        rejection_pool_stop(&rejection_pool);
+        BsConnectionQueueStop(&queue);
+        for (int i = 0; i < created_workers; i++) {
+            pthread_join(workers[i], 0);
+        }
+        free(workers);
+        close(capacity_pipe[0]);
+        close(capacity_pipe[1]);
         BsConnectionQueueDestroy(&queue);
         set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
@@ -539,11 +725,14 @@ int main(void) {
     if (!create_wakeup_pipe(wakeup_pipe)) {
         perror("failed to create signal wakeup pipe");
         close(listen_fd);
+        rejection_pool_stop(&rejection_pool);
         BsConnectionQueueStop(&queue);
         for (int i = 0; i < created_workers; i++) {
             pthread_join(workers[i], 0);
         }
         free(workers);
+        close(capacity_pipe[0]);
+        close(capacity_pipe[1]);
         BsConnectionQueueDestroy(&queue);
         set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
@@ -562,11 +751,14 @@ int main(void) {
         close(wakeup_pipe[0]);
         close(wakeup_pipe[1]);
         close(listen_fd);
+        rejection_pool_stop(&rejection_pool);
         BsConnectionQueueStop(&queue);
         for (int i = 0; i < created_workers; i++) {
             pthread_join(workers[i], 0);
         }
         free(workers);
+        close(capacity_pipe[0]);
+        close(capacity_pipe[1]);
         BsConnectionQueueDestroy(&queue);
         set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
@@ -575,13 +767,17 @@ int main(void) {
     printf("battlesnake native server listening on 0.0.0.0:%d\n", config.port);
     fflush(stdout);
 
-    struct pollfd poll_fds[2] = {
+    struct pollfd poll_fds[3] = {
         {.fd = listen_fd, .events = POLLIN},
         {.fd = wakeup_pipe[0], .events = POLLIN},
+        {.fd = capacity_pipe[0], .events = POLLIN},
     };
     bool server_failed = false;
     while (!g_should_stop) {
-        int poll_status = poll(poll_fds, 2, -1);
+        bool can_accept = BsConnectionQueueHasCapacity(&queue)
+            || BsConnectionQueueHasCapacity(&rejection_pool.queue);
+        poll_fds[0].events = can_accept ? POLLIN : 0;
+        int poll_status = poll(poll_fds, 3, -1);
         if (poll_status < 0) {
             if (errno == EINTR) {
                 continue;
@@ -594,11 +790,19 @@ int main(void) {
         if ((poll_fds[1].revents & POLLIN) != 0) {
             drain_wakeup_pipe(wakeup_pipe[0]);
         }
+        if ((poll_fds[2].revents & POLLIN) != 0) {
+            drain_wakeup_pipe(capacity_pipe[0]);
+        }
         if (g_should_stop) {
             break;
         }
         if ((poll_fds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
             fputs("signal wakeup pipe poll failure\n", stderr);
+            server_failed = true;
+            break;
+        }
+        if ((poll_fds[2].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            fputs("capacity wakeup pipe poll failure\n", stderr);
             server_failed = true;
             break;
         }
@@ -612,6 +816,10 @@ int main(void) {
         }
 
         while (!g_should_stop) {
+            if (!BsConnectionQueueHasCapacity(&queue)
+                && !BsConnectionQueueHasCapacity(&rejection_pool.queue)) {
+                break;
+            }
             int client_fd = accept(listen_fd, NULL, NULL);
             if (client_fd < 0) {
                 if (errno == EINTR) {
@@ -628,7 +836,9 @@ int main(void) {
             BsConnectionJob job = {.client_fd = client_fd};
             job.accepted_at_valid = clock_gettime(CLOCK_MONOTONIC, &job.accepted_at) == 0;
             if (!BsConnectionQueueTryPush(&queue, job)) {
-                reject_overloaded_connection(client_fd, &config);
+                if (!rejection_pool_submit(&rejection_pool, job)) {
+                    finish_overloaded_connection(client_fd, &config);
+                }
             }
         }
     }
@@ -644,11 +854,14 @@ int main(void) {
         close(wakeup_pipe[1]);
     }
     close(listen_fd);
+    rejection_pool_stop(&rejection_pool);
     BsConnectionQueueStop(&queue);
     for (int i = 0; i < created_workers; i++) {
         pthread_join(workers[i], 0);
     }
     free(workers);
+    close(capacity_pipe[0]);
+    close(capacity_pipe[1]);
     BsConnectionQueueDestroy(&queue);
     bool restored_signal_mask = set_signal_mask(
         SIG_SETMASK,

@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 bool BsConnectionQueueInit(BsConnectionQueue* queue, size_t capacity) {
     if (queue == 0 || capacity == 0) {
@@ -38,6 +39,21 @@ void BsConnectionQueueStop(BsConnectionQueue* queue) {
     pthread_mutex_unlock(&queue->mutex);
 }
 
+void BsConnectionQueueStopAndClose(BsConnectionQueue* queue) {
+    if (queue == 0 || queue->jobs == 0) {
+        return;
+    }
+    pthread_mutex_lock(&queue->mutex);
+    queue->stopped = true;
+    while (queue->count > 0) {
+        close(queue->jobs[queue->head].client_fd);
+        queue->head = (queue->head + 1) % queue->capacity;
+        queue->count--;
+    }
+    pthread_cond_broadcast(&queue->nonempty);
+    pthread_mutex_unlock(&queue->mutex);
+}
+
 void BsConnectionQueueDestroy(BsConnectionQueue* queue) {
     if (queue == 0 || queue->jobs == 0) {
         return;
@@ -64,6 +80,16 @@ bool BsConnectionQueueTryPush(BsConnectionQueue* queue, BsConnectionJob job) {
     pthread_cond_signal(&queue->nonempty);
     pthread_mutex_unlock(&queue->mutex);
     return true;
+}
+
+bool BsConnectionQueueHasCapacity(BsConnectionQueue* queue) {
+    if (queue == 0 || queue->jobs == 0) {
+        return false;
+    }
+    pthread_mutex_lock(&queue->mutex);
+    bool has_capacity = !queue->stopped && queue->count < queue->capacity;
+    pthread_mutex_unlock(&queue->mutex);
+    return has_capacity;
 }
 
 bool BsConnectionQueuePop(BsConnectionQueue* queue, BsConnectionJob* out_job) {
