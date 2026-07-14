@@ -74,6 +74,37 @@ typedef enum {
     CORE_SELECTION_CORRIDOR_GUARD = 3,
 } CoreSelectionReason;
 
+typedef enum {
+    CORE_ROOT_COMPARISON_NOT_COMPARED = 0,
+    CORE_ROOT_COMPARISON_TERMINAL_OUTCOME = 1,
+    CORE_ROOT_COMPARISON_SEARCH_BOUND = 2,
+    CORE_ROOT_COMPARISON_STRUCTURAL_PROOF = 3,
+    CORE_ROOT_COMPARISON_TERMINAL_SURVIVAL = 4,
+    CORE_ROOT_COMPARISON_HEURISTIC_VALUE = 5,
+    CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK = 6,
+    CORE_ROOT_COMPARISON_PREVIOUS_PV = 7,
+    CORE_ROOT_COMPARISON_STABLE_DIRECTION = 8,
+    CORE_ROOT_COMPARISON_CORRIDOR_GUARD = 9,
+    CORE_ROOT_COMPARISON_NUMERIC_VALUE = 10,
+} CoreRootComparisonReason;
+
+typedef enum {
+    CORE_ROOT_COMPARISON_INCUMBENT = -1,
+    CORE_ROOT_COMPARISON_EQUAL = 0,
+    CORE_ROOT_COMPARISON_CANDIDATE = 1,
+    CORE_ROOT_COMPARISON_INCOMPARABLE = 2,
+} CoreRootComparisonOrdering;
+
+/* INCOMPARABLE is a semantic result, not a tie. This pairwise comparator only
+ * applies lower layers when both search records are exact with the same
+ * outcome. Task 2 root selection must retain a global maximal candidate set
+ * (or use an equivalent layered treatment) before structural tie-breaks,
+ * previous-PV preference, or stable direction. */
+typedef struct {
+    CoreRootComparisonOrdering ordering;
+    CoreRootComparisonReason reason;
+} CoreRootComparison;
+
 typedef struct {
     bool evaluated;
     bool allowed;
@@ -133,6 +164,7 @@ typedef struct {
     uint8_t root_allowed_mask;
     CoreRootPolicy root_policy_applied;
     CoreSelectionReason selection_reason;
+    CoreRootComparisonReason root_comparison_reason;
     uint64_t root_analysis_nodes;
     double root_analysis_elapsed_ms;
     int root_analysis_budget_ms;

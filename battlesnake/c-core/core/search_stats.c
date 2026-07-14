@@ -54,6 +54,7 @@ void CoreSearchStatsInit(CoreSearchStats* stats) {
     stats->root_allowed_mask = 0x0f;
     stats->root_policy_applied = CORE_ROOT_POLICY_STRICT_MINIMAX;
     stats->selection_reason = CORE_SELECTION_ALLOWED_FALLBACK;
+    stats->root_comparison_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         stats->root_candidates[move].allowed = true;
         stats->root_candidates[move].rejection_reason = CORE_ROOT_REJECTION_NONE;

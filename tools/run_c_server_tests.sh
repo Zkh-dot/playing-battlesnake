@@ -21,7 +21,7 @@ build/tests/test_arena
 
 build/tests/test_battlesnake_json
 
-"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -Ibattlesnake/c-core \
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -DCORE_ROOT_SELECTION_TESTING -Ibattlesnake/c-core \
   tests/c/test_battlesnake_strategy.c \
   battlesnake/c-core/server/battlesnake_strategy.c \
   battlesnake/c-core/datatypes/coord.c \

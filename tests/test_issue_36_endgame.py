@@ -108,9 +108,12 @@ class Issue36DepthBudgetTests(unittest.TestCase):
             int(unsafe["relaxed_static_capacity"]), int(unsafe["post_move_length"])
         )
         self.assertEqual(safe["structural_proof"], "safe")
-        self.assertFalse(unsafe["allowed"])
-        self.assertEqual(unsafe["rejection_reason"], "structurally_dominated")
+        self.assertTrue(unsafe["allowed"])
+        self.assertEqual(unsafe["rejection_reason"], "none")
+        self.assertIsNotNone(unsafe["minimax_score"])
         self.assertTrue(safe["allowed"])
+        self.assertIsNotNone(safe["minimax_score"])
+        self.assertEqual(result["move"], "right")
 
     def test_t344_structural_work_guard_is_board_derived(self) -> None:
         raw = next(

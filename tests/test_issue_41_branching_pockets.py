@@ -480,10 +480,10 @@ def test_replay_branching_pocket_is_structurally_dominated(
         _fixture_board(position), str(position["snake_id"]), time_budget_ms=budget_ms
     )
     bad = result["root_candidates"][bad_move]
-    allowed = [
+    searched = [
         candidate
         for candidate in result["root_candidates"].values()
-        if candidate["allowed"] and candidate["alive_reply_count"] > 0
+        if candidate["alive_reply_count"] > 0 and candidate["minimax_score"] is not None
     ]
     expected_root_budget = budget_ms // 3
 
@@ -494,14 +494,15 @@ def test_replay_branching_pocket_is_structurally_dominated(
     assert bad["relaxed_static_capacity"] < bad["post_move_length"]
     assert bad["structural_proof"] != "safe"
     assert bad["proof_cutoff"] == "policy_sufficient"
-    assert bad["allowed"] is False
-    assert bad["rejection_reason"] == "structurally_dominated"
-    assert any(candidate["structural_proof"] == "safe" for candidate in allowed)
+    assert bad["allowed"] is True
+    assert bad["rejection_reason"] == "none"
+    assert bad["minimax_score"] is not None
+    assert any(candidate["structural_proof"] == "safe" for candidate in searched)
     if int(evidence["turn"]) == 288:
         assert result["root_candidates"]["down"]["proof_cutoff"] == "bounded_lasso"
 
 
-def test_t439_fixed_depth_uses_root_dominance_before_search_scores() -> None:
+def test_t439_fixed_depth_uses_root_dominance_after_search_outcomes() -> None:
     position = _positions()[1]
     bad_move = str(position["evidence"]["recorded_bad_move"])
     result = minimax_diagnostics(
@@ -521,9 +522,9 @@ def test_t439_fixed_depth_uses_root_dominance_before_search_scores() -> None:
 
     assert result["completed_depth"] == 3
     assert result["move"] != bad_move
-    assert bad["allowed"] is False
-    assert bad["rejection_reason"] == "structurally_dominated"
-    assert bad["minimax_score"] is None
+    assert bad["allowed"] is True
+    assert bad["rejection_reason"] == "none"
+    assert bad["minimax_score"] is not None
     # Exact shorter-opponent closure pruning reduced this proof from 4356 to
     # 209 states before growth timing was added (236 now). The state count is
     # an implementation detail; the invariant is a completed SAFE proof that

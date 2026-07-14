@@ -7,6 +7,7 @@ import argparse
 from collections import Counter, deque
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 import sys
 from typing import Any, Callable, Sequence
@@ -28,9 +29,128 @@ from tools.tuning.replay_dataset import (
 @dataclass(frozen=True)
 class DiagnosticsAudit:
     violation: bool
+    post_search_override: bool
+    justified_by_search: bool
     selected_move: str
     safe_alternatives: tuple[str, ...]
+    unjustified_safe_alternatives: tuple[str, ...]
+    justification_layers: tuple[str, ...]
     unknown_candidates: int
+
+
+_OUTCOME_RANK = {"loss": 0, "unresolved": 1, "draw": 2, "win": 3}
+
+
+def _outcome_interval(candidate: dict[str, Any]) -> tuple[int, int] | None:
+    rank = _OUTCOME_RANK.get(str(candidate.get("minimax_outcome")))
+    bound = candidate.get("minimax_bound")
+    if rank is None or bound not in {"exact", "lower", "upper"}:
+        return None
+    return (0 if bound == "upper" else rank, 3 if bound == "lower" else rank)
+
+
+def _numeric_interval(candidate: dict[str, Any]) -> tuple[float, float] | None:
+    score = candidate.get("minimax_score")
+    bound = candidate.get("minimax_bound")
+    if not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+        return None
+    if bound not in {"exact", "lower", "upper"}:
+        return None
+    value = float(score)
+    return (
+        -math.inf if bound == "upper" else value,
+        math.inf if bound == "lower" else value,
+    )
+
+
+def _is_active_search_record(candidate: dict[str, Any]) -> bool:
+    return (
+        bool(candidate.get("allowed", True))
+        and candidate.get("minimax_score") is not None
+    )
+
+
+def _active_exact_loss_max_distance(
+    candidates: dict[str, dict[str, Any]],
+) -> int | None:
+    distances = [
+        int(candidate["minimax_terminal_distance"])
+        for candidate in candidates.values()
+        if _is_active_search_record(candidate)
+        and candidate.get("minimax_outcome") == "loss"
+        and candidate.get("minimax_bound") == "exact"
+        and isinstance(candidate.get("minimax_terminal_distance"), int)
+    ]
+    return max(distances) if distances else None
+
+
+def _strict_search_dominance_layer(
+    selected: dict[str, Any],
+    alternative: dict[str, Any],
+    active_exact_loss_max_distance: int | None,
+) -> str | None:
+    """Independently prove a strict search layer; diagnostics reasons are ignored."""
+    if not _is_active_search_record(selected) or not _is_active_search_record(
+        alternative
+    ):
+        return None
+
+    selected_outcome = _outcome_interval(selected)
+    alternative_outcome = _outcome_interval(alternative)
+    if selected_outcome is None or alternative_outcome is None:
+        return None
+    if selected_outcome[0] > alternative_outcome[1]:
+        return "outcome_interval"
+    if alternative_outcome[0] > selected_outcome[1]:
+        return None
+
+    # Production applies the independent SAFE-over-deficient-UNKNOWN relation
+    # before numeric heuristic ordering on unresolved frontiers.
+    if (
+        selected.get("minimax_outcome") == "unresolved"
+        and alternative.get("minimax_outcome") == "unresolved"
+    ):
+        return None
+
+    selected_exact_loss_distance = (
+        int(selected["minimax_terminal_distance"])
+        if selected.get("minimax_outcome") == "loss"
+        and selected.get("minimax_bound") == "exact"
+        and isinstance(selected.get("minimax_terminal_distance"), int)
+        else None
+    )
+    if (
+        selected_exact_loss_distance is not None
+        and active_exact_loss_max_distance is not None
+        and selected_exact_loss_distance < active_exact_loss_max_distance
+    ):
+        return None
+
+    both_exact_losses = (
+        selected_exact_loss_distance is not None
+        and alternative.get("minimax_outcome") == "loss"
+        and alternative.get("minimax_bound") == "exact"
+        and isinstance(alternative.get("minimax_terminal_distance"), int)
+    )
+    if both_exact_losses:
+        selected_distance = selected_exact_loss_distance
+        alternative_distance = int(alternative["minimax_terminal_distance"])
+        if selected_distance != active_exact_loss_max_distance:
+            return None
+        if selected_distance > alternative_distance:
+            return "terminal_survival"
+        if selected_distance < alternative_distance:
+            return None
+
+    selected_numeric = _numeric_interval(selected)
+    alternative_numeric = _numeric_interval(alternative)
+    if (
+        selected_numeric is not None
+        and alternative_numeric is not None
+        and selected_numeric[0] > alternative_numeric[1]
+    ):
+        return "numeric_interval"
+    return None
 
 
 def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
@@ -63,16 +183,37 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
     capacity_deficient = int(selected["relaxed_static_capacity"]) < int(
         selected["post_move_length"]
     )
-    violation = (
+    structural_conflict = (
         capacity_deficient
         and selected["structural_proof"] != "safe"
         and bool(safe_alternatives)
         and not guaranteed_terminal_non_loss
     )
+    layers: list[str] = []
+    unjustified: list[str] = []
+    if structural_conflict:
+        active_exact_loss_max_distance = _active_exact_loss_max_distance(candidates)
+        for move in safe_alternatives:
+            layer = _strict_search_dominance_layer(
+                selected,
+                candidates[move],
+                active_exact_loss_max_distance,
+            )
+            if layer is None:
+                unjustified.append(move)
+            else:
+                layers.append(layer)
+    post_search_override = structural_conflict and diagnostics.get("selection_reason") == "corridor_guard"
+    justified_by_search = structural_conflict and not unjustified and bool(layers)
+    violation = structural_conflict and not post_search_override and not justified_by_search
     return DiagnosticsAudit(
         violation,
+        post_search_override,
+        justified_by_search,
         selected_move,
         safe_alternatives,
+        tuple(unjustified),
+        tuple(sorted(set(layers))),
         unknown_candidates,
     )
 
@@ -230,6 +371,9 @@ def _summary(export_root: Path, budget_ms: int, prefilter: bool) -> dict[str, An
         "prefiltered_root_frames": 0,
         "diagnostics_root_frames": 0,
         "unknown_candidate_proofs": 0,
+        "justified_search_selections": 0,
+        "comparator_violations": [],
+        "post_search_overrides": [],
         "cutoff_candidate_counts": {},
         "violations": [],
         "error_count": 0,
@@ -519,15 +663,31 @@ def main(
                     if candidate["structural_proof"] == "unknown":
                         cutoff_counts[str(candidate.get("proof_cutoff", "none"))] += 1
                 if audit.violation:
-                    summary["violations"].append(
+                    record = {
+                        "game_id": game_id,
+                        "turn": turn,
+                        "actual_move": actual_move,
+                        "selected_move": audit.selected_move,
+                        "safe_alternatives": list(audit.safe_alternatives),
+                        "unjustified_safe_alternatives": list(
+                            audit.unjustified_safe_alternatives
+                        ),
+                    }
+                    summary["comparator_violations"].append(record)
+                    summary["violations"].append(record)
+                elif audit.post_search_override:
+                    summary["post_search_overrides"].append(
                         {
                             "game_id": game_id,
                             "turn": turn,
                             "actual_move": actual_move,
                             "selected_move": audit.selected_move,
                             "safe_alternatives": list(audit.safe_alternatives),
+                            "kind": "post_search_override",
                         }
                     )
+                elif audit.justified_by_search:
+                    summary["justified_search_selections"] += 1
             except Exception as error:
                 _record_root_error(
                     summary,
@@ -548,7 +708,7 @@ def main(
     _print_summary(summary, as_json=args.json)
     if summary["error_count"]:
         return 2
-    return 1 if summary["violations"] else 0
+    return 1 if summary["comparator_violations"] else 0
 
 
 def _print_summary(summary: dict[str, Any], *, as_json: bool) -> None:
@@ -567,15 +727,23 @@ def _print_summary(summary: dict[str, Any], *, as_json: bool) -> None:
             f"diagnostics_root_frames={summary['diagnostics_root_frames']} "
             f"unknown_candidate_proofs={summary['unknown_candidate_proofs']} "
             f"cutoff_candidate_counts={cutoff_summary} "
-            f"violations={len(summary['violations'])} "
+            f"justified_search_selections={summary['justified_search_selections']} "
+            f"comparator_violations={len(summary['comparator_violations'])} "
+            f"post_search_overrides={len(summary['post_search_overrides'])} "
             f"errors={summary['error_count']} "
             f"budget_ms={summary['budget_ms']}"
         )
-        for violation in summary["violations"]:
+        for violation in summary["comparator_violations"]:
             print(
                 f"VIOLATION {violation['game_id']} T{violation['turn']}: "
                 f"actual={violation['actual_move']} selected={violation['selected_move']} "
                 f"safe_alternatives={','.join(violation['safe_alternatives'])}"
+            )
+        for override in summary["post_search_overrides"]:
+            print(
+                f"POST_SEARCH_OVERRIDE {override['game_id']} T{override['turn']}: "
+                f"actual={override['actual_move']} selected={override['selected_move']} "
+                f"safe_alternatives={','.join(override['safe_alternatives'])}"
             )
         for error in summary["errors"]:
             root_context = ""

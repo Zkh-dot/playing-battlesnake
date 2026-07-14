@@ -67,6 +67,13 @@ CoreStatus CoreMinimaxMoveWithStats(
     CoreSearchStats* out_stats
 );
 
+CoreRootComparison CoreCompareRootCandidates(
+    const CoreSearchValue* candidate_value,
+    const CoreRootCandidateStats* candidate_stats,
+    const CoreSearchValue* incumbent_value,
+    const CoreRootCandidateStats* incumbent_stats
+);
+
 CoreOutcome CoreClassifyDuelOutcome(
     const Board* board,
     const char* snake_id,
