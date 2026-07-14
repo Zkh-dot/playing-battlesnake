@@ -16,11 +16,11 @@ OUTPUT_PATH = (
     REPO_ROOT / "tests" / "fixtures" / "issue_44_corridor_guard_positions.json"
 )
 POSITIONS = [
-    ("091dc137-5a89-4471-b646-5540de694fe9", 290, "right", "left"),
-    ("1985bf57-7fb4-4842-8ac0-b8900d31e1be", 424, "down", "up"),
-    ("74f38216-24fa-472c-ba98-66282577f624", 317, "left", "right"),
-    ("7ea501e7-db9f-40e3-9a72-d4efb77c5d59", 187, "right", "down"),
-    ("f5d7c374-6c5c-4459-9bae-b897b0604165", 284, "up", "down"),
+    ("091dc137-5a89-4471-b646-5540de694fe9", 290, "right", "left", None),
+    ("1985bf57-7fb4-4842-8ac0-b8900d31e1be", 424, "down", "up", "up"),
+    ("74f38216-24fa-472c-ba98-66282577f624", 317, "left", "right", None),
+    ("7ea501e7-db9f-40e3-9a72-d4efb77c5d59", 187, "right", "down", None),
+    ("f5d7c374-6c5c-4459-9bae-b897b0604165", 284, "up", "down", None),
 ]
 
 
@@ -65,7 +65,8 @@ def _position(
     game_id: str,
     turn: int,
     historical_guard_move: str,
-    expected_incumbent_move: str,
+    reported_alternative_move: str,
+    expected_authoritative_move: str | None,
     export_dir: Path = EXPORT_DIR,
 ) -> dict[str, Any]:
     export = json.loads((export_dir / f"{game_id}.json").read_text(encoding="utf-8"))
@@ -88,8 +89,10 @@ def _position(
         "game_id": game_id,
         "turn": turn,
         "historical_guard_move": historical_guard_move,
-        "expected_incumbent_move": expected_incumbent_move,
+        "reported_alternative_move": reported_alternative_move,
     }
+    if expected_authoritative_move is not None:
+        evidence["expected_authoritative_move"] = expected_authoritative_move
 
     ruleset = game.get("Ruleset") or {}
     return {

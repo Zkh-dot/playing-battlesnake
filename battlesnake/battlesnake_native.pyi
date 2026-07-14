@@ -91,6 +91,36 @@ class RootCandidateDiagnostics(TypedDict):
     minimax_cause: list[str] | None
     minimax_bound: str | None
 
+class CorridorMetricsDiagnostics(TypedDict):
+    immediate_exits: int | None
+    forced_steps: int | None
+    reachable: int | None
+
+class CorridorGuardCandidateDiagnostics(TypedDict):
+    move: str | None
+    corridor_metrics: CorridorMetricsDiagnostics
+    structural_proof: str | None
+    relaxed_static_capacity: int | None
+    post_move_length: int | None
+    minimax_score: float | None
+    minimax_outcome: str | None
+    minimax_bound: str | None
+
+class CorridorGuardDiagnostics(TypedDict):
+    considered: bool
+    incumbent: CorridorGuardCandidateDiagnostics
+    proposal: CorridorGuardCandidateDiagnostics
+    comparison_ordering: Literal["incumbent", "equal", "candidate", "incomparable"]
+    comparison_reason: str
+    exact_tie_permitted: bool
+    applied: bool
+    decision: Literal[
+        "not_considered",
+        "same_as_incumbent",
+        "rejected_search_order",
+        "applied_exact_tie",
+    ]
+
 class MinimaxDiagnostics(TypedDict):
     move: str
     score: float
@@ -128,6 +158,7 @@ class MinimaxDiagnostics(TypedDict):
     root_analysis_budget_ms: int
     # Scheduled search interval; a noninterruptible leaf may still complete no depth.
     search_reserved_ms: int
+    corridor_guard: CorridorGuardDiagnostics
 
 def reachable_space(board: Board, start: Coord, snake_id: str) -> int: ...
 def shortest_path(board: Board, start: Coord, goal: Coord, snake_id: str) -> list[Coord]: ...

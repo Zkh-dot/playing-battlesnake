@@ -4356,11 +4356,7 @@ static int core_cached_reachable_after_move(
     return reachable_spaces[index];
 }
 
-typedef struct {
-    int immediate_exits;
-    int forced_steps;
-    int reachable;
-} CoreCorridorMoveMetrics;
+typedef CoreCorridorMetricsAudit CoreCorridorMoveMetrics;
 
 static int core_open_neighbor_count(
     const Board* board,
@@ -4461,6 +4457,7 @@ static bool core_corridor_metrics_after_move(
     out_metrics->immediate_exits = immediate_exits;
     out_metrics->forced_steps = forced_steps;
     out_metrics->reachable = core_reachable_after_move(board, snake_id, move);
+    out_metrics->valid = true;
     return true;
 }
 
@@ -4477,53 +4474,54 @@ static bool core_corridor_metrics_are_better(
     return candidate->reachable > current->reachable;
 }
 
-static bool core_constrained_root_corridor_move(
+static bool core_best_root_corridor_proposal(
     const Board* board,
     const char* snake_id,
     const MoveDirection* moves,
     int move_count,
+    uint8_t root_allowed_mask,
+    const bool root_value_valid[4],
+    const CoreSearchValue root_values[4],
+    CoreCorridorMoveMetrics* out_metrics,
     MoveDirection* out_move
 ) {
-    if (board == NULL || snake_id == NULL || moves == NULL || out_move == NULL || move_count < 2) {
-        return false;
-    }
-
-    const Snake* snake = BoardFindSnakeConst(board, snake_id);
-    if (snake == NULL || snake->body_len == 0 || core_snake_length(snake) < 12) {
-        return false;
-    }
-
-    int current_reachable = 0;
-    if (CoreReachableSpace(board, SnakeHead(snake), snake_id, &current_reachable) != CORE_OK) {
-        return false;
-    }
-    if (current_reachable >= core_snake_length(snake)) {
+    if (
+        board == NULL || snake_id == NULL || moves == NULL || root_value_valid == NULL ||
+        root_values == NULL ||
+        out_metrics == NULL || out_move == NULL || move_count < 1
+    ) {
         return false;
     }
 
     CoreCorridorMoveMetrics best_metrics = {0, 0, 0};
     MoveDirection best_move = MOVE_INVALID;
     bool has_best = false;
-    bool has_forced_corridor = false;
     for (int i = 0; i < move_count; i++) {
-        CoreCorridorMoveMetrics metrics;
-        if (!core_corridor_metrics_after_move(board, snake_id, moves[i], &metrics)) {
+        MoveDirection move = moves[i];
+        if (
+            !core_valid_move_direction(move) ||
+            (root_allowed_mask & (1u << move)) == 0 ||
+            !root_value_valid[(int)move] ||
+            root_values[(int)move].bound != CORE_VALUE_BOUND_EXACT
+        ) {
             continue;
         }
-        if (metrics.immediate_exits <= 1 && metrics.forced_steps >= 3 && metrics.reachable <= core_snake_length(snake)) {
-            has_forced_corridor = true;
+        CoreCorridorMoveMetrics metrics;
+        if (!core_corridor_metrics_after_move(board, snake_id, move, &metrics)) {
+            continue;
         }
         if (!has_best || core_corridor_metrics_are_better(&metrics, &best_metrics)) {
             has_best = true;
             best_metrics = metrics;
-            best_move = moves[i];
+            best_move = move;
         }
     }
 
-    if (!has_best || !has_forced_corridor || best_metrics.immediate_exits < 2 || !core_valid_move_direction(best_move)) {
+    if (!has_best || !core_valid_move_direction(best_move)) {
         return false;
     }
 
+    *out_metrics = best_metrics;
     *out_move = best_move;
     return true;
 }
@@ -5945,6 +5943,44 @@ static void core_root_snapshot_finalize_source(
     }
 }
 
+static bool core_populate_corridor_guard_candidate(
+    CoreCorridorGuardCandidateAudit* audit,
+    const Board* board,
+    const char* snake_id,
+    MoveDirection move,
+    const CoreRootIterationSnapshot* completed,
+    const CoreSearchStats* stats,
+    const CoreCorridorMoveMetrics* precomputed_metrics
+) {
+    if (
+        audit == NULL || board == NULL || snake_id == NULL || completed == NULL ||
+        stats == NULL || !core_valid_move_direction(move)
+    ) {
+        return false;
+    }
+
+    memset(audit, 0, sizeof(*audit));
+    audit->move = move;
+    audit->structural_proof = stats->root_candidates[move].structural_proof;
+    audit->relaxed_static_capacity = stats->root_candidates[move].relaxed_static_capacity;
+    audit->post_move_length = stats->root_candidates[move].post_move_length;
+    audit->minimax_value_valid = completed->root_value_valid[move];
+    if (audit->minimax_value_valid) {
+        audit->minimax_value = completed->root_values[move];
+    }
+    bool metrics_valid = false;
+    if (precomputed_metrics != NULL && precomputed_metrics->valid) {
+        audit->corridor_metrics = *precomputed_metrics;
+        metrics_valid = true;
+    } else {
+        metrics_valid = core_corridor_metrics_after_move(
+            board, snake_id, move, &audit->corridor_metrics
+        );
+    }
+    audit->valid = audit->minimax_value_valid && metrics_valid;
+    return audit->valid;
+}
+
 #ifdef CORE_ROOT_SELECTION_TESTING
 bool CoreRootTimeoutSnapshotForTesting(
     bool has_completed,
@@ -6286,53 +6322,75 @@ CoreStatus CoreMinimaxMoveWithStats(
         stats->root_candidates[move].minimax_value = completed.root_values[move];
     }
     MoveDirection corridor_guard_move = MOVE_INVALID;
-    bool completed_score_is_terminal_loss = completed_value.outcome == CORE_OUTCOME_LOSS;
-    bool completed_score_is_terminal_win = completed_value.outcome == CORE_OUTCOME_WIN;
+    CoreCorridorMoveMetrics corridor_guard_metrics = {0, 0, 0, 0};
     if (
-        !completed_score_is_terminal_win &&
-        core_constrained_root_corridor_move(board, snake_id, safe_moves, safe_move_count, &corridor_guard_move) &&
-        completed.root_value_valid[(int)corridor_guard_move] &&
-        completed.root_values[(int)corridor_guard_move].bound == CORE_VALUE_BOUND_EXACT &&
-        (root_allowed_mask & (1u << corridor_guard_move)) != 0
+        core_valid_move_direction(completed_best) &&
+        core_best_root_corridor_proposal(
+            board,
+            snake_id,
+            safe_moves,
+            safe_move_count,
+            root_allowed_mask,
+            completed.root_value_valid,
+            completed.root_values,
+            &corridor_guard_metrics,
+            &corridor_guard_move
+        ) &&
+        core_populate_corridor_guard_candidate(
+            &stats->corridor_guard.incumbent,
+            board,
+            snake_id,
+            completed_best,
+            &completed,
+            stats,
+            NULL
+        ) &&
+        core_populate_corridor_guard_candidate(
+            &stats->corridor_guard.proposal,
+            board,
+            snake_id,
+            corridor_guard_move,
+            &completed,
+            stats,
+            &corridor_guard_metrics
+        )
     ) {
-        bool apply_corridor_guard = false;
-        CoreSearchValue corridor_guard_value = completed.root_values[(int)corridor_guard_move];
-        if (!completed_score_is_terminal_loss) {
-            apply_corridor_guard = corridor_guard_value.outcome != CORE_OUTCOME_LOSS;
-        } else {
-            CoreCorridorMoveMetrics guard_metrics;
-            CoreCorridorMoveMetrics completed_metrics;
-            if (
-                core_corridor_metrics_after_move(board, snake_id, corridor_guard_move, &guard_metrics) &&
-                core_corridor_metrics_after_move(board, snake_id, completed_best, &completed_metrics) &&
-                /*
-                 * Compatibility guard for the issue-33/36 terminal-loss tie
-                 * fixtures: prefer the corridor guard only when it opens a
-                 * real side-exit choice over a much longer single-file line.
-                 * These thresholds are regression-derived, not a complete
-                 * territory model; revisit alongside issue #32 if a new
-                 * terminal-band tie shape needs different geometry.
-                 */
-                completed_metrics.immediate_exits <= 1 &&
-                guard_metrics.immediate_exits >= 2 &&
-                completed_metrics.forced_steps - guard_metrics.forced_steps >= 4
-            ) {
-                apply_corridor_guard = true;
-            }
-        }
+        stats->corridor_guard.considered = true;
+        CoreRootComparison comparison = CoreCompareRootCandidates(
+            &completed.root_values[corridor_guard_move],
+            &stats->root_candidates[corridor_guard_move],
+            &completed.root_values[completed_best],
+            &stats->root_candidates[completed_best]
+        );
+        stats->corridor_guard.comparison_ordering = comparison.ordering;
+        stats->corridor_guard.comparison_reason = comparison.reason;
 
-        /*
-         * Dead-region leaves can enter the terminal-loss band before a true
-         * terminal; keep the issue-33 long-corridor invariant without
-         * overriding ordinary forced-loss survival ordering.
-         */
-        if (apply_corridor_guard) {
-            completed_best = corridor_guard_move;
-            completed_value = corridor_guard_value;
-            stats->score = completed_value.score;
-            stats->value = completed_value;
-            stats->selection_reason = CORE_SELECTION_CORRIDOR_GUARD;
-            stats->root_comparison_reason = CORE_ROOT_COMPARISON_CORRIDOR_GUARD;
+        if (corridor_guard_move == completed_best) {
+            stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_SAME_AS_INCUMBENT;
+        } else {
+            CoreSearchValue corridor_guard_value = completed.root_values[corridor_guard_move];
+            bool exact_tie_permitted =
+                corridor_guard_value.bound == CORE_VALUE_BOUND_EXACT &&
+                completed_value.bound == CORE_VALUE_BOUND_EXACT &&
+                core_search_value_semantically_equal(&corridor_guard_value, &completed_value) &&
+                comparison.ordering == CORE_ROOT_COMPARISON_EQUAL &&
+                core_corridor_metrics_are_better(
+                    &stats->corridor_guard.proposal.corridor_metrics,
+                    &stats->corridor_guard.incumbent.corridor_metrics
+                );
+            stats->corridor_guard.exact_tie_permitted = exact_tie_permitted;
+            if (exact_tie_permitted) {
+                completed_best = corridor_guard_move;
+                completed_value = corridor_guard_value;
+                stats->score = completed_value.score;
+                stats->value = completed_value;
+                stats->selection_reason = CORE_SELECTION_CORRIDOR_GUARD;
+                stats->root_comparison_reason = CORE_ROOT_COMPARISON_CORRIDOR_GUARD;
+                stats->corridor_guard.applied = true;
+                stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_APPLIED_EXACT_TIE;
+            } else {
+                stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_REJECTED_SEARCH_ORDER;
+            }
         }
     }
     stats->move = completed_best;

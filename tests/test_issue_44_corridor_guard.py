@@ -117,7 +117,7 @@ def test_fixture_builder_uses_live_scvnak_and_preserves_replay_evidence(
     monkeypatch.setattr(
         build_issue_44_fixtures,
         "POSITIONS",
-        [(game_id, 7, "right", "up")],
+        [(game_id, 7, "right", "up", "up")],
     )
 
     assert build_issue_44_fixtures.main(export_dir=tmp_path, output_path=output) == 0
@@ -136,7 +136,8 @@ def test_fixture_builder_uses_live_scvnak_and_preserves_replay_evidence(
         "game_id": game_id,
         "turn": 7,
         "historical_guard_move": "right",
-        "expected_incumbent_move": "up",
+        "reported_alternative_move": "up",
+        "expected_authoritative_move": "up",
     }
     assert position["ruleset_name"] == "standard"
     assert position["hazard_damage"] == 9
@@ -168,11 +169,13 @@ def test_t424_keeps_structurally_safe_authoritative_root() -> None:
     assert down["relaxed_static_capacity"] < down["post_move_length"]
     assert up["minimax_bound"] == "exact"
     assert down["minimax_bound"] == "exact"
-    assert result["move"] == "up"
+    assert result["move"] == T424["evidence"]["expected_authoritative_move"] == "up"
     assert result["move"] != T424["evidence"]["historical_guard_move"]
     audit = result["corridor_guard"]
     assert audit["incumbent"]["move"] == "up"
     assert audit["proposal"]["move"] == "down"
+    assert audit["comparison_ordering"] == "incumbent"
+    assert audit["comparison_reason"] == "structural_proof"
     assert audit["exact_tie_permitted"] is False
     assert audit["applied"] is False
     assert audit["decision"] == "rejected_search_order"
@@ -220,20 +223,25 @@ def test_corridor_guard_audit_is_complete_and_coherent(
             assert candidate[key] == root[key]
 
     assert audit["proposal"]["move"] == position["evidence"]["historical_guard_move"]
-    assert audit["incumbent"]["move"] == position["evidence"]["expected_incumbent_move"]
     if audit["proposal"]["move"] != audit["incumbent"]["move"]:
         assert not audit["applied"] or audit["exact_tie_permitted"]
+        assert audit["decision"] in {"rejected_search_order", "applied_exact_tie"}
     if audit["applied"]:
         assert result["move"] == audit["proposal"]["move"]
     else:
         assert result["move"] == audit["incumbent"]["move"]
+
+    if position["evidence"]["turn"] in {187, 284, 290, 317}:
+        assert audit["proposal"]["move"] == audit["incumbent"]["move"]
+        assert audit["decision"] == "same_as_incumbent"
+        assert audit["applied"] is False
 
     selected = result["root_candidates"][result["move"]]
     assert result["score"] == selected["minimax_score"]
     assert result["root_move_scores"][result["move"]] == result["score"]
 
 
-def test_t187_rejects_equal_numeric_but_structurally_different_proposal() -> None:
+def test_t187_does_not_treat_upper_bound_alternative_as_exact_tie() -> None:
     result = _fixed_depth(T187)
     down = result["root_candidates"]["down"]
     right = result["root_candidates"]["right"]
@@ -246,11 +254,10 @@ def test_t187_rejects_equal_numeric_but_structurally_different_proposal() -> Non
     assert right["minimax_bound"] == "exact"
     audit = result["corridor_guard"]
 
-    assert audit["incumbent"]["move"] == "down"
+    assert audit["incumbent"]["move"] == "right"
     assert audit["proposal"]["move"] == "right"
-    assert audit["incumbent"]["minimax_score"] == audit["proposal"]["minimax_score"]
-    assert audit["considered"] is True
+    assert down["minimax_score"] == audit["proposal"]["minimax_score"]
     assert audit["exact_tie_permitted"] is False
     assert audit["applied"] is False
-    assert audit["decision"] == "rejected_search_order"
-    assert result["move"] == "down"
+    assert audit["decision"] == "same_as_incumbent"
+    assert result["move"] == "right"

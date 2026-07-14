@@ -81,6 +81,10 @@ static int dict_set_string(PyObject* dict, const char* key, const char* value) {
     return result;
 }
 
+static int dict_set_none(PyObject* dict, const char* key) {
+    return PyDict_SetItemString(dict, key, Py_None);
+}
+
 static int parse_optional_weight(
     PyObject* weights_obj,
     const char* key,
@@ -529,6 +533,25 @@ static const char* root_comparison_reason_name(CoreRootComparisonReason reason) 
     }
 }
 
+static const char* root_comparison_ordering_name(CoreRootComparisonOrdering ordering) {
+    switch (ordering) {
+        case CORE_ROOT_COMPARISON_INCUMBENT: return "incumbent";
+        case CORE_ROOT_COMPARISON_EQUAL: return "equal";
+        case CORE_ROOT_COMPARISON_CANDIDATE: return "candidate";
+        case CORE_ROOT_COMPARISON_INCOMPARABLE: return "incomparable";
+    }
+    return "incomparable";
+}
+
+static const char* corridor_guard_decision_name(CoreCorridorGuardDecision decision) {
+    switch (decision) {
+        case CORE_CORRIDOR_GUARD_SAME_AS_INCUMBENT: return "same_as_incumbent";
+        case CORE_CORRIDOR_GUARD_REJECTED_SEARCH_ORDER: return "rejected_search_order";
+        case CORE_CORRIDOR_GUARD_APPLIED_EXACT_TIE: return "applied_exact_tie";
+        default: return "not_considered";
+    }
+}
+
 static PyObject* cause_list(uint32_t causes) {
     static const struct {
         uint32_t bit;
@@ -646,6 +669,104 @@ static PyObject* root_candidate_dict(const CoreRootCandidateStats* candidate) {
                 return NULL;
             }
         }
+    }
+    return result;
+}
+
+static PyObject* corridor_guard_candidate_dict(
+    const CoreCorridorGuardCandidateAudit* candidate
+) {
+    PyObject* result = PyDict_New();
+    PyObject* metrics = PyDict_New();
+    if (result == NULL || metrics == NULL) {
+        Py_XDECREF(result);
+        Py_XDECREF(metrics);
+        return NULL;
+    }
+
+    int failed = 0;
+    if (candidate->corridor_metrics.valid) {
+        failed = dict_set_int(
+                metrics, "immediate_exits", candidate->corridor_metrics.immediate_exits
+            ) < 0 ||
+            dict_set_int(metrics, "forced_steps", candidate->corridor_metrics.forced_steps) < 0 ||
+            dict_set_int(metrics, "reachable", candidate->corridor_metrics.reachable) < 0;
+    } else {
+        failed = dict_set_none(metrics, "immediate_exits") < 0 ||
+            dict_set_none(metrics, "forced_steps") < 0 ||
+            dict_set_none(metrics, "reachable") < 0;
+    }
+    if (!failed) {
+        failed = PyDict_SetItemString(result, "corridor_metrics", metrics) < 0;
+    }
+    Py_DECREF(metrics);
+    if (failed) {
+        Py_DECREF(result);
+        return NULL;
+    }
+
+    if (candidate->valid) {
+        failed = dict_set_string(result, "move", MoveDirectionToString(candidate->move)) < 0 ||
+            dict_set_string(
+                result, "structural_proof", structural_proof_name(candidate->structural_proof)
+            ) < 0 ||
+            dict_set_int(
+                result, "relaxed_static_capacity", candidate->relaxed_static_capacity
+            ) < 0 ||
+            dict_set_int(result, "post_move_length", candidate->post_move_length) < 0;
+    } else {
+        failed = dict_set_none(result, "move") < 0 ||
+            dict_set_none(result, "structural_proof") < 0 ||
+            dict_set_none(result, "relaxed_static_capacity") < 0 ||
+            dict_set_none(result, "post_move_length") < 0;
+    }
+    if (!failed && candidate->minimax_value_valid) {
+        failed = dict_set_double(result, "minimax_score", candidate->minimax_value.score) < 0 ||
+            dict_set_string(
+                result, "minimax_outcome", outcome_name(candidate->minimax_value.outcome)
+            ) < 0 ||
+            dict_set_string(result, "minimax_bound", bound_name(candidate->minimax_value.bound)) < 0;
+    } else if (!failed) {
+        failed = dict_set_none(result, "minimax_score") < 0 ||
+            dict_set_none(result, "minimax_outcome") < 0 ||
+            dict_set_none(result, "minimax_bound") < 0;
+    }
+    if (failed) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    return result;
+}
+
+static PyObject* corridor_guard_dict(const CoreCorridorGuardAudit* audit) {
+    PyObject* result = PyDict_New();
+    PyObject* incumbent = corridor_guard_candidate_dict(&audit->incumbent);
+    PyObject* proposal = corridor_guard_candidate_dict(&audit->proposal);
+    if (result == NULL || incumbent == NULL || proposal == NULL) {
+        Py_XDECREF(result);
+        Py_XDECREF(incumbent);
+        Py_XDECREF(proposal);
+        return NULL;
+    }
+    int failed = dict_set_bool(result, "considered", audit->considered) < 0 ||
+        PyDict_SetItemString(result, "incumbent", incumbent) < 0 ||
+        PyDict_SetItemString(result, "proposal", proposal) < 0 ||
+        dict_set_string(
+            result,
+            "comparison_ordering",
+            root_comparison_ordering_name(audit->comparison_ordering)
+        ) < 0 ||
+        dict_set_string(
+            result, "comparison_reason", root_comparison_reason_name(audit->comparison_reason)
+        ) < 0 ||
+        dict_set_bool(result, "exact_tie_permitted", audit->exact_tie_permitted) < 0 ||
+        dict_set_bool(result, "applied", audit->applied) < 0 ||
+        dict_set_string(result, "decision", corridor_guard_decision_name(audit->decision)) < 0;
+    Py_DECREF(incumbent);
+    Py_DECREF(proposal);
+    if (failed) {
+        Py_DECREF(result);
+        return NULL;
     }
     return result;
 }
@@ -875,6 +996,15 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         return NULL;
     }
     Py_DECREF(root_candidates);
+
+    PyObject* corridor_guard = corridor_guard_dict(&stats.corridor_guard);
+    if (corridor_guard == NULL ||
+        PyDict_SetItemString(result, "corridor_guard", corridor_guard) < 0) {
+        Py_XDECREF(corridor_guard);
+        Py_DECREF(result);
+        return NULL;
+    }
+    Py_DECREF(corridor_guard);
 
     return result;
 }

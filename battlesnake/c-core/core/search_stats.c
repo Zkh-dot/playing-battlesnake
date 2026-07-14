@@ -56,6 +56,11 @@ void CoreSearchStatsInit(CoreSearchStats* stats) {
     stats->root_policy_applied = CORE_ROOT_POLICY_STRICT_MINIMAX;
     stats->selection_reason = CORE_SELECTION_ALLOWED_FALLBACK;
     stats->root_comparison_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+    stats->corridor_guard.incumbent.move = MOVE_INVALID;
+    stats->corridor_guard.proposal.move = MOVE_INVALID;
+    stats->corridor_guard.comparison_ordering = CORE_ROOT_COMPARISON_INCOMPARABLE;
+    stats->corridor_guard.comparison_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+    stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_NOT_CONSIDERED;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         stats->root_candidates[move].allowed = true;
         stats->root_candidates[move].rejection_reason = CORE_ROOT_REJECTION_NONE;
