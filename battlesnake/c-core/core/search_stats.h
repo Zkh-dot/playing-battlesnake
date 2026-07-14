@@ -107,6 +107,42 @@ typedef struct {
 } CoreRootComparison;
 
 typedef struct {
+    bool valid;
+    int immediate_exits;
+    int forced_steps;
+    int reachable;
+} CoreCorridorMetricsAudit;
+
+typedef struct {
+    bool valid;
+    MoveDirection move;
+    CoreCorridorMetricsAudit corridor_metrics;
+    CoreStructuralProofResult structural_proof;
+    int relaxed_static_capacity;
+    int post_move_length;
+    bool minimax_value_valid;
+    CoreSearchValue minimax_value;
+} CoreCorridorGuardCandidateAudit;
+
+typedef enum {
+    CORE_CORRIDOR_GUARD_NOT_CONSIDERED = 0,
+    CORE_CORRIDOR_GUARD_SAME_AS_INCUMBENT = 1,
+    CORE_CORRIDOR_GUARD_REJECTED_SEARCH_ORDER = 2,
+    CORE_CORRIDOR_GUARD_APPLIED_EXACT_TIE = 3,
+} CoreCorridorGuardDecision;
+
+typedef struct {
+    bool considered;
+    CoreCorridorGuardCandidateAudit incumbent;
+    CoreCorridorGuardCandidateAudit proposal;
+    CoreRootComparisonOrdering comparison_ordering;
+    CoreRootComparisonReason comparison_reason;
+    bool exact_tie_permitted;
+    bool applied;
+    CoreCorridorGuardDecision decision;
+} CoreCorridorGuardAudit;
+
+typedef struct {
     bool evaluated;
     bool allowed;
     bool safe_by_board_rules;
@@ -168,6 +204,7 @@ typedef struct {
     CoreRootPolicy root_policy_applied;
     CoreSelectionReason selection_reason;
     CoreRootComparisonReason root_comparison_reason;
+    CoreCorridorGuardAudit corridor_guard;
     uint64_t root_analysis_nodes;
     double root_analysis_elapsed_ms;
     int root_analysis_budget_ms;

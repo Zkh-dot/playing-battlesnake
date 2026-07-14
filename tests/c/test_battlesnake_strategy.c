@@ -38,6 +38,19 @@ extern bool CoreRootTimeoutSnapshotForTesting(
     bool out_root_value_valid[4],
     CoreSearchValue out_root_values[4]
 );
+extern bool CoreApplyCorridorGuardForTesting(
+    MoveDirection proposal_move,
+    CoreSearchValue proposal_value,
+    CoreRootCandidateStats proposal_stats,
+    CoreCorridorMetricsAudit proposal_metrics,
+    MoveDirection incumbent_move,
+    CoreSearchValue incumbent_value,
+    CoreRootCandidateStats incumbent_stats,
+    CoreCorridorMetricsAudit incumbent_metrics,
+    MoveDirection* out_move,
+    CoreSearchValue* out_value,
+    CoreSearchStats* out_stats
+);
 #endif
 
 static Snake make_snake(const char* id, Coord* body, int body_len, int health) {
@@ -108,6 +121,117 @@ static void assert_root_comparison(
 }
 
 #ifdef CORE_ROOT_SELECTION_TESTING
+static void test_corridor_guard_applies_only_exact_semantic_ties(void) {
+    CoreSearchValue exact = root_test_value(
+        CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 42.0, 0
+    );
+    CoreRootCandidateStats same_structure = root_test_stats(
+        CORE_STRUCTURAL_PROOF_UNKNOWN, 10, 5
+    );
+    CoreCorridorMetricsAudit proposal_metrics = {true, 2, 0, 12};
+    CoreCorridorMetricsAudit incumbent_metrics = {true, 1, 3, 8};
+    MoveDirection move = MOVE_INVALID;
+    CoreSearchValue value;
+    CoreSearchStats stats;
+
+    assert(CoreApplyCorridorGuardForTesting(
+        MOVE_RIGHT,
+        exact,
+        same_structure,
+        proposal_metrics,
+        MOVE_LEFT,
+        exact,
+        same_structure,
+        incumbent_metrics,
+        &move,
+        &value,
+        &stats
+    ));
+    assert(move == MOVE_RIGHT);
+    assert(value.score == exact.score);
+    assert(stats.move == MOVE_RIGHT);
+    assert(stats.score == exact.score);
+    assert(stats.value.score == exact.score);
+    assert(stats.selection_reason == CORE_SELECTION_CORRIDOR_GUARD);
+    assert(stats.root_comparison_reason == CORE_ROOT_COMPARISON_CORRIDOR_GUARD);
+    assert(stats.corridor_guard.considered);
+    assert(stats.corridor_guard.exact_tie_permitted);
+    assert(stats.corridor_guard.applied);
+    assert(stats.corridor_guard.decision == CORE_CORRIDOR_GUARD_APPLIED_EXACT_TIE);
+    assert(stats.corridor_guard.comparison_ordering == CORE_ROOT_COMPARISON_EQUAL);
+
+    const double infinite_scores[] = {INFINITY, -INFINITY};
+    for (size_t i = 0; i < sizeof(infinite_scores) / sizeof(infinite_scores[0]); i++) {
+        CoreSearchValue infinite_exact = exact;
+        infinite_exact.score = infinite_scores[i];
+        assert(CoreApplyCorridorGuardForTesting(
+            MOVE_RIGHT,
+            infinite_exact,
+            same_structure,
+            proposal_metrics,
+            MOVE_LEFT,
+            infinite_exact,
+            same_structure,
+            incumbent_metrics,
+            &move,
+            &value,
+            &stats
+        ));
+        assert(move == MOVE_RIGHT);
+        assert(value.score == infinite_scores[i]);
+        assert(stats.score == infinite_scores[i]);
+        assert(stats.corridor_guard.comparison_ordering == CORE_ROOT_COMPARISON_EQUAL);
+        assert(stats.corridor_guard.comparison_reason == CORE_ROOT_COMPARISON_NOT_COMPARED);
+        assert(stats.corridor_guard.exact_tie_permitted);
+        assert(stats.corridor_guard.applied);
+    }
+
+    CoreRootCandidateStats different_structure = root_test_stats(
+        CORE_STRUCTURAL_PROOF_UNKNOWN, 9, 5
+    );
+    assert(!CoreApplyCorridorGuardForTesting(
+        MOVE_RIGHT,
+        exact,
+        different_structure,
+        proposal_metrics,
+        MOVE_LEFT,
+        exact,
+        same_structure,
+        incumbent_metrics,
+        &move,
+        &value,
+        &stats
+    ));
+    assert(move == MOVE_LEFT);
+    assert(stats.selection_reason == CORE_SELECTION_MINIMAX);
+    assert(stats.root_comparison_reason == CORE_ROOT_COMPARISON_NUMERIC_VALUE);
+    assert(stats.corridor_guard.comparison_ordering == CORE_ROOT_COMPARISON_INCOMPARABLE);
+    assert(!stats.corridor_guard.exact_tie_permitted);
+    assert(stats.corridor_guard.decision == CORE_CORRIDOR_GUARD_REJECTED_SEARCH_ORDER);
+
+    CoreSearchValue worse = exact;
+    worse.score = 41.0;
+    assert(!CoreApplyCorridorGuardForTesting(
+        MOVE_RIGHT,
+        worse,
+        same_structure,
+        proposal_metrics,
+        MOVE_LEFT,
+        exact,
+        same_structure,
+        incumbent_metrics,
+        &move,
+        &value,
+        &stats
+    ));
+    assert(move == MOVE_LEFT);
+    assert(value.score == exact.score);
+    assert(stats.corridor_guard.comparison_ordering == CORE_ROOT_COMPARISON_INCUMBENT);
+    assert(stats.corridor_guard.comparison_reason == CORE_ROOT_COMPARISON_HEURISTIC_VALUE);
+    assert(!stats.corridor_guard.applied);
+    assert(stats.corridor_guard.decision == CORE_CORRIDOR_GUARD_REJECTED_SEARCH_ORDER);
+}
+
 static void test_partial_root_frontier_is_permutation_invariant_and_coherent(void) {
     Board* board = BoardCreate(7, 7, "standard", 0);
     Coord me_body[] = {{3, 3}, {3, 2}, {3, 1}};
@@ -2087,6 +2211,7 @@ static void test_bounded_rectangle_cycle_proves_capacity(void) {
 
 int main(void) {
 #ifdef CORE_ROOT_SELECTION_TESTING
+    test_corridor_guard_applies_only_exact_semantic_ties();
     test_partial_root_frontier_is_permutation_invariant_and_coherent();
     test_exceptional_and_mixed_strict_root_values_are_truthful();
     test_nonfinite_bound_frontiers_do_not_claim_numeric_dominance();

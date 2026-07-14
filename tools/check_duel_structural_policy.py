@@ -36,9 +36,26 @@ class DiagnosticsAudit:
     unjustified_safe_alternatives: tuple[str, ...]
     justification_layers: tuple[str, ...]
     unknown_candidates: int
+    corridor_guard_error: str | None
 
 
 _OUTCOME_RANK = {"loss": 0, "unresolved": 1, "draw": 2, "win": 3}
+
+
+def _native_double(value: object) -> float | None:
+    """Parse an untrusted value with native equality semantics, excluding NaN."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        parsed = float(value)
+    except (OverflowError, ValueError, TypeError):
+        return None
+    return None if math.isnan(parsed) else parsed
+
+
+def _native_finite_double(value: object) -> float | None:
+    parsed = _native_double(value)
+    return parsed if parsed is not None and math.isfinite(parsed) else None
 
 
 def _outcome_interval(candidate: dict[str, Any]) -> tuple[int, int] | None:
@@ -50,16 +67,15 @@ def _outcome_interval(candidate: dict[str, Any]) -> tuple[int, int] | None:
 
 
 def _numeric_interval(candidate: dict[str, Any]) -> tuple[float, float] | None:
-    score = candidate.get("minimax_score")
+    score = _native_finite_double(candidate.get("minimax_score"))
     bound = candidate.get("minimax_bound")
-    if not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+    if score is None:
         return None
     if bound not in {"exact", "lower", "upper"}:
         return None
-    value = float(score)
     return (
-        -math.inf if bound == "upper" else value,
-        math.inf if bound == "lower" else value,
+        -math.inf if bound == "upper" else score,
+        math.inf if bound == "lower" else score,
     )
 
 
@@ -153,6 +169,278 @@ def _strict_search_dominance_layer(
     return None
 
 
+_CORRIDOR_AUDIT_ROOT_FIELDS = (
+    "structural_proof",
+    "relaxed_static_capacity",
+    "post_move_length",
+    "minimax_score",
+    "minimax_outcome",
+    "minimax_bound",
+)
+
+_ROOT_STRUCTURE_SEMANTIC_FIELDS = (
+    "trap_status",
+    "trap_horizon",
+    "structural_proof",
+    "proof_cutoff",
+    "proof_horizon",
+    "structural_capacity",
+    "opponent_closure_considered",
+    "post_move_length",
+    "relaxed_static_capacity",
+    "refutation_status",
+)
+
+_TRAP_STATUSES = frozenset(
+    {
+        "not_analyzed",
+        "immediate_death",
+        "proven_self_trap",
+        "open_branch",
+        "survives_cycle",
+        "survives_horizon",
+        "unknown",
+    }
+)
+_STRUCTURAL_PROOFS = frozenset({"not_analyzed", "safe", "unsafe", "unknown"})
+_PROOF_CUTOFFS = frozenset(
+    {
+        "none",
+        "capacity",
+        "cycle",
+        "horizon",
+        "dead_end",
+        "deadline",
+        "resource_limit",
+        "allocation_failure",
+        "policy_sufficient",
+        "survivability",
+        "bounded_lasso",
+    }
+)
+_REFUTATION_STATUSES = frozenset(
+    {"not_analyzed", "proven_refutable", "not_refutable", "unknown"}
+)
+_TERMINAL_CAUSE_ORDER = (
+    "wall",
+    "self_body",
+    "other_body",
+    "head_to_head",
+    "starvation",
+    "hazard",
+    "invalid_command",
+    "opponent_eliminated",
+)
+_NATIVE_INT_MAX = 2_147_483_647
+
+
+def _is_native_nonnegative_int(value: object) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _NATIVE_INT_MAX
+    )
+
+
+def _is_canonical_terminal_cause(value: object) -> bool:
+    if not isinstance(value, list) or any(
+        not isinstance(cause, str) or cause not in _TERMINAL_CAUSE_ORDER
+        for cause in value
+    ):
+        return False
+    return value == [cause for cause in _TERMINAL_CAUSE_ORDER if cause in value]
+
+
+def _root_structure_record_is_valid(candidate: dict[str, Any]) -> bool:
+    integer_fields = (
+        "trap_horizon",
+        "proof_horizon",
+        "structural_capacity",
+        "post_move_length",
+        "relaxed_static_capacity",
+    )
+    trap_status = candidate.get("trap_status")
+    structural_proof = candidate.get("structural_proof")
+    proof_cutoff = candidate.get("proof_cutoff")
+    refutation_status = candidate.get("refutation_status")
+    return (
+        isinstance(trap_status, str)
+        and trap_status in _TRAP_STATUSES
+        and isinstance(structural_proof, str)
+        and structural_proof in _STRUCTURAL_PROOFS
+        and isinstance(proof_cutoff, str)
+        and proof_cutoff in _PROOF_CUTOFFS
+        and isinstance(refutation_status, str)
+        and refutation_status in _REFUTATION_STATUSES
+        and all(
+            field in candidate and _is_native_nonnegative_int(candidate[field])
+            for field in integer_fields
+        )
+        and isinstance(candidate.get("opponent_closure_considered"), bool)
+    )
+
+
+def _corridor_metrics_are_valid(metrics: dict[str, Any]) -> bool:
+    return (
+        _is_native_nonnegative_int(metrics.get("immediate_exits"))
+        and metrics["immediate_exits"] <= 3
+        and _is_native_nonnegative_int(metrics.get("forced_steps"))
+        and _is_native_nonnegative_int(metrics.get("reachable"))
+    )
+
+
+def _corridor_metrics_are_better(
+    proposal: dict[str, Any], incumbent: dict[str, Any]
+) -> bool:
+    """Mirror the native corridor tuple without adding policy thresholds."""
+    if not _corridor_metrics_are_valid(proposal) or not _corridor_metrics_are_valid(
+        incumbent
+    ):
+        return False
+    if proposal["immediate_exits"] != incumbent["immediate_exits"]:
+        return proposal["immediate_exits"] > incumbent["immediate_exits"]
+    if proposal["forced_steps"] != incumbent["forced_steps"]:
+        return proposal["forced_steps"] < incumbent["forced_steps"]
+    return proposal["reachable"] > incumbent["reachable"]
+
+
+def _corridor_audit_candidate_is_coherent(
+    candidate: object, candidates: dict[str, dict[str, Any]]
+) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    move = candidate.get("move")
+    if not isinstance(move, str) or move not in candidates:
+        return False
+    root = candidates[move]
+    if any(
+        candidate.get(field) != root.get(field)
+        for field in _CORRIDOR_AUDIT_ROOT_FIELDS
+    ):
+        return False
+    metrics = candidate.get("corridor_metrics")
+    return isinstance(metrics, dict)
+
+
+def _exact_search_records_are_equal(
+    proposal: dict[str, Any], incumbent: dict[str, Any]
+) -> bool:
+    proposal_score = _native_double(proposal.get("minimax_score"))
+    incumbent_score = _native_double(incumbent.get("minimax_score"))
+    proposal_outcome = proposal.get("minimax_outcome")
+    incumbent_outcome = incumbent.get("minimax_outcome")
+    proposal_distance = proposal.get("minimax_terminal_distance")
+    incumbent_distance = incumbent.get("minimax_terminal_distance")
+    return (
+        proposal.get("minimax_bound") == "exact"
+        and incumbent.get("minimax_bound") == "exact"
+        and proposal_score is not None
+        and incumbent_score is not None
+        and proposal_score == incumbent_score
+        and isinstance(proposal_outcome, str)
+        and proposal_outcome in _OUTCOME_RANK
+        and isinstance(incumbent_outcome, str)
+        and incumbent_outcome in _OUTCOME_RANK
+        and proposal_outcome == incumbent_outcome
+        and isinstance(proposal_distance, int)
+        and not isinstance(proposal_distance, bool)
+        and 0 <= proposal_distance <= 65_535
+        and isinstance(incumbent_distance, int)
+        and not isinstance(incumbent_distance, bool)
+        and 0 <= incumbent_distance <= 65_535
+        and proposal_distance == incumbent_distance
+        and "minimax_cause" in proposal
+        and "minimax_cause" in incumbent
+        and _is_canonical_terminal_cause(proposal["minimax_cause"])
+        and _is_canonical_terminal_cause(incumbent["minimax_cause"])
+        and proposal["minimax_cause"] == incumbent["minimax_cause"]
+    )
+
+
+def _root_structures_are_semantically_equal(
+    proposal: dict[str, Any], incumbent: dict[str, Any]
+) -> bool:
+    """Mirror every field in native core_root_structure_semantically_equal."""
+    return (
+        _root_structure_record_is_valid(proposal)
+        and _root_structure_record_is_valid(incumbent)
+        and all(
+            field in proposal
+            and field in incumbent
+            and proposal[field] == incumbent[field]
+            for field in _ROOT_STRUCTURE_SEMANTIC_FIELDS
+        )
+    )
+
+
+def _audit_corridor_override(
+    diagnostics: dict[str, Any],
+    candidates: dict[str, dict[str, Any]],
+    *,
+    structural_conflict: bool,
+) -> tuple[bool, str | None]:
+    """Return a trusted exact-tie override or a reason its claim is invalid."""
+    audit = diagnostics.get("corridor_guard")
+    selection_claims_override = diagnostics.get("selection_reason") == "corridor_guard"
+    if not isinstance(audit, dict):
+        return (
+            (False, "missing_corridor_guard_audit")
+            if selection_claims_override
+            else (False, None)
+        )
+
+    if audit.get("applied") is not True:
+        return (
+            (False, "corridor_selection_without_applied_audit")
+            if selection_claims_override
+            else (False, None)
+        )
+
+    incumbent = audit.get("incumbent")
+    proposal = audit.get("proposal")
+    if audit.get("considered") is not True:
+        return False, "applied_corridor_guard_not_considered"
+    if audit.get("exact_tie_permitted") is not True:
+        return False, "applied_corridor_guard_without_exact_tie"
+    if audit.get("decision") != "applied_exact_tie":
+        return False, "applied_corridor_guard_decision_mismatch"
+    if audit.get("comparison_ordering") != "equal":
+        return False, "applied_corridor_guard_not_comparator_equal"
+    if audit.get("comparison_reason") != "not_compared":
+        return False, "applied_corridor_guard_comparison_reason_mismatch"
+    if not selection_claims_override:
+        return False, "applied_corridor_guard_selection_reason_mismatch"
+    if not _corridor_audit_candidate_is_coherent(incumbent, candidates):
+        return False, "incoherent_corridor_guard_incumbent"
+    if not _corridor_audit_candidate_is_coherent(proposal, candidates):
+        return False, "incoherent_corridor_guard_proposal"
+    assert isinstance(incumbent, dict)
+    assert isinstance(proposal, dict)
+    incumbent_move = str(incumbent["move"])
+    proposal_move = str(proposal["move"])
+    if incumbent_move == proposal_move:
+        return False, "applied_corridor_guard_same_candidate"
+    if diagnostics.get("move") != proposal_move:
+        return False, "selected_move_does_not_match_corridor_proposal"
+    if not _exact_search_records_are_equal(
+        candidates[proposal_move], candidates[incumbent_move]
+    ):
+        return False, "corridor_guard_search_records_not_exactly_equal"
+    if structural_conflict:
+        return False, "corridor_guard_selected_structurally_dominated_proposal"
+    if not _root_structures_are_semantically_equal(
+        candidates[proposal_move], candidates[incumbent_move]
+    ):
+        return False, "corridor_guard_root_structures_not_semantically_equal"
+    proposal_metrics = proposal.get("corridor_metrics")
+    incumbent_metrics = incumbent.get("corridor_metrics")
+    assert isinstance(proposal_metrics, dict)
+    assert isinstance(incumbent_metrics, dict)
+    if not _corridor_metrics_are_better(proposal_metrics, incumbent_metrics):
+        return False, "corridor_guard_proposal_metrics_not_better"
+    return True, None
+
+
 def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
     """Classify one production diagnostics record."""
     selected_move = str(diagnostics["move"])
@@ -203,9 +491,13 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
                 unjustified.append(move)
             else:
                 layers.append(layer)
-    post_search_override = structural_conflict and diagnostics.get("selection_reason") == "corridor_guard"
+    post_search_override, corridor_guard_error = _audit_corridor_override(
+        diagnostics, candidates, structural_conflict=structural_conflict
+    )
     justified_by_search = structural_conflict and not unjustified and bool(layers)
-    violation = structural_conflict and not post_search_override and not justified_by_search
+    violation = corridor_guard_error is not None or (
+        structural_conflict and not justified_by_search
+    )
     return DiagnosticsAudit(
         violation,
         post_search_override,
@@ -215,6 +507,7 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
         tuple(unjustified),
         tuple(sorted(set(layers))),
         unknown_candidates,
+        corridor_guard_error,
     )
 
 
@@ -673,6 +966,8 @@ def main(
                             audit.unjustified_safe_alternatives
                         ),
                     }
+                    if audit.corridor_guard_error is not None:
+                        record["corridor_guard_error"] = audit.corridor_guard_error
                     summary["comparator_violations"].append(record)
                     summary["violations"].append(record)
                 elif audit.post_search_override:
@@ -734,10 +1029,16 @@ def _print_summary(summary: dict[str, Any], *, as_json: bool) -> None:
             f"budget_ms={summary['budget_ms']}"
         )
         for violation in summary["comparator_violations"]:
+            corridor_guard_context = (
+                f" corridor_guard_error={violation['corridor_guard_error']}"
+                if "corridor_guard_error" in violation
+                else ""
+            )
             print(
                 f"VIOLATION {violation['game_id']} T{violation['turn']}: "
                 f"actual={violation['actual_move']} selected={violation['selected_move']} "
                 f"safe_alternatives={','.join(violation['safe_alternatives'])}"
+                f"{corridor_guard_context}"
             )
         for override in summary["post_search_overrides"]:
             print(
