@@ -28,6 +28,12 @@ TINY_NODE_FALLBACK_POSITIONS = [
         "c7add22b-bc1e-443e-bad3-f271ac8886a1",
     }
 ]
+PARTIAL_FRONTIER_POSITION = next(
+    position
+    for position in RISKY_POSITIONS
+    if position["evidence"]["game_id"]
+    == "0188bbac-32b6-4069-8bee-d24565c1cdd4"
+)
 
 
 def _board_from_fixture(raw: dict[str, object]) -> Board:
@@ -235,34 +241,45 @@ def test_tiny_node_budget_uses_structurally_maximal_fallback(
     position: dict[str, object],
 ) -> None:
     risky_move = str(position["evidence"]["recorded_risky_move"])
+    final_zero_depth_budget = {
+        "8fd97d0d-6f20-436a-833c-062027a12617": 6,
+        "c7add22b-bc1e-443e-bad3-f271ac8886a1": 7,
+    }[str(position["evidence"]["game_id"])]
 
-    result = minimax_diagnostics(
-        _board_from_fixture(position),
-        str(position["snake_id"]),
-        node_budget=1,
-    )
-    selected = result["root_candidates"][result["move"]]
-    risky = result["root_candidates"][risky_move]
+    for node_budget in range(1, final_zero_depth_budget + 1):
+        result = minimax_diagnostics(
+            _board_from_fixture(position),
+            str(position["snake_id"]),
+            node_budget=node_budget,
+        )
+        selected = result["root_candidates"][result["move"]]
+        risky = result["root_candidates"][risky_move]
 
-    assert result["nodes"] == 1
-    assert result["completed_depth"] == 0
-    assert result["node_budget_exhausted"] is True
-    assert result["timed_out"] is False
-    assert result["selection_reason"] == "allowed_fallback"
-    assert result["root_comparison_reason"] == "structural_proof"
-    assert result["move"] == "right"
-    assert selected["structural_proof"] == "safe"
-    assert _structurally_dominates(selected, risky)
-    assert result["root_move_scores"] == {}
-    assert all(
-        candidate["evaluated"] is True
-        and candidate["structural_proof"] != "not_analyzed"
-        and candidate["proof_cutoff"] != "not_analyzed"
-        and candidate["minimax_score"] is None
-        and candidate["minimax_outcome"] is None
-        and candidate["minimax_bound"] is None
-        for candidate in result["root_candidates"].values()
-    )
+        assert result["nodes"] == node_budget
+        assert result["completed_depth"] == 0
+        assert result["node_budget_exhausted"] is True
+        assert result["timed_out"] is False
+        assert result["move"] == "right"
+        assert selected["structural_proof"] == "safe"
+        assert _structurally_dominates(selected, risky)
+        assert all(
+            candidate["evaluated"] is True
+            and candidate["structural_proof"] != "not_analyzed"
+            and candidate["proof_cutoff"] != "not_analyzed"
+            for candidate in result["root_candidates"].values()
+        )
+        if "right" in result["root_move_scores"]:
+            assert result["selection_reason"] == "node_budget_best_so_far"
+            assert selected["minimax_score"] == result["root_move_scores"]["right"]
+            assert selected["minimax_score"] == result["score"]
+            assert selected["minimax_outcome"] is not None
+            assert selected["minimax_bound"] in {"exact", "lower", "upper"}
+        else:
+            assert result["selection_reason"] == "allowed_fallback"
+            assert result["root_comparison_reason"] == "structural_proof"
+            assert selected["minimax_score"] is None
+            assert selected["minimax_outcome"] is None
+            assert selected["minimax_bound"] is None
 
 
 def test_strict_minimax_tiny_node_budget_preserves_first_allowed_fallback() -> None:
@@ -296,6 +313,28 @@ def test_strict_minimax_tiny_node_budget_preserves_first_allowed_fallback() -> N
         for candidate in result["root_candidates"].values()
     )
 
+
+def test_tiny_node_budget_adopts_truthful_structural_frontier_partial() -> None:
+    position = PARTIAL_FRONTIER_POSITION
+
+    result = minimax_diagnostics(
+        _board_from_fixture(position),
+        str(position["snake_id"]),
+        node_budget=4,
+    )
+    selected = result["root_candidates"]["down"]
+
+    assert result["nodes"] == 4
+    assert result["completed_depth"] == 0
+    assert result["node_budget_exhausted"] is True
+    assert result["timed_out"] is False
+    assert result["move"] == "down"
+    assert result["selection_reason"] == "node_budget_best_so_far"
+    assert result["root_move_scores"] == {"down": selected["minimax_score"]}
+    assert result["score"] == selected["minimax_score"]
+    assert selected["structural_proof"] == "safe"
+    assert selected["minimax_outcome"] == "unresolved"
+    assert selected["minimax_bound"] in {"exact", "lower", "upper"}
 
 def _json_fingerprint(result: dict[str, object]) -> str:
     return json.dumps(_decision_fingerprint(result), sort_keys=True)

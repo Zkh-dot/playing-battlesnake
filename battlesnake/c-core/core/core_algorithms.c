@@ -5298,6 +5298,35 @@ static bool core_select_root_candidate(
     );
 }
 
+static bool core_select_root_candidate_from_mask(
+    const Board* board,
+    const char* snake_id,
+    const MoveDirection* original_moves,
+    int move_count,
+    int* reachable_spaces,
+    MoveDirection preferred,
+    const CoreSearchContext* context,
+    uint8_t eligible_mask,
+    CoreRootSelection* out_selection
+) {
+    CoreSearchContext eligible = *context;
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((eligible_mask & (1u << move)) == 0) {
+            eligible.root_move_value_valid[move] = false;
+        }
+    }
+    return core_select_root_candidate(
+        board,
+        snake_id,
+        original_moves,
+        move_count,
+        reachable_spaces,
+        preferred,
+        &eligible,
+        out_selection
+    );
+}
+
 #ifdef CORE_ROOT_SELECTION_TESTING
 bool CoreSelectRootCandidateForTesting(
     const Board* board,
@@ -6087,10 +6116,16 @@ CoreStatus CoreMinimaxMoveWithStats(
     if (fallback_frontier == 0) {
         fallback_frontier = root_allowed_mask;
     }
+    MoveDirection root_moves[4];
+    int root_move_count = 0;
+    bool fallback_selected = false;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
-        if ((fallback_frontier & (1u << move)) != 0) {
+        if ((root_allowed_mask & (1u << move)) != 0) {
+            root_moves[root_move_count++] = (MoveDirection)move;
+        }
+        if (!fallback_selected && (fallback_frontier & (1u << move)) != 0) {
             completed_best = (MoveDirection)move;
-            break;
+            fallback_selected = true;
         }
     }
     CoreRootComparisonReason fallback_reason = fallback_frontier != root_allowed_mask
@@ -6162,11 +6197,26 @@ CoreStatus CoreMinimaxMoveWithStats(
             return status;
         }
         if (iteration_interrupted) {
+            int partial_reachable_spaces[4] = {-1, -1, -1, -1};
+            CoreRootSelection partial_selection;
+            memset(&partial_selection, 0, sizeof(partial_selection));
+            partial_selection.move = MOVE_INVALID;
+            bool partial_valid = core_select_root_candidate_from_mask(
+                board,
+                snake_id,
+                root_moves,
+                root_move_count,
+                partial_reachable_spaces,
+                completed_best,
+                &context,
+                fallback_frontier,
+                &partial_selection
+            );
             (void)core_root_snapshot_adopt_partial_if_empty(
                 &completed,
-                context.root_best_valid,
-                context.root_best_move,
-                context.root_best_reason,
+                partial_valid,
+                partial_selection.move,
+                partial_selection.reason,
                 context.root_move_value_valid,
                 context.root_move_values,
                 stats->node_budget_exhausted
