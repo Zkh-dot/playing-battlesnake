@@ -277,7 +277,8 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
             server_log,
             BATTLESNAKE_WORKERS="1",
             BATTLESNAKE_QUEUE_CAPACITY="1",
-            BATTLESNAKE_IO_TIMEOUT_MS="1500",
+            # Outlive the 2s stable-state observation and 0.5s response budget.
+            BATTLESNAKE_IO_TIMEOUT_MS="5000",
         )
         active: socket.socket | None = None
         queued: socket.socket | None = None
