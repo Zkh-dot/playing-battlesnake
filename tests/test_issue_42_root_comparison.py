@@ -216,12 +216,49 @@ def test_t169_production_budgets_never_select_deficient_root_and_repeat_coherent
                     observations_by_completed_depth.get(result["completed_depth"], 0) + 1
                 )
             _assert_selected_value_is_coherent(result)
-        assert observations_by_completed_depth
-        repeated_depths = {
-            depth for depth, count in observations_by_completed_depth.items() if count >= 2
-        }
-        assert repeated_depths
-        assert all(len(reasons_by_completed_depth[depth]) == 1 for depth in repeated_depths)
+        for depth, count in observations_by_completed_depth.items():
+            if count >= 2:
+                assert len(reasons_by_completed_depth[depth]) == 1
+
+
+def test_fixed_depth_root_reason_and_tagged_frontier_repeat_deterministically() -> None:
+    position = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["positions"][0]
+    board = _board_from_fixture(position)
+    snake_id = str(position["snake_id"])
+
+    results = [
+        minimax_diagnostics(
+            board,
+            snake_id,
+            time_budget_ms=5000,
+            fixed_depth=2,
+            enable_tt=False,
+            enable_move_ordering=False,
+        )
+        for _ in range(3)
+    ]
+    tagged_frontiers = {
+        tuple(
+            (
+                move,
+                candidate["minimax_outcome"],
+                candidate["minimax_bound"],
+                candidate["minimax_score"],
+                candidate["minimax_terminal_distance"],
+            )
+            for move, candidate in result["root_candidates"].items()
+            if candidate["minimax_score"] is not None
+        )
+        for result in results
+    }
+    reasons = {result["root_comparison_reason"] for result in results}
+
+    assert {result["completed_depth"] for result in results} == {2}
+    assert len(tagged_frontiers) == 1
+    assert len(reasons) == 1
+    assert reasons != {"not_compared"}
+    for result in results:
+        _assert_selected_value_is_coherent(result)
 
 
 def test_root_visitation_order_changes_tags_without_changing_semantic_result() -> None:
@@ -414,7 +451,7 @@ def test_low_budget_timeout_snapshot_is_coherent_smoke() -> None:
         )
 
         assert _selected_tag(timed) == _selected_tag(complete)
-        assert timed["selection_reason"] == "timeout_best_so_far"
+        assert timed["selection_reason"] == "minimax"
 
 
 def test_strict_minimax_keeps_numeric_root_selection_semantics() -> None:

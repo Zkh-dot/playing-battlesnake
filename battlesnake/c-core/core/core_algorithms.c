@@ -5804,6 +5804,7 @@ typedef struct {
     MoveDirection move;
     CoreSearchValue value;
     CoreRootComparisonReason reason;
+    CoreSelectionReason selection_reason;
     bool root_value_valid[4];
     CoreSearchValue root_values[4];
 } CoreRootIterationSnapshot;
@@ -5821,6 +5822,7 @@ static void core_root_snapshot_complete(
     snapshot->move = move;
     snapshot->value = value;
     snapshot->reason = reason;
+    snapshot->selection_reason = CORE_SELECTION_MINIMAX;
     for (int root_move = MOVE_UP; root_move <= MOVE_RIGHT; root_move++) {
         snapshot->root_value_valid[root_move] = root_value_valid[root_move];
         snapshot->root_values[root_move] = root_values[root_move];
@@ -5842,6 +5844,7 @@ static bool core_root_snapshot_adopt_partial_if_empty(
     snapshot->move = partial_move;
     snapshot->value = root_values[partial_move];
     snapshot->reason = partial_reason;
+    snapshot->selection_reason = CORE_SELECTION_TIMEOUT_BEST_SO_FAR;
     for (int root_move = MOVE_UP; root_move <= MOVE_RIGHT; root_move++) {
         snapshot->root_value_valid[root_move] = root_value_valid[root_move];
         snapshot->root_values[root_move] = root_values[root_move];
@@ -5860,14 +5863,21 @@ bool CoreRootTimeoutSnapshotForTesting(
     CoreRootComparisonReason partial_reason,
     MoveDirection* out_move,
     CoreSearchValue* out_value,
-    CoreRootComparisonReason* out_reason
+    CoreRootComparisonReason* out_reason,
+    int* out_depth,
+    CoreSelectionReason* out_selection_reason,
+    bool out_root_value_valid[4],
+    CoreSearchValue out_root_values[4]
 ) {
-    if (out_move == NULL || out_value == NULL || out_reason == NULL) {
+    if (out_move == NULL || out_value == NULL || out_reason == NULL || out_depth == NULL ||
+        out_selection_reason == NULL || out_root_value_valid == NULL || out_root_values == NULL) {
         return false;
     }
     CoreRootIterationSnapshot snapshot;
     memset(&snapshot, 0, sizeof(snapshot));
     snapshot.move = MOVE_INVALID;
+    snapshot.reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+    snapshot.selection_reason = CORE_SELECTION_ALLOWED_FALLBACK;
     bool completed_valid[4] = {false, false, false, false};
     CoreSearchValue completed_values[4];
     memset(completed_values, 0, sizeof(completed_values));
@@ -5899,13 +5909,16 @@ bool CoreRootTimeoutSnapshotForTesting(
         partial_valid,
         partial_values
     );
-    if (!core_valid_move_direction(snapshot.move)) {
-        return false;
-    }
     *out_move = snapshot.move;
     *out_value = snapshot.value;
     *out_reason = snapshot.reason;
-    return true;
+    *out_depth = snapshot.depth;
+    *out_selection_reason = snapshot.selection_reason;
+    for (int root_move = MOVE_UP; root_move <= MOVE_RIGHT; root_move++) {
+        out_root_value_valid[root_move] = snapshot.root_value_valid[root_move];
+        out_root_values[root_move] = snapshot.root_values[root_move];
+    }
+    return core_valid_move_direction(snapshot.move);
 }
 #endif
 
@@ -6031,6 +6044,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     completed.move = completed_best;
     completed.value = core_unresolved_value(0.0);
     completed.reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+    completed.selection_reason = CORE_SELECTION_ALLOWED_FALLBACK;
     bool timed_out = false;
     struct timespec start;
     struct timespec end;
@@ -6109,10 +6123,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     CoreSearchValue completed_value = completed.value;
     stats->completed_depth = completed.depth;
     stats->timed_out = timed_out;
-    if (completed.depth > 0) {
-        stats->selection_reason = timed_out ?
-            CORE_SELECTION_TIMEOUT_BEST_SO_FAR : CORE_SELECTION_MINIMAX;
-    }
+    stats->selection_reason = completed.selection_reason;
     stats->score = completed_value.score;
     stats->value = completed_value;
     stats->root_comparison_reason = completed.reason;

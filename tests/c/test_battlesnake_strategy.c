@@ -31,7 +31,11 @@ extern bool CoreRootTimeoutSnapshotForTesting(
     CoreRootComparisonReason partial_reason,
     MoveDirection* out_move,
     CoreSearchValue* out_value,
-    CoreRootComparisonReason* out_reason
+    CoreRootComparisonReason* out_reason,
+    int* out_depth,
+    CoreSelectionReason* out_selection_reason,
+    bool out_root_value_valid[4],
+    CoreSearchValue out_root_values[4]
 );
 #endif
 
@@ -867,24 +871,41 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
     MoveDirection move = MOVE_INVALID;
     CoreSearchValue value;
     CoreRootComparisonReason reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+    int depth = -1;
+    CoreSelectionReason selection_reason = CORE_SELECTION_CORRIDOR_GUARD;
+    bool root_value_valid[4] = {false, false, false, false};
+    CoreSearchValue root_values[4];
+    memset(root_values, 0, sizeof(root_values));
 
-    assert(CoreRootTimeoutSnapshotForTesting(
-        true,
-        MOVE_LEFT,
-        completed,
-        CORE_ROOT_COMPARISON_HEURISTIC_VALUE,
-        MOVE_RIGHT,
-        partial,
-        CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
-        &move,
-        &value,
-        &reason
-    ));
-    assert(move == MOVE_LEFT);
-    assert(value.score == completed.score);
-    assert(value.outcome == completed.outcome);
-    assert(value.bound == completed.bound);
-    assert(reason == CORE_ROOT_COMPARISON_HEURISTIC_VALUE);
+    for (int repetition = 0; repetition < 3; repetition++) {
+        assert(CoreRootTimeoutSnapshotForTesting(
+            true,
+            MOVE_LEFT,
+            completed,
+            CORE_ROOT_COMPARISON_HEURISTIC_VALUE,
+            MOVE_RIGHT,
+            partial,
+            CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
+            &move,
+            &value,
+            &reason,
+            &depth,
+            &selection_reason,
+            root_value_valid,
+            root_values
+        ));
+        assert(depth == 1);
+        assert(selection_reason == CORE_SELECTION_MINIMAX);
+        assert(move == MOVE_LEFT);
+        assert(value.score == completed.score);
+        assert(value.outcome == completed.outcome);
+        assert(value.bound == completed.bound);
+        assert(reason == CORE_ROOT_COMPARISON_HEURISTIC_VALUE);
+        assert(root_value_valid[MOVE_LEFT]);
+        assert(!root_value_valid[MOVE_RIGHT]);
+        assert(root_values[MOVE_LEFT].score == completed.score);
+        assert(root_values[MOVE_LEFT].bound == completed.bound);
+    }
 
     assert(CoreRootTimeoutSnapshotForTesting(
         false,
@@ -896,8 +917,14 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
         CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
         &move,
         &value,
-        &reason
+        &reason,
+        &depth,
+        &selection_reason,
+        root_value_valid,
+        root_values
     ));
+    assert(depth == 0);
+    assert(selection_reason == CORE_SELECTION_TIMEOUT_BEST_SO_FAR);
     assert(move == MOVE_RIGHT);
     assert(value.score == partial.score);
     assert(value.outcome == partial.outcome);
@@ -905,6 +932,34 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
     assert(value.cause == partial.cause);
     assert(value.terminal_distance == partial.terminal_distance);
     assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+    assert(!root_value_valid[MOVE_LEFT]);
+    assert(root_value_valid[MOVE_RIGHT]);
+    assert(root_values[MOVE_RIGHT].score == partial.score);
+    assert(root_values[MOVE_RIGHT].bound == partial.bound);
+
+    assert(!CoreRootTimeoutSnapshotForTesting(
+        false,
+        MOVE_INVALID,
+        completed,
+        CORE_ROOT_COMPARISON_HEURISTIC_VALUE,
+        MOVE_INVALID,
+        partial,
+        CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
+        &move,
+        &value,
+        &reason,
+        &depth,
+        &selection_reason,
+        root_value_valid,
+        root_values
+    ));
+    assert(depth == 0);
+    assert(selection_reason == CORE_SELECTION_ALLOWED_FALLBACK);
+    assert(move == MOVE_INVALID);
+    assert(reason == CORE_ROOT_COMPARISON_NOT_COMPARED);
+    for (int root_move = MOVE_UP; root_move <= MOVE_RIGHT; root_move++) {
+        assert(!root_value_valid[root_move]);
+    }
 }
 #endif
 
