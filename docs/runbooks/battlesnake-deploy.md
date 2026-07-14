@@ -30,14 +30,69 @@ Required environment:
 ```text
 BATTLESNAKE_PORT=8000
 BATTLESNAKE_SEARCH_BUDGET_MS=400
+BATTLESNAKE_WORKERS=2
+BATTLESNAKE_QUEUE_CAPACITY=8
 ```
 
-Native HTTP concurrency is bounded by `BATTLESNAKE_WORKERS` (default `2`) and
-`BATTLESNAKE_QUEUE_CAPACITY` (default `8`). Overload responses use one more
-rejection worker than request workers, capped at `64`, and a rejection queue
-with the same configured capacity. If both queues are full, the server pauses
-`accept()` until a worker signals capacity; connections remain in the kernel
-backlog rather than being accepted and silently reset.
+Native HTTP concurrency is bounded. `BATTLESNAKE_WORKERS` configures `1..64`
+move workers (default `2`) and `BATTLESNAKE_QUEUE_CAPACITY` configures the
+bounded move FIFO (default `8`). The rejection pool has
+`min(move workers + 1, 64)` workers and a rejection FIFO with the same capacity
+as the move FIFO. If both user-space FIFOs are full, the listener pauses
+`accept()` until its capacity pipe wakes it. Completed handshakes wait in the
+kernel listen backlog, which is explicitly `128` in the server; it is another
+bounded layer, not an unlimited queue. A connection accepted after the move
+FIFO fills receives an explicit `503 Service Unavailable` through the rejection
+pool instead of being silently reset.
+
+The listener records a monotonic timestamp immediately after `accept()`. Queue
+delay and JSON parsing time are deducted from the request's game timeout before
+search. If too little search window remains, the request takes the cheap legal
+fallback path rather than starting work that cannot finish in time.
+
+Move request state is not shared between workers: the request and response
+buffers, JSON parser, board, arena, search timer, search statistics,
+transposition table, and search workspace are constructed for the request. The
+space-time scratch declared `_Thread_local` is private to each worker thread.
+The configured strategy values are read-only while workers are running.
+
+Each recognized `/move` request emits one atomic JSON telemetry line on stderr:
+
+```json
+{"event":"move_request","status":200,"queue_ms":0.008,"handler_ms":348.408,"total_ms":348.486,"timeout_ms":500,"fallback":false}
+```
+
+`queue_ms` starts at the accept timestamp, `handler_ms` covers request handling,
+and `total_ms` spans accept through response completion. `fallback` is true when
+the cheap legal fallback was selected. An accepted overload emits
+`{"event":"server_overload","status":503}`. Alert on timeouts/5xx, increasing
+fallback rate, or total p99 approaching the game deadline.
+
+### Concurrent capacity gate
+
+Run the production-path gate before deployment or any capacity change:
+
+```bash
+python3 -m benchmarks.bench_issue_45_server_concurrency \
+  --workers 2 \
+  --queue-capacity 8 \
+  --concurrency 2 \
+  --batches 20 \
+  --deadline-ms 500 \
+  --search-budget-ms 400 \
+  --output /tmp/issue45-server-concurrency.json
+```
+
+The gate releases each request pair together, applies a 500 ms external socket
+deadline, and fails on a timeout/error/503 or when external/server-total p99
+reaches the deadline. The 2026-07-15 local production-build result was 40/40
+legal 200 responses, zero timeout/error/503, zero fallback, external p99
+`349.444 ms`, server queue p99 `0.169 ms`, handler p99 `348.998 ms`, and total
+p99 `349.100 ms`. The measured external safety margin was `150.556 ms`.
+
+Do not increase the worker or queue settings automatically from one result.
+Raise capacity only after repeated representative load runs remain below the
+deadline and process/thread memory has been measured at the proposed settings.
 
 Routing behavior:
 
