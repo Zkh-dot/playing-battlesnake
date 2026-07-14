@@ -36,6 +36,7 @@ class DiagnosticsAudit:
     unjustified_safe_alternatives: tuple[str, ...]
     justification_layers: tuple[str, ...]
     unknown_candidates: int
+    corridor_guard_error: str | None
 
 
 _OUTCOME_RANK = {"loss": 0, "unresolved": 1, "draw": 2, "win": 3}
@@ -153,6 +154,137 @@ def _strict_search_dominance_layer(
     return None
 
 
+_CORRIDOR_AUDIT_ROOT_FIELDS = (
+    "structural_proof",
+    "relaxed_static_capacity",
+    "post_move_length",
+    "minimax_score",
+    "minimax_outcome",
+    "minimax_bound",
+)
+
+
+def _corridor_metrics_are_better(
+    proposal: dict[str, Any], incumbent: dict[str, Any]
+) -> bool:
+    """Mirror the native corridor tuple without adding policy thresholds."""
+    keys = ("immediate_exits", "forced_steps", "reachable")
+    if any(
+        not isinstance(candidate.get(key), int) or isinstance(candidate.get(key), bool)
+        for candidate in (proposal, incumbent)
+        for key in keys
+    ):
+        return False
+    if proposal["immediate_exits"] != incumbent["immediate_exits"]:
+        return proposal["immediate_exits"] > incumbent["immediate_exits"]
+    if proposal["forced_steps"] != incumbent["forced_steps"]:
+        return proposal["forced_steps"] < incumbent["forced_steps"]
+    return proposal["reachable"] > incumbent["reachable"]
+
+
+def _corridor_audit_candidate_is_coherent(
+    candidate: object, candidates: dict[str, dict[str, Any]]
+) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    move = candidate.get("move")
+    if not isinstance(move, str) or move not in candidates:
+        return False
+    root = candidates[move]
+    if any(
+        candidate.get(field) != root.get(field)
+        for field in _CORRIDOR_AUDIT_ROOT_FIELDS
+    ):
+        return False
+    metrics = candidate.get("corridor_metrics")
+    return isinstance(metrics, dict)
+
+
+def _exact_search_records_are_equal(
+    proposal: dict[str, Any], incumbent: dict[str, Any]
+) -> bool:
+    proposal_score = proposal.get("minimax_score")
+    incumbent_score = incumbent.get("minimax_score")
+    return (
+        proposal.get("minimax_bound") == "exact"
+        and incumbent.get("minimax_bound") == "exact"
+        and isinstance(proposal_score, (int, float))
+        and not isinstance(proposal_score, bool)
+        and isinstance(incumbent_score, (int, float))
+        and not isinstance(incumbent_score, bool)
+        and math.isfinite(float(proposal_score))
+        and math.isfinite(float(incumbent_score))
+        and float(proposal_score) == float(incumbent_score)
+        and proposal.get("minimax_outcome") == incumbent.get("minimax_outcome")
+        and proposal.get("minimax_terminal_distance")
+        == incumbent.get("minimax_terminal_distance")
+        and proposal.get("minimax_terminal_cause")
+        == incumbent.get("minimax_terminal_cause")
+    )
+
+
+def _audit_corridor_override(
+    diagnostics: dict[str, Any],
+    candidates: dict[str, dict[str, Any]],
+    *,
+    structural_conflict: bool,
+) -> tuple[bool, str | None]:
+    """Return a trusted exact-tie override or a reason its claim is invalid."""
+    audit = diagnostics.get("corridor_guard")
+    selection_claims_override = diagnostics.get("selection_reason") == "corridor_guard"
+    if not isinstance(audit, dict):
+        return (
+            (False, "missing_corridor_guard_audit")
+            if selection_claims_override
+            else (False, None)
+        )
+
+    if audit.get("applied") is not True:
+        return (
+            (False, "corridor_selection_without_applied_audit")
+            if selection_claims_override
+            else (False, None)
+        )
+
+    incumbent = audit.get("incumbent")
+    proposal = audit.get("proposal")
+    if audit.get("considered") is not True:
+        return False, "applied_corridor_guard_not_considered"
+    if audit.get("exact_tie_permitted") is not True:
+        return False, "applied_corridor_guard_without_exact_tie"
+    if audit.get("decision") != "applied_exact_tie":
+        return False, "applied_corridor_guard_decision_mismatch"
+    if audit.get("comparison_ordering") != "equal":
+        return False, "applied_corridor_guard_not_comparator_equal"
+    if not selection_claims_override:
+        return False, "applied_corridor_guard_selection_reason_mismatch"
+    if not _corridor_audit_candidate_is_coherent(incumbent, candidates):
+        return False, "incoherent_corridor_guard_incumbent"
+    if not _corridor_audit_candidate_is_coherent(proposal, candidates):
+        return False, "incoherent_corridor_guard_proposal"
+    assert isinstance(incumbent, dict)
+    assert isinstance(proposal, dict)
+    incumbent_move = str(incumbent["move"])
+    proposal_move = str(proposal["move"])
+    if incumbent_move == proposal_move:
+        return False, "applied_corridor_guard_same_candidate"
+    if diagnostics.get("move") != proposal_move:
+        return False, "selected_move_does_not_match_corridor_proposal"
+    if not _exact_search_records_are_equal(
+        candidates[proposal_move], candidates[incumbent_move]
+    ):
+        return False, "corridor_guard_search_records_not_exactly_equal"
+    proposal_metrics = proposal.get("corridor_metrics")
+    incumbent_metrics = incumbent.get("corridor_metrics")
+    assert isinstance(proposal_metrics, dict)
+    assert isinstance(incumbent_metrics, dict)
+    if not _corridor_metrics_are_better(proposal_metrics, incumbent_metrics):
+        return False, "corridor_guard_proposal_metrics_not_better"
+    if structural_conflict:
+        return False, "corridor_guard_selected_structurally_dominated_proposal"
+    return True, None
+
+
 def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
     """Classify one production diagnostics record."""
     selected_move = str(diagnostics["move"])
@@ -203,9 +335,13 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
                 unjustified.append(move)
             else:
                 layers.append(layer)
-    post_search_override = structural_conflict and diagnostics.get("selection_reason") == "corridor_guard"
+    post_search_override, corridor_guard_error = _audit_corridor_override(
+        diagnostics, candidates, structural_conflict=structural_conflict
+    )
     justified_by_search = structural_conflict and not unjustified and bool(layers)
-    violation = structural_conflict and not post_search_override and not justified_by_search
+    violation = corridor_guard_error is not None or (
+        structural_conflict and not justified_by_search
+    )
     return DiagnosticsAudit(
         violation,
         post_search_override,
@@ -215,6 +351,7 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
         tuple(unjustified),
         tuple(sorted(set(layers))),
         unknown_candidates,
+        corridor_guard_error,
     )
 
 
@@ -673,6 +810,8 @@ def main(
                             audit.unjustified_safe_alternatives
                         ),
                     }
+                    if audit.corridor_guard_error is not None:
+                        record["corridor_guard_error"] = audit.corridor_guard_error
                     summary["comparator_violations"].append(record)
                     summary["violations"].append(record)
                 elif audit.post_search_override:
@@ -734,10 +873,16 @@ def _print_summary(summary: dict[str, Any], *, as_json: bool) -> None:
             f"budget_ms={summary['budget_ms']}"
         )
         for violation in summary["comparator_violations"]:
+            corridor_guard_context = (
+                f" corridor_guard_error={violation['corridor_guard_error']}"
+                if "corridor_guard_error" in violation
+                else ""
+            )
             print(
                 f"VIOLATION {violation['game_id']} T{violation['turn']}: "
                 f"actual={violation['actual_move']} selected={violation['selected_move']} "
                 f"safe_alternatives={','.join(violation['safe_alternatives'])}"
+                f"{corridor_guard_context}"
             )
         for override in summary["post_search_overrides"]:
             print(

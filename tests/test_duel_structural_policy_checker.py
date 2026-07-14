@@ -63,6 +63,64 @@ def _candidate(
     }
 
 
+def _guard_candidate(
+    move: str,
+    root: dict[str, object],
+    *,
+    immediate_exits: int,
+    forced_steps: int,
+    reachable: int,
+) -> dict[str, object]:
+    return {
+        "move": move,
+        "corridor_metrics": {
+            "immediate_exits": immediate_exits,
+            "forced_steps": forced_steps,
+            "reachable": reachable,
+        },
+        "structural_proof": root["structural_proof"],
+        "relaxed_static_capacity": root["relaxed_static_capacity"],
+        "post_move_length": root["post_move_length"],
+        "minimax_score": root["minimax_score"],
+        "minimax_outcome": root["minimax_outcome"],
+        "minimax_bound": root["minimax_bound"],
+    }
+
+
+def _corridor_audit(
+    incumbent_move: str,
+    proposal_move: str,
+    roots: dict[str, dict[str, object]],
+    *,
+    applied: bool,
+    exact_tie_permitted: bool,
+    decision: str,
+    comparison_ordering: str,
+) -> dict[str, object]:
+    return {
+        "considered": True,
+        "incumbent": _guard_candidate(
+            incumbent_move,
+            roots[incumbent_move],
+            immediate_exits=1,
+            forced_steps=3,
+            reachable=8,
+        ),
+        "proposal": _guard_candidate(
+            proposal_move,
+            roots[proposal_move],
+            immediate_exits=2,
+            forced_steps=1,
+            reachable=12,
+        ),
+        "comparison_ordering": comparison_ordering,
+        "comparison_reason": "semantic_equality",
+        "exact_tie_permitted": exact_tie_permitted,
+        "applied": applied,
+        "decision": decision,
+    }
+
+
 def test_pre_fix_policy_shape_is_a_violation() -> None:
     diagnostics = {
         "move": "left",
@@ -690,7 +748,255 @@ def test_all_exact_losses_require_strictly_longer_terminal_survival() -> None:
     assert audit.justification_layers == ("terminal_survival",)
 
 
-def test_corridor_guard_conflict_is_reported_separately() -> None:
+def test_rejected_structural_corridor_proposal_is_not_an_override() -> None:
+    roots = {
+        "up": _candidate(
+            capacity=76,
+            length=39,
+            proof="safe",
+            minimax_outcome="unresolved",
+            minimax_bound="exact",
+            minimax_score=1942.4,
+        ),
+        "down": _candidate(
+            capacity=7,
+            length=39,
+            proof="unknown",
+            minimax_outcome="unresolved",
+            minimax_bound="exact",
+            minimax_score=1943.8,
+        ),
+    }
+    diagnostics = {
+        "move": "up",
+        "selection_reason": "minimax",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "up",
+            "down",
+            roots,
+            applied=False,
+            exact_tie_permitted=False,
+            decision="rejected_search_order",
+            comparison_ordering="incumbent",
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is False
+    assert audit.post_search_override is False
+
+
+@pytest.mark.parametrize(
+    ("proposal_bound", "comparison_ordering", "expected_error"),
+    [
+        (
+            "upper",
+            "equal",
+            "corridor_guard_search_records_not_exactly_equal",
+        ),
+        (
+            "exact",
+            "incomparable",
+            "applied_corridor_guard_not_comparator_equal",
+        ),
+    ],
+)
+def test_equal_scores_with_unequal_or_incomparable_records_cannot_override(
+    proposal_bound: str,
+    comparison_ordering: str,
+    expected_error: str,
+) -> None:
+    roots = {
+        "right": _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        ),
+        "down": _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound=proposal_bound,
+            minimax_score=100.0,
+        ),
+    }
+    diagnostics = {
+        "move": "down",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "down",
+            roots,
+            applied=True,
+            exact_tie_permitted=True,
+            decision="applied_exact_tie",
+            comparison_ordering=comparison_ordering,
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert audit.corridor_guard_error == expected_error
+
+
+def test_semantically_equal_better_corridor_is_counted_as_allowed_override() -> None:
+    roots = {
+        move: _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+            minimax_terminal_distance=4,
+        )
+        for move in ("right", "left")
+    }
+    diagnostics = {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "left",
+            roots,
+            applied=True,
+            exact_tie_permitted=True,
+            decision="applied_exact_tie",
+            comparison_ordering="equal",
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is False
+    assert audit.post_search_override is True
+
+
+def test_false_predicate_rejects_claimed_override() -> None:
+    roots = {
+        "right": _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        ),
+        "left": _candidate(
+            capacity=5,
+            length=8,
+            proof="unknown",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        ),
+    }
+    diagnostics = {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "left",
+            roots,
+            applied=True,
+            exact_tie_permitted=False,
+            decision="rejected_search_order",
+            comparison_ordering="equal",
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert (
+        audit.corridor_guard_error
+        == "applied_corridor_guard_without_exact_tie"
+    )
+
+
+def test_decision_mismatch_rejects_claimed_override() -> None:
+    roots = {
+        move: _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        )
+        for move in ("right", "left")
+    }
+    diagnostics = {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "left",
+            roots,
+            applied=True,
+            exact_tie_permitted=True,
+            decision="rejected_search_order",
+            comparison_ordering="equal",
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert audit.corridor_guard_error == "applied_corridor_guard_decision_mismatch"
+
+
+def test_structurally_dominated_applied_proposal_is_a_violation() -> None:
+    roots = {
+        "right": _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        ),
+        "left": _candidate(
+            capacity=5,
+            length=8,
+            proof="unknown",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        ),
+    }
+    diagnostics = {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "left",
+            roots,
+            applied=True,
+            exact_tie_permitted=True,
+            decision="applied_exact_tie",
+            comparison_ordering="equal",
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert (
+        audit.corridor_guard_error
+        == "corridor_guard_selected_structurally_dominated_proposal"
+    )
+
+
+def test_missing_corridor_audit_does_not_exempt_corridor_selection() -> None:
     diagnostics = {
         "move": "left",
         "selection_reason": "corridor_guard",
@@ -702,8 +1008,9 @@ def test_corridor_guard_conflict_is_reported_separately() -> None:
 
     audit = audit_diagnostics(diagnostics)
 
-    assert audit.violation is False
-    assert audit.post_search_override is True
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert audit.corridor_guard_error == "missing_corridor_guard_audit"
 
 
 def _board(

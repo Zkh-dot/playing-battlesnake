@@ -104,6 +104,39 @@ Acceptance coverage: no strictly better exact result is overwritten; no structur
 
 Acceptance coverage: diagnostics explain activations and rejected overrides; audit tooling no longer grants a blanket exception to corridor selections.
 
+### Implemented ordering and audit contract
+
+The common minimax/root comparison is authoritative. A different corridor
+proposal may replace its incumbent only after both roots have exact,
+semantically equal search values, `CoreCompareRootCandidates` returns `EQUAL`,
+and the proposal has strictly better board-derived corridor metrics. An
+`INCOMPARABLE` result is not an `EQUAL` result and never permits the override.
+
+The top-level `corridor_guard` diagnostics record exposes `considered`,
+`incumbent`, `proposal`, `comparison_ordering`, `comparison_reason`,
+`exact_tie_permitted`, `applied`, and `decision`. Each candidate record carries
+its move, corridor metrics, structural proof, relaxed capacity, post-move
+length, and minimax score/outcome/bound. Stable decisions are
+`not_considered`, `same_as_incumbent`, `rejected_search_order`, and
+`applied_exact_tie`.
+
+`tools/check_duel_structural_policy.py` counts a post-search override only when
+the audit coherently reports an applied exact tie: the decision and comparison
+must agree, the selected move must be the proposal, the audited candidates
+must match their root records, both exact search records must be semantically
+equal, and the proposal metrics must be better. Rejected, same-candidate, and
+not-considered audits receive no exception and remain subject to ordinary root
+policy checks. A missing audit for `selection_reason=corridor_guard`, an
+incoherent applied claim, or a structurally dominated proposal is a comparator
+violation.
+
+The current fixed-depth re-audit of the five issue positions observed
+`same_as_incumbent` at turns 290, 317, 187, and 284. Turn 424 observed a
+`rejected_search_order` proposal because the common root comparison retained
+the structurally safe incumbent. These statements describe the captured
+diagnostics only; they do not establish that the historical replay outcome was
+caused by the corridor decision.
+
 ## Task 4: Full regression, performance, and production-path verification
 
 **Files:**
