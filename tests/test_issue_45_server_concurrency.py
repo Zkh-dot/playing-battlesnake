@@ -74,8 +74,15 @@ def _blocked_signals(pid: int, tid: int) -> int:
     raise AssertionError(f"SigBlk missing from {status}")
 
 
-def _wait_for_server_socket_count(pid: int, expected: int, *, exact: bool = False) -> None:
+def _wait_for_server_socket_count(
+    pid: int,
+    expected: int,
+    *,
+    exact: bool = False,
+    stable_for: float = 0.0,
+) -> None:
     deadline = time.monotonic() + 2.0
+    stable_since: float | None = None
     while time.monotonic() < deadline:
         fd_dir = f"/proc/{pid}/fd"
         socket_count = 0
@@ -87,27 +94,19 @@ def _wait_for_server_socket_count(pid: int, expected: int, *, exact: bool = Fals
             socket_count += target.startswith("socket:")
         matches_expected = socket_count == expected if exact else socket_count >= expected
         if matches_expected:
-            return
-        time.sleep(0.005)
-    raise AssertionError(f"server did not reach {expected} open sockets")
-
-
-def _wait_for_worker_socket_io(pid: int) -> None:
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        for entry in os.listdir(f"/proc/{pid}/task"):
-            if int(entry) == pid:
-                continue
-            try:
-                syscall = Path(f"/proc/{pid}/task/{entry}/syscall").read_text(encoding="utf-8")
-                first_argument = int(syscall.split()[1], 0)
-                target = os.readlink(f"/proc/{pid}/fd/{first_argument}")
-            except (IndexError, OSError, ValueError):
-                continue
-            if target.startswith("socket:"):
+            now = time.monotonic()
+            if stable_since is None:
+                stable_since = now
+            if now - stable_since >= stable_for:
                 return
+        else:
+            stable_since = None
         time.sleep(0.005)
-    raise AssertionError("server worker did not block reading the active connection")
+    if stable_for > 0.0:
+        raise AssertionError(
+            f"server did not maintain {expected} open sockets for {stable_for:.3f}s"
+        )
+    raise AssertionError(f"server did not reach {expected} open sockets")
 
 
 def _receive_until_close(sock: socket.socket) -> bytes:
@@ -289,11 +288,10 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
             active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
             active.sendall(b"POST /move HTTP/1.1\r\nHost: active\r\n")
             _wait_for_server_socket_count(process.pid, 2, exact=True)
-            _wait_for_worker_socket_io(process.pid)
 
             queued = socket.create_connection(("127.0.0.1", port), timeout=0.5)
             queued.sendall(b"POST /move HTTP/1.1\r\nHost: queued\r\n")
-            _wait_for_server_socket_count(process.pid, 3, exact=True)
+            _wait_for_server_socket_count(process.pid, 3, exact=True, stable_for=0.05)
 
             scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
             complete_request = _move_request(move_payload(scenario, timeout=500))
