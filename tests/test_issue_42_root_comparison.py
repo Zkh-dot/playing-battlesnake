@@ -196,6 +196,7 @@ def test_t169_production_budgets_never_select_deficient_root_and_repeat_coherent
 
         # Search depth, node count, and the tied safe direction are deliberately
         # not asserted because they depend on host scheduling.
+        reasons_by_completed_depth: dict[int, set[str]] = {}
         for result in results:
             assert result["move"] != "down"
             assert result["root_candidates"][result["move"]]["structural_proof"] == "safe"
@@ -207,7 +208,11 @@ def test_t169_production_budgets_never_select_deficient_root_and_repeat_coherent
                 assert candidate["minimax_bound"] is not None
             if result["completed_depth"] > 0:
                 assert result["root_comparison_reason"] != "not_compared"
+                reasons_by_completed_depth.setdefault(
+                    result["completed_depth"], set()
+                ).add(result["root_comparison_reason"])
             _assert_selected_value_is_coherent(result)
+        assert all(len(reasons) == 1 for reasons in reasons_by_completed_depth.values())
 
 
 def test_root_visitation_order_changes_tags_without_changing_semantic_result() -> None:

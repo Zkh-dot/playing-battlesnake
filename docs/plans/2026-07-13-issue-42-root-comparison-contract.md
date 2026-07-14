@@ -270,7 +270,7 @@ Commands and results:
 
 Final HEAD, three consecutive repetitions for each budget:
 
-- T169: 100 ms selected `up`, depth 4, reason `heuristic_value`; 200/300 ms selected `up`, depth 5, reason `previous_pv`. The recorded bad `down` remained searched, UNKNOWN and capacity-deficient (`1/12`); every selected root was SAFE. Across separately controlled runs the semantically tied safe result also reached `left` at depths 6-7, so no wall-clock depth, one safe direction, or cross-run reason is asserted.
+- T169: 100 ms selected `up`, depth 4, reason `heuristic_value`; 200/300 ms selected `up`, depth 5, reason `previous_pv`. The recorded bad `down` remained searched, UNKNOWN and capacity-deficient (`1/12`); every selected root was SAFE. Across separately controlled runs the semantically tied safe result also reached `left` at depths 6-7, so no wall-clock depth or one safe direction is asserted. Within each repeated production-budget batch, runs that complete the same depth must report the same `root_comparison_reason`; reasons across different completed depths are deliberately not equated.
 - T439: 100 ms selected `up`, depth 8; 200/300 ms selected `up`, depth 9; all reasons `structural_proof`. The bad candidate remained UNKNOWN `1/36`; selected proof SAFE.
 - T288: 100 ms selected `down`, depth 6; 200/300 ms selected `down`, depth 7; all reasons `structural_proof`. The bad candidate remained UNKNOWN `3/32`; selected proof SAFE.
 
