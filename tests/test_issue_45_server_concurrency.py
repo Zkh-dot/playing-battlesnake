@@ -332,6 +332,7 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
         )
         active: socket.socket | None = None
         queued: socket.socket | None = None
+        rejected: socket.socket | None = None
         try:
             _wait_for_server_ready(process, server_log)
             _wait_for_server_socket_count(process.pid, 1, exact=True)
@@ -347,11 +348,24 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
 
             scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
             complete_request = _move_request(move_payload(scenario, timeout=500))
+            rejected = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            rejected.settimeout(0.5)
+            started = time.monotonic()
+            rejected.sendall(complete_request)
+            first_response = _receive_until_close(rejected)
+            first_elapsed_ms = (time.monotonic() - started) * 1000.0
+            first_status, first_body = _parse_http_response(first_response)
+            assert first_status == 503
+            assert first_body == {}
+            assert first_elapsed_ms < 500.0
+
             status, body, elapsed_ms = _send_request(port, complete_request, timeout=0.5)
             assert status == 503
             assert body == {}
             assert elapsed_ms < 500.0
 
+            rejected.close()
+            rejected = None
             active.close()
             active = None
             queued.close()
@@ -369,13 +383,15 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
                 active.close()
             if queued is not None:
                 queued.close()
+            if rejected is not None:
+                rejected.close()
             _stop_server(process)
 
         overload_events = [
             event for event in _server_events(server_log) if event.get("event") == "server_overload"
         ]
-        assert len(overload_events) == 1
-        assert overload_events[0]["status"] == 503
+        assert len(overload_events) == 2
+        assert all(event["status"] == 503 for event in overload_events)
 
 
 def test_simultaneous_move_requests_complete_within_external_deadline() -> None:
