@@ -218,6 +218,10 @@ def _exact_search_records_are_equal(
 ) -> bool:
     proposal_score = proposal.get("minimax_score")
     incumbent_score = incumbent.get("minimax_score")
+    proposal_outcome = proposal.get("minimax_outcome")
+    incumbent_outcome = incumbent.get("minimax_outcome")
+    proposal_distance = proposal.get("minimax_terminal_distance")
+    incumbent_distance = incumbent.get("minimax_terminal_distance")
     return (
         proposal.get("minimax_bound") == "exact"
         and incumbent.get("minimax_bound") == "exact"
@@ -228,9 +232,18 @@ def _exact_search_records_are_equal(
         and math.isfinite(float(proposal_score))
         and math.isfinite(float(incumbent_score))
         and float(proposal_score) == float(incumbent_score)
-        and proposal.get("minimax_outcome") == incumbent.get("minimax_outcome")
-        and proposal.get("minimax_terminal_distance")
-        == incumbent.get("minimax_terminal_distance")
+        and isinstance(proposal_outcome, str)
+        and proposal_outcome in _OUTCOME_RANK
+        and isinstance(incumbent_outcome, str)
+        and incumbent_outcome in _OUTCOME_RANK
+        and proposal_outcome == incumbent_outcome
+        and isinstance(proposal_distance, int)
+        and not isinstance(proposal_distance, bool)
+        and proposal_distance >= 0
+        and isinstance(incumbent_distance, int)
+        and not isinstance(incumbent_distance, bool)
+        and incumbent_distance >= 0
+        and proposal_distance == incumbent_distance
         and "minimax_cause" in proposal
         and "minimax_cause" in incumbent
         and proposal["minimax_cause"] == incumbent["minimax_cause"]

@@ -925,6 +925,68 @@ def test_different_minimax_causes_reject_claimed_exact_tie() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value", "remove"),
+    [
+        ("minimax_outcome", None, True),
+        ("minimax_outcome", "stalemate", False),
+        ("minimax_outcome", ["loss"], False),
+        ("minimax_terminal_distance", None, True),
+        ("minimax_terminal_distance", -1, False),
+        ("minimax_terminal_distance", True, False),
+    ],
+)
+def test_missing_or_invalid_search_semantics_reject_claimed_exact_tie(
+    field: str, value: object, remove: bool
+) -> None:
+    roots = {
+        move: _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        )
+        for move in ("right", "left")
+    }
+    corridor_audit = _corridor_audit(
+        "right",
+        "left",
+        roots,
+        applied=True,
+        exact_tie_permitted=True,
+        decision="applied_exact_tie",
+        comparison_ordering="equal",
+    )
+    for root in roots.values():
+        if remove:
+            del root[field]
+        else:
+            root[field] = value
+    for candidate_name in ("incumbent", "proposal"):
+        candidate = corridor_audit[candidate_name]
+        assert isinstance(candidate, dict)
+        if remove and field in candidate:
+            del candidate[field]
+        elif not remove and field in candidate:
+            candidate[field] = value
+    diagnostics = {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": corridor_audit,
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert (
+        audit.corridor_guard_error
+        == "corridor_guard_search_records_not_exactly_equal"
+    )
+
+
+@pytest.mark.parametrize(
     ("field", "proposal_value"),
     [
         ("trap_status", "forced_trap"),
