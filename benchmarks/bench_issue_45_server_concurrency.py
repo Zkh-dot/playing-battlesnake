@@ -97,13 +97,15 @@ def _remaining_seconds(deadline: float) -> float:
     return remaining
 
 
-class _BatchDeadline:
+class _BatchTiming:
     def __init__(self, deadline_ms: int) -> None:
         self.deadline_ms = deadline_ms
+        self.release_started_at: float | None = None
         self.deadline: float | None = None
 
     def start(self) -> None:
-        self.deadline = time.monotonic() + self.deadline_ms / 1000.0
+        self.release_started_at = time.monotonic()
+        self.deadline = self.release_started_at + self.deadline_ms / 1000.0
 
 
 def _error_sample(error: str, started: float | None = None) -> dict[str, object]:
@@ -119,7 +121,7 @@ def _request(
     body: bytes,
     deadline_ms: int,
     barrier: threading.Barrier | None,
-    batch_deadline: _BatchDeadline | None = None,
+    batch_timing: _BatchTiming | None = None,
     barrier_timeout_seconds: float = DEFAULT_BARRIER_TIMEOUT_SECONDS,
 ) -> dict[str, object]:
     if barrier is not None:
@@ -128,8 +130,10 @@ def _request(
             barrier.wait(timeout=barrier_timeout_seconds)
         except threading.BrokenBarrierError:
             return _error_sample("barrier_broken", barrier_started)
-    started = time.monotonic()
-    deadline = batch_deadline.deadline if batch_deadline is not None else None
+    started = batch_timing.release_started_at if batch_timing is not None else None
+    if started is None:
+        started = time.monotonic()
+    deadline = batch_timing.deadline if batch_timing is not None else None
     if deadline is None:
         deadline = started + deadline_ms / 1000.0
     request = (
@@ -184,8 +188,8 @@ def run_batch(
     cleanup_allowance_seconds: float = DEFAULT_CLEANUP_ALLOWANCE_SECONDS,
 ) -> list[dict[str, object]]:
     startup_deadline = time.monotonic() + barrier_timeout_seconds
-    batch_deadline = _BatchDeadline(deadline_ms)
-    barrier = threading.Barrier(concurrency + 1, action=batch_deadline.start)
+    batch_timing = _BatchTiming(deadline_ms)
+    barrier = threading.Barrier(concurrency + 1, action=batch_timing.start)
     futures: list[concurrent.futures.Future[dict[str, object]]] = []
     samples: list[dict[str, object]] = []
     try:
@@ -197,7 +201,7 @@ def run_batch(
                     payload,
                     deadline_ms,
                     barrier,
-                    batch_deadline,
+                    batch_timing,
                     barrier_timeout_seconds,
                 )
             )
@@ -215,8 +219,8 @@ def run_batch(
             barrier.abort()
 
     collection_deadline = (
-        batch_deadline.deadline + cleanup_allowance_seconds
-        if batch_deadline.deadline is not None
+        batch_timing.deadline + cleanup_allowance_seconds
+        if batch_timing.deadline is not None
         else startup_deadline + cleanup_allowance_seconds
     )
     remaining = max(0.0, collection_deadline - time.monotonic())

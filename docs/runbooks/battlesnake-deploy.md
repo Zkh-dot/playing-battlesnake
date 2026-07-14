@@ -89,8 +89,8 @@ reaches the deadline. Its `server_lifecycle` object records unexpected exit,
 final return code, and forced-kill status; any unhealthy lifecycle fails the
 gate. The 2026-07-15 local production-build result was 40/40
 legal 200 responses, zero timeout/error/503, zero fallback, external p99
-`349.444 ms`, server queue p99 `0.169 ms`, handler p99 `348.998 ms`, and total
-p99 `349.100 ms`. The measured external safety margin was `150.556 ms`.
+`349.283 ms`, server queue p99 `0.300 ms`, handler p99 `348.780 ms`, and total
+p99 `348.997 ms`. The measured external safety margin was `150.717 ms`.
 
 Do not increase the worker or queue settings automatically from one result.
 Raise capacity only after repeated representative load runs remain below the

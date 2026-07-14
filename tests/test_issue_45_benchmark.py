@@ -146,6 +146,40 @@ def test_run_batch_bounds_controller_barrier_timeout_and_future_collection() -> 
     assert [sample["error"] for sample in samples] == ["barrier_broken", "barrier_broken"]
 
 
+class _DelayedReleasedBarrier:
+    @staticmethod
+    def wait(timeout: float) -> None:
+        del timeout
+        time.sleep(0.04)
+
+
+def test_measured_latency_includes_worker_delay_after_common_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timing = benchmark._BatchTiming(1000)
+    timing.start()
+    socket_timeouts: list[float] = []
+
+    def fail_connect(_address: object, *, timeout: float) -> None:
+        socket_timeouts.append(timeout)
+        raise OSError("synthetic connection failure")
+
+    monkeypatch.setattr(benchmark.socket, "create_connection", fail_connect)
+
+    sample = benchmark._request(
+        1,
+        b"{}",
+        1000,
+        _DelayedReleasedBarrier(),
+        timing,
+        0.1,
+    )
+
+    assert float(sample["latency_ms"]) >= 35.0
+    assert socket_timeouts
+    assert 0.0 < socket_timeouts[0] < 0.98
+
+
 class _RunningProcess:
     returncode = None
 
