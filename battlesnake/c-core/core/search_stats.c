@@ -31,6 +31,7 @@ CoreSearchConfig CoreSearchConfigDefault(int time_budget_ms) {
     CoreSearchConfig config;
     config.time_budget_ms = time_budget_ms;
     config.fixed_depth = 0;
+    config.node_budget = 0;
     config.enable_tt = true;
     config.enable_move_ordering = true;
     config.enable_make_unmake = true;

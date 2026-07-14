@@ -101,6 +101,8 @@ class MinimaxDiagnostics(TypedDict):
     completed_depth: int
     max_depth_started: int
     timed_out: bool
+    node_budget: int
+    node_budget_exhausted: bool
     nodes: int
     leaf_evals: int
     clone_calls: int
@@ -149,6 +151,7 @@ def minimax_diagnostics(
     weights: dict[str, float] | None = None,
     parallel_mode: str = "serial",
     root_policy: str = "standard_ladder_opportunity",
+    node_budget: int = 0,
 ) -> MinimaxDiagnostics: ...
 def duel_root_profile(board: Board, snake_id: str) -> dict[str, RootCandidateDiagnostics]: ...
 def standard_ffa_move(

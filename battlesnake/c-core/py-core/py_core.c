@@ -506,6 +506,7 @@ static const char* root_policy_name(CoreRootPolicy policy) {
 static const char* selection_reason_name(CoreSelectionReason reason) {
     switch (reason) {
         case CORE_SELECTION_TIMEOUT_BEST_SO_FAR: return "timeout_best_so_far";
+        case CORE_SELECTION_NODE_BUDGET_BEST_SO_FAR: return "node_budget_best_so_far";
         case CORE_SELECTION_ALLOWED_FALLBACK: return "allowed_fallback";
         case CORE_SELECTION_CORRIDOR_GUARD: return "corridor_guard";
         default: return "minimax";
@@ -706,10 +707,12 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         "weights",
         "parallel_mode",
         "root_policy",
+        "node_budget",
         NULL,
     };
     PyObject* board_obj = NULL;
     PyObject* weights_obj = NULL;
+    PyObject* node_budget_obj = NULL;
     const char* snake_id = NULL;
     int time_budget_ms = 400;
     int fixed_depth = 0;
@@ -721,7 +724,7 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     if (!PyArg_ParseTupleAndKeywords(
             args,
             kwds,
-            "Os|iiiiiOss",
+            "Os|iiiiiOssO",
             kwlist,
             &board_obj,
             &snake_id,
@@ -732,7 +735,8 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
             &enable_make_unmake,
             &weights_obj,
             &parallel_mode,
-            &root_policy
+            &root_policy,
+            &node_budget_obj
         )) {
         return NULL;
     }
@@ -747,6 +751,19 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
     }
 
     CoreSearchConfig config = CoreSearchConfigDefault(time_budget_ms);
+    if (node_budget_obj != NULL && node_budget_obj != Py_None) {
+        if (!PyLong_Check(node_budget_obj)) {
+            PyErr_SetString(PyExc_TypeError, "node_budget must be an integer");
+            return NULL;
+        }
+        unsigned long long node_budget = PyLong_AsUnsignedLongLong(node_budget_obj);
+        if (PyErr_Occurred()) {
+            PyErr_Clear();
+            PyErr_SetString(PyExc_ValueError, "node_budget must be between 0 and 18446744073709551615");
+            return NULL;
+        }
+        config.node_budget = (uint64_t)node_budget;
+    }
     config.fixed_depth = fixed_depth;
     config.enable_tt = enable_tt != 0;
     config.enable_move_ordering = enable_move_ordering != 0;
@@ -781,6 +798,8 @@ static PyObject* py_minimax_diagnostics(PyObject* self, PyObject* args, PyObject
         dict_set_int(result, "completed_depth", stats.completed_depth) < 0 ||
         dict_set_int(result, "max_depth_started", stats.max_depth_started) < 0 ||
         dict_set_bool(result, "timed_out", stats.timed_out) < 0 ||
+        dict_set_u64(result, "node_budget", stats.node_budget) < 0 ||
+        dict_set_bool(result, "node_budget_exhausted", stats.node_budget_exhausted) < 0 ||
         dict_set_u64(result, "nodes", stats.nodes) < 0 ||
         dict_set_u64(result, "leaf_evals", stats.leaf_evals) < 0 ||
         dict_set_u64(result, "clone_calls", stats.clone_calls) < 0 ||
