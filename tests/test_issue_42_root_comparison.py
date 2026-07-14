@@ -227,7 +227,7 @@ def test_proved_win_precedes_structurally_safe_unresolved_root() -> None:
     _assert_selected_value_is_coherent(result)
 
 
-def test_exact_unresolved_heuristic_value_is_reported() -> None:
+def test_mixed_exact_and_upper_numeric_frontier_reports_search_bound() -> None:
     board = _board(
         7,
         7,
@@ -239,8 +239,43 @@ def test_exact_unresolved_heuristic_value_is_reported() -> None:
 
     assert result["move"] == "right"
     assert result["root_candidates"]["right"]["minimax_bound"] == "exact"
+    assert result["root_candidates"]["right"]["minimax_outcome"] == "unresolved"
+    assert result["root_candidates"]["left"]["minimax_bound"] == "upper"
+    assert result["root_candidates"]["left"]["minimax_outcome"] == "unresolved"
     assert result["root_candidates"]["right"]["structural_proof"] == "safe"
     assert result["root_candidates"]["up"]["structural_proof"] == "safe"
+    assert result["root_comparison_reason"] == "search_bound"
+    _assert_selected_value_is_coherent(result)
+
+
+def test_all_exact_unresolved_numeric_frontier_reports_heuristic_value() -> None:
+    board = _board(
+        5,
+        5,
+        [(0, 2), (0, 1), (0, 0)],
+        [(4, 4), (4, 3), (4, 2)],
+    )
+
+    result = minimax_diagnostics(
+        board,
+        "me",
+        time_budget_ms=1000,
+        fixed_depth=1,
+        enable_tt=False,
+        enable_move_ordering=False,
+    )
+    evaluated = {
+        move: candidate
+        for move, candidate in result["root_candidates"].items()
+        if candidate["minimax_score"] is not None
+    }
+
+    assert set(evaluated) == {"up", "right"}
+    assert all(candidate["minimax_bound"] == "exact" for candidate in evaluated.values())
+    assert all(candidate["minimax_outcome"] == "unresolved" for candidate in evaluated.values())
+    assert {candidate["structural_proof"] for candidate in evaluated.values()} == {"safe"}
+    assert evaluated["right"]["minimax_score"] > evaluated["up"]["minimax_score"]
+    assert result["move"] == "right"
     assert result["root_comparison_reason"] == "heuristic_value"
     _assert_selected_value_is_coherent(result)
 
