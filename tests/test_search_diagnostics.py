@@ -223,6 +223,7 @@ class SearchDiagnosticsTests(unittest.TestCase):
                 "previous_pv",
                 "stable_direction",
                 "corridor_guard",
+                "numeric_value",
             },
         )
 

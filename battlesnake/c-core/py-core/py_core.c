@@ -523,6 +523,7 @@ static const char* root_comparison_reason_name(CoreRootComparisonReason reason) 
         case CORE_ROOT_COMPARISON_PREVIOUS_PV: return "previous_pv";
         case CORE_ROOT_COMPARISON_STABLE_DIRECTION: return "stable_direction";
         case CORE_ROOT_COMPARISON_CORRIDOR_GUARD: return "corridor_guard";
+        case CORE_ROOT_COMPARISON_NUMERIC_VALUE: return "numeric_value";
         default: return "not_compared";
     }
 }
