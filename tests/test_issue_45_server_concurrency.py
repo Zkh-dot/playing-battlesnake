@@ -109,22 +109,42 @@ def _wait_for_server_socket_count(
     raise AssertionError(f"server did not reach {expected} open sockets")
 
 
-def _wait_for_worker_socket_io(pid: int) -> None:
+def _wait_for_worker_socket_wait(pid: int, *, stable_for: float = 0.05) -> None:
     deadline = time.monotonic() + 2.0
+    stable_since: float | None = None
+    observed: set[str] = set()
     while time.monotonic() < deadline:
-        for entry in os.listdir(f"/proc/{pid}/task"):
-            if int(entry) == pid:
-                continue
+        worker_ids = [entry for entry in os.listdir(f"/proc/{pid}/task") if int(entry) != pid]
+        worker_wchans: list[str] = []
+        for worker_id in worker_ids:
             try:
-                syscall = Path(f"/proc/{pid}/task/{entry}/syscall").read_text(encoding="utf-8")
-                first_argument = int(syscall.split()[1], 0)
-                target = os.readlink(f"/proc/{pid}/fd/{first_argument}")
-            except (IndexError, OSError, ValueError):
-                continue
-            if target.startswith("socket:"):
+                wchan = Path(f"/proc/{pid}/task/{worker_id}/wchan").read_text(
+                    encoding="utf-8"
+                ).strip()
+            except OSError:
+                wchan = ""
+            worker_wchans.append(wchan)
+            if wchan:
+                observed.add(wchan)
+
+        socket_wait = (
+            len(worker_wchans) == 1
+            and worker_wchans[0] not in {"", "0"}
+            and "futex" not in worker_wchans[0].lower()
+        )
+        if socket_wait:
+            now = time.monotonic()
+            if stable_since is None:
+                stable_since = now
+            if now - stable_since >= stable_for:
                 return
+        else:
+            stable_since = None
         time.sleep(0.005)
-    raise AssertionError("server worker did not block reading the active connection")
+    raise AssertionError(
+        "server worker did not maintain a socket-read wait channel; "
+        f"observed={sorted(observed)!r}"
+    )
 
 
 def _receive_until_close(sock: socket.socket) -> bytes:
@@ -307,7 +327,7 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
             active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
             active.sendall(b"POST /move HTTP/1.1\r\nHost: active\r\n")
             _wait_for_server_socket_count(process.pid, 2, exact=True)
-            _wait_for_worker_socket_io(process.pid)
+            _wait_for_worker_socket_wait(process.pid)
 
             queued = socket.create_connection(("127.0.0.1", port), timeout=0.5)
             queued.sendall(b"POST /move HTTP/1.1\r\nHost: queued\r\n")
