@@ -45,6 +45,7 @@ EXPECTED_DIAGNOSTIC_KEYS = {
     "root_analysis_elapsed_ms",
     "root_analysis_budget_ms",
     "search_reserved_ms",
+    "corridor_guard",
 }
 
 
