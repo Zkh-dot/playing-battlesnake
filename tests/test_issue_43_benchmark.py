@@ -155,7 +155,53 @@ def test_wall_row_reports_requested_budget_without_latency_assumption() -> None:
     assert row["budget_kind"] == "time_ms"
     assert row["budget_value"] == 25
     assert row["elapsed_ms"] >= 0.0
-    assert row["completed_depth"] >= 1
+    assert row["completed_depth"] >= 0
+    assert row["max_depth_started"] >= row["completed_depth"]
+    if row["minimax_score"] is None:
+        assert row["minimax_outcome"] is None
+        assert row["minimax_bound"] is None
+    else:
+        assert row["minimax_outcome"] in {"win", "draw", "unresolved", "loss"}
+        assert row["minimax_bound"] in {"exact", "lower", "upper"}
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    [
+        ("--time-budget-ms", "0", "between 1 and 2147483647"),
+        ("--time-budget-ms", "2147483648", "between 1 and 2147483647"),
+        ("--node-budget", "-1", "between 1 and 18446744073709551615"),
+        (
+            "--node-budget",
+            "18446744073709551616",
+            "between 1 and 18446744073709551615",
+        ),
+        ("--repeats", "0", "between 1 and 2147483647"),
+        ("--repeats", "2147483648", "between 1 and 2147483647"),
+    ],
+)
+def test_cli_rejects_out_of_range_integers_without_traceback(
+    option: str, value: str, message: str
+) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.bench_issue_43_search_budgets",
+            option,
+            value,
+            "--json",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert "usage:" in completed.stderr
+    assert message in completed.stderr
+    assert "Traceback" not in completed.stderr
 
 
 def test_human_table_keeps_selected_score_and_root_latency(

@@ -19,6 +19,8 @@ FIXTURE_PATH = (
 )
 DEFAULT_TIME_BUDGETS = (100, 200, 300)
 DEFAULT_REPEATS = 3
+INT_MAX = 2_147_483_647
+UINT64_MAX = (1 << 64) - 1
 
 
 def load_fixture() -> tuple[list[dict[str, Any]], tuple[int, ...]]:
@@ -129,11 +131,22 @@ def run_matrix(
     return rows
 
 
-def _positive(value: str) -> int:
-    parsed = int(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be a positive integer")
+def _bounded_positive(value: str, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer") from error
+    if parsed < 1 or parsed > maximum:
+        raise argparse.ArgumentTypeError(f"must be between 1 and {maximum}")
     return parsed
+
+
+def _signed_positive(value: str) -> int:
+    return _bounded_positive(value, INT_MAX)
+
+
+def _node_budget(value: str) -> int:
+    return _bounded_positive(value, UINT64_MAX)
 
 
 def _unique(
@@ -176,9 +189,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Measure issue-43 decisions at wall-clock and deterministic node budgets."
     )
-    parser.add_argument("--repeats", type=_positive, default=DEFAULT_REPEATS)
-    parser.add_argument("--time-budget-ms", type=_positive, action="append")
-    parser.add_argument("--node-budget", type=_positive, action="append")
+    parser.add_argument("--repeats", type=_signed_positive, default=DEFAULT_REPEATS)
+    parser.add_argument("--time-budget-ms", type=_signed_positive, action="append")
+    parser.add_argument("--node-budget", type=_node_budget, action="append")
     parser.add_argument(
         "--position",
         action="append",
