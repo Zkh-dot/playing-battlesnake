@@ -336,6 +336,68 @@ def test_strict_numeric_interval_dominance_after_overlap_is_justified() -> None:
     assert audit.justification_layers == ("numeric_interval",)
 
 
+def test_unresolved_heuristic_score_cannot_bypass_safe_structural_proof() -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(
+                capacity=5,
+                length=8,
+                proof="unknown",
+                minimax_outcome="unresolved",
+                minimax_bound="exact",
+                minimax_score=100.0,
+            ),
+            "right": _candidate(
+                capacity=12,
+                length=8,
+                proof="safe",
+                minimax_outcome="unresolved",
+                minimax_bound="exact",
+                minimax_score=0.0,
+            ),
+        },
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.justified_by_search is False
+    assert audit.justification_layers == ()
+
+
+def test_shorter_exact_loss_cannot_bypass_terminal_survival_with_numeric_score() -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(
+                capacity=5,
+                length=8,
+                proof="unknown",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=100.0,
+                minimax_terminal_distance=8,
+            ),
+            "right": _candidate(
+                capacity=12,
+                length=8,
+                proof="safe",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=0.0,
+                minimax_terminal_distance=9,
+            ),
+        },
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.justified_by_search is False
+    assert audit.justification_layers == ()
+
+
 def test_touching_numeric_intervals_do_not_exempt_structural_violation() -> None:
     diagnostics = {
         "move": "left",

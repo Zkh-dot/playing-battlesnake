@@ -78,6 +78,14 @@ def _strict_search_dominance_layer(
     if alternative_outcome[0] > selected_outcome[1]:
         return None
 
+    # Production applies the independent SAFE-over-deficient-UNKNOWN relation
+    # before numeric heuristic ordering on unresolved frontiers.
+    if (
+        selected.get("minimax_outcome") == "unresolved"
+        and alternative.get("minimax_outcome") == "unresolved"
+    ):
+        return None
+
     all_exact_losses = bool(search_candidates) and all(
         candidate.get("minimax_outcome") == "loss"
         and candidate.get("minimax_bound") == "exact"
@@ -86,8 +94,11 @@ def _strict_search_dominance_layer(
     )
     if all_exact_losses:
         selected_distance = int(selected["minimax_terminal_distance"])
-        if selected_distance > int(alternative["minimax_terminal_distance"]):
+        alternative_distance = int(alternative["minimax_terminal_distance"])
+        if selected_distance > alternative_distance:
             return "terminal_survival"
+        if selected_distance < alternative_distance:
+            return None
 
     selected_numeric = _numeric_interval(selected)
     alternative_numeric = _numeric_interval(alternative)
