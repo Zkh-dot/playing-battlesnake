@@ -212,11 +212,12 @@ If a named historical file has been renamed, use `rg --files tests` to identify 
 ### Step 3: Run C/native tests and benchmark
 
 ```bash
-make -C tests/c clean all test
+tools/run_c_position_eval_tests.sh
+tools/run_c_server_tests.sh
 python3 -m benchmarks.bench_issue_43_search_budgets --repeats 3 --json
 ```
 
-Expected: C tests PASS; every risky position remains outside the selected frontier at all time/node budgets; repeated fixed-node records are decision-identical.
+Expected: both C runners PASS; every risky position remains outside the selected frontier at all time/node budgets; repeated fixed-node records are decision-identical.
 
 ### Step 4: Audit acceptance criteria and repository hygiene
 
