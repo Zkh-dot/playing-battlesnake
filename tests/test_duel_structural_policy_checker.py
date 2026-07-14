@@ -52,6 +52,13 @@ def _candidate(
         "relaxed_static_capacity": capacity,
         "post_move_length": length,
         "structural_proof": proof,
+        "trap_status": "open",
+        "trap_horizon": 0,
+        "proof_cutoff": "none",
+        "proof_horizon": 0,
+        "structural_capacity": capacity,
+        "opponent_closure_considered": False,
+        "refutation_status": "none",
         "alive_reply_count": alive_replies,
         "allowed": allowed,
         "rejection_reason": rejection_reason,
@@ -59,6 +66,7 @@ def _candidate(
         "minimax_bound": minimax_bound,
         "minimax_score": minimax_score,
         "minimax_terminal_distance": minimax_terminal_distance,
+        "minimax_cause": ["none"],
         "reply_outcomes": reply_outcomes or {},
     }
 
@@ -877,6 +885,127 @@ def test_semantically_equal_better_corridor_is_counted_as_allowed_override() -> 
 
     assert audit.violation is False
     assert audit.post_search_override is True
+
+
+def test_different_minimax_causes_reject_claimed_exact_tie() -> None:
+    roots = {
+        move: _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        )
+        for move in ("right", "left")
+    }
+    roots["left"]["minimax_cause"] = ["body_collision"]
+    diagnostics = {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "left",
+            roots,
+            applied=True,
+            exact_tie_permitted=True,
+            decision="applied_exact_tie",
+            comparison_ordering="equal",
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert (
+        audit.corridor_guard_error
+        == "corridor_guard_search_records_not_exactly_equal"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "proposal_value"),
+    [
+        ("trap_status", "forced_trap"),
+        ("structural_capacity", 11),
+        ("proof_cutoff", "horizon"),
+    ],
+)
+def test_different_root_structure_rejects_claimed_exact_tie(
+    field: str, proposal_value: object
+) -> None:
+    roots = {
+        move: _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        )
+        for move in ("right", "left")
+    }
+    roots["left"][field] = proposal_value
+    diagnostics = {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "left",
+            roots,
+            applied=True,
+            exact_tie_permitted=True,
+            decision="applied_exact_tie",
+            comparison_ordering="equal",
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert (
+        audit.corridor_guard_error
+        == "corridor_guard_root_structures_not_semantically_equal"
+    )
+
+
+def test_missing_root_structure_field_rejects_claimed_exact_tie() -> None:
+    roots = {
+        move: _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+        )
+        for move in ("right", "left")
+    }
+    del roots["left"]["refutation_status"]
+    diagnostics = {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "left",
+            roots,
+            applied=True,
+            exact_tie_permitted=True,
+            decision="applied_exact_tie",
+            comparison_ordering="equal",
+        ),
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert (
+        audit.corridor_guard_error
+        == "corridor_guard_root_structures_not_semantically_equal"
+    )
 
 
 def test_false_predicate_rejects_claimed_override() -> None:

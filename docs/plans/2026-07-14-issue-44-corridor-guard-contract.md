@@ -106,6 +106,9 @@ Acceptance coverage: diagnostics explain activations and rejected overrides; aud
 
 ### Implemented ordering and audit contract
 
+The permanent operational contract is maintained in
+[`docs/duel-structural-policy.md`](../duel-structural-policy.md).
+
 The common minimax/root comparison is authoritative. A different corridor
 proposal may replace its incumbent only after both roots have exact,
 semantically equal search values, `CoreCompareRootCandidates` returns `EQUAL`,

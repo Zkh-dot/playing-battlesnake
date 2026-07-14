@@ -163,6 +163,19 @@ _CORRIDOR_AUDIT_ROOT_FIELDS = (
     "minimax_bound",
 )
 
+_ROOT_STRUCTURE_SEMANTIC_FIELDS = (
+    "trap_status",
+    "trap_horizon",
+    "structural_proof",
+    "proof_cutoff",
+    "proof_horizon",
+    "structural_capacity",
+    "opponent_closure_considered",
+    "post_move_length",
+    "relaxed_static_capacity",
+    "refutation_status",
+)
+
 
 def _corridor_metrics_are_better(
     proposal: dict[str, Any], incumbent: dict[str, Any]
@@ -218,8 +231,21 @@ def _exact_search_records_are_equal(
         and proposal.get("minimax_outcome") == incumbent.get("minimax_outcome")
         and proposal.get("minimax_terminal_distance")
         == incumbent.get("minimax_terminal_distance")
-        and proposal.get("minimax_terminal_cause")
-        == incumbent.get("minimax_terminal_cause")
+        and "minimax_cause" in proposal
+        and "minimax_cause" in incumbent
+        and proposal["minimax_cause"] == incumbent["minimax_cause"]
+    )
+
+
+def _root_structures_are_semantically_equal(
+    proposal: dict[str, Any], incumbent: dict[str, Any]
+) -> bool:
+    """Mirror every field in native core_root_structure_semantically_equal."""
+    return all(
+        field in proposal
+        and field in incumbent
+        and proposal[field] == incumbent[field]
+        for field in _ROOT_STRUCTURE_SEMANTIC_FIELDS
     )
 
 
@@ -274,14 +300,18 @@ def _audit_corridor_override(
         candidates[proposal_move], candidates[incumbent_move]
     ):
         return False, "corridor_guard_search_records_not_exactly_equal"
+    if structural_conflict:
+        return False, "corridor_guard_selected_structurally_dominated_proposal"
+    if not _root_structures_are_semantically_equal(
+        candidates[proposal_move], candidates[incumbent_move]
+    ):
+        return False, "corridor_guard_root_structures_not_semantically_equal"
     proposal_metrics = proposal.get("corridor_metrics")
     incumbent_metrics = incumbent.get("corridor_metrics")
     assert isinstance(proposal_metrics, dict)
     assert isinstance(incumbent_metrics, dict)
     if not _corridor_metrics_are_better(proposal_metrics, incumbent_metrics):
         return False, "corridor_guard_proposal_metrics_not_better"
-    if structural_conflict:
-        return False, "corridor_guard_selected_structurally_dominated_proposal"
     return True, None
 
 
