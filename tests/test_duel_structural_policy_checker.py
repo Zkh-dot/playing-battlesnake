@@ -451,7 +451,96 @@ def test_bounded_third_root_does_not_disable_exact_loss_terminal_survival() -> N
 
     assert audit.violation is True
     assert audit.justified_by_search is False
+    assert audit.unjustified_safe_alternatives == ("right", "up")
+
+
+def test_longer_active_exact_loss_invalidates_selected_terminal_survival() -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "up": _candidate(
+                capacity=12,
+                length=8,
+                proof="safe",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=0.0,
+                minimax_terminal_distance=5,
+            ),
+            "left": _candidate(
+                capacity=5,
+                length=8,
+                proof="unknown",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=100.0,
+                minimax_terminal_distance=10,
+            ),
+            "right": _candidate(
+                capacity=4,
+                length=8,
+                proof="unknown",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=-100.0,
+                minimax_terminal_distance=20,
+            ),
+        },
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.justified_by_search is False
     assert audit.unjustified_safe_alternatives == ("up",)
+    assert audit.justification_layers == ()
+
+
+@pytest.mark.parametrize("inactive_kind", ["disallowed", "unsearched"])
+def test_inactive_longer_exact_loss_does_not_block_terminal_survival(
+    inactive_kind: str,
+) -> None:
+    third = _candidate(
+        capacity=4,
+        length=8,
+        proof="unknown",
+        allowed=inactive_kind != "disallowed",
+        minimax_outcome="loss",
+        minimax_bound="exact",
+        minimax_score=None if inactive_kind == "unsearched" else -100.0,
+        minimax_terminal_distance=20,
+    )
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "up": _candidate(
+                capacity=12,
+                length=8,
+                proof="safe",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=0.0,
+                minimax_terminal_distance=5,
+            ),
+            "left": _candidate(
+                capacity=5,
+                length=8,
+                proof="unknown",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=100.0,
+                minimax_terminal_distance=10,
+            ),
+            "right": third,
+        },
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is False
+    assert audit.justified_by_search is True
+    assert audit.unjustified_safe_alternatives == ()
+    assert audit.justification_layers == ("terminal_survival",)
 
 
 def test_touching_numeric_intervals_do_not_exempt_structural_violation() -> None:

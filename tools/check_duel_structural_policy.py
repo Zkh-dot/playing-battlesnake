@@ -63,9 +63,25 @@ def _numeric_interval(candidate: dict[str, Any]) -> tuple[float, float] | None:
     )
 
 
+def _active_exact_loss_max_distance(
+    candidates: dict[str, dict[str, Any]],
+) -> int | None:
+    distances = [
+        int(candidate["minimax_terminal_distance"])
+        for candidate in candidates.values()
+        if candidate.get("allowed", True)
+        and candidate.get("minimax_score") is not None
+        and candidate.get("minimax_outcome") == "loss"
+        and candidate.get("minimax_bound") == "exact"
+        and isinstance(candidate.get("minimax_terminal_distance"), int)
+    ]
+    return max(distances) if distances else None
+
+
 def _strict_search_dominance_layer(
     selected: dict[str, Any],
     alternative: dict[str, Any],
+    active_exact_loss_max_distance: int | None,
 ) -> str | None:
     """Independently prove a strict search layer; diagnostics reasons are ignored."""
     selected_outcome = _outcome_interval(selected)
@@ -85,17 +101,31 @@ def _strict_search_dominance_layer(
     ):
         return None
 
-    both_exact_losses = (
-        selected.get("minimax_outcome") == "loss"
+    selected_exact_loss_distance = (
+        int(selected["minimax_terminal_distance"])
+        if selected.get("minimax_outcome") == "loss"
         and selected.get("minimax_bound") == "exact"
         and isinstance(selected.get("minimax_terminal_distance"), int)
+        else None
+    )
+    if (
+        selected_exact_loss_distance is not None
+        and active_exact_loss_max_distance is not None
+        and selected_exact_loss_distance < active_exact_loss_max_distance
+    ):
+        return None
+
+    both_exact_losses = (
+        selected_exact_loss_distance is not None
         and alternative.get("minimax_outcome") == "loss"
         and alternative.get("minimax_bound") == "exact"
         and isinstance(alternative.get("minimax_terminal_distance"), int)
     )
     if both_exact_losses:
-        selected_distance = int(selected["minimax_terminal_distance"])
+        selected_distance = selected_exact_loss_distance
         alternative_distance = int(alternative["minimax_terminal_distance"])
+        if selected_distance != active_exact_loss_max_distance:
+            return None
         if selected_distance > alternative_distance:
             return "terminal_survival"
         if selected_distance < alternative_distance:
@@ -151,9 +181,12 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
     layers: list[str] = []
     unjustified: list[str] = []
     if structural_conflict:
+        active_exact_loss_max_distance = _active_exact_loss_max_distance(candidates)
         for move in safe_alternatives:
             layer = _strict_search_dominance_layer(
-                selected, candidates[move]
+                selected,
+                candidates[move],
+                active_exact_loss_max_distance,
             )
             if layer is None:
                 unjustified.append(move)
