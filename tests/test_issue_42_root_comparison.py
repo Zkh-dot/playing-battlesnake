@@ -123,6 +123,32 @@ def test_t169_searches_deficient_root_then_structural_layer_selects_safe_root() 
     _assert_selected_value_is_coherent(result)
 
 
+def test_single_safe_frontier_reports_structural_proof() -> None:
+    position = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["positions"][1]
+
+    result = minimax_diagnostics(
+        _board_from_fixture(position),
+        str(position["snake_id"]),
+        time_budget_ms=5000,
+        fixed_depth=1,
+    )
+
+    evaluated = [
+        candidate
+        for candidate in result["root_candidates"].values()
+        if candidate["minimax_score"] is not None
+    ]
+    assert sum(candidate["structural_proof"] == "safe" for candidate in evaluated) == 1
+    assert any(
+        candidate["structural_proof"] == "unknown"
+        and candidate["relaxed_static_capacity"] < candidate["post_move_length"]
+        for candidate in evaluated
+    )
+    assert result["move"] == "up"
+    assert result["root_comparison_reason"] == "structural_proof"
+    _assert_selected_value_is_coherent(result)
+
+
 def test_t169_default_weights_preserve_move_and_report_actual_decisive_layer() -> None:
     position = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["positions"][0]
     board = _board_from_fixture(position)
@@ -158,7 +184,7 @@ def test_t169_default_weights_preserve_move_and_report_actual_decisive_layer() -
 
 
 def test_root_visitation_order_changes_tags_without_changing_semantic_result() -> None:
-    scenario = get_scenario("royale_hazard_ring_duel")
+    scenario = get_scenario("duel_late_game_long_bodies")
     results = [
         minimax_diagnostics(
             build_board(scenario),
@@ -171,10 +197,10 @@ def test_root_visitation_order_changes_tags_without_changing_semantic_result() -
         for ordering in (False, True)
     ]
 
-    assert {result["move"] for result in results} == {"left"}
-    assert {result["root_comparison_reason"] for result in results} == {"heuristic_value"}
-    assert results[0]["root_candidates"]["up"]["minimax_bound"] == "exact"
-    assert results[1]["root_candidates"]["up"]["minimax_bound"] == "upper"
+    assert {result["move"] for result in results} == {"up"}
+    assert {result["root_comparison_reason"] for result in results} == {"stable_direction"}
+    assert results[0]["root_candidates"]["right"]["minimax_bound"] == "upper"
+    assert results[1]["root_candidates"]["right"]["minimax_bound"] == "exact"
     for result in results:
         _assert_selected_value_is_coherent(result)
 

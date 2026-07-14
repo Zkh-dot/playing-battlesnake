@@ -201,6 +201,39 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
     assert(selected == MOVE_LEFT);
     assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
 
+    /* T169 center-only completed tags: DOWN is exact unresolved while LEFT
+     * is a fail-low unresolved bound. The pairwise search comparison remains
+     * conservative, but the global structural frontier has an independent
+     * SAFE proof over DOWN's capacity-deficient UNKNOWN. */
+    candidates[MOVE_DOWN] = root_test_stats(CORE_STRUCTURAL_PROOF_UNKNOWN, 1, 12);
+    candidates[MOVE_LEFT] = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 109, 12);
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 6.0, 0);
+    values[MOVE_LEFT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_UPPER, 6.0, 0);
+    pairwise = CoreCompareRootCandidates(
+        &values[MOVE_LEFT],
+        &candidates[MOVE_LEFT],
+        &values[MOVE_DOWN],
+        &candidates[MOVE_DOWN]
+    );
+    assert(pairwise.ordering == CORE_ROOT_COMPARISON_INCOMPARABLE);
+    assert(pairwise.reason == CORE_ROOT_COMPARISON_SEARCH_BOUND);
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+        orders[1],
+        2,
+        (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_LEFT)),
+        values,
+        candidates,
+        MOVE_DOWN,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_LEFT);
+    assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+
     selected = MOVE_INVALID;
     reason = CORE_ROOT_COMPARISON_STABLE_DIRECTION;
     assert(CoreSelectRootCandidateForTesting(
@@ -290,6 +323,97 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
         assert(selected_value.bound == CORE_VALUE_BOUND_EXACT);
         assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_TIEBREAK);
     }
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+
+    board = BoardCreate(7, 7, "standard", 0);
+    Coord layered_me_body[] = {
+        {4, 3}, {3, 3}, {3, 4}, {3, 5}, {3, 6},
+        {4, 6}, {5, 6}, {5, 5}, {5, 4}, {5, 3},
+    };
+    Coord layered_you_body[] = {{4, 0}, {4, 1}};
+    me = make_snake("me", layered_me_body, 10, 90);
+    you = make_snake("you", layered_you_body, 2, 90);
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        values[move] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 1.0, 0);
+        candidates[move] = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 40, 10);
+    }
+    const MoveDirection layered_moves[] = {MOVE_UP, MOVE_DOWN, MOVE_RIGHT};
+    uint8_t layered_mask = (uint8_t)((1u << MOVE_UP) | (1u << MOVE_DOWN) | (1u << MOVE_RIGHT));
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STRICT_MINIMAX,
+        layered_moves,
+        3,
+        layered_mask,
+        values,
+        candidates,
+        MOVE_RIGHT,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_RIGHT);
+    assert(reason == CORE_ROOT_COMPARISON_PREVIOUS_PV);
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STRICT_MINIMAX,
+        layered_moves,
+        3,
+        layered_mask,
+        values,
+        candidates,
+        MOVE_INVALID,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_DOWN);
+    assert(reason == CORE_ROOT_COMPARISON_STABLE_DIRECTION);
+
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 10.0, 0);
+    values[MOVE_RIGHT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_UPPER, 0.0, 0);
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STRICT_MINIMAX,
+        layered_moves + 1,
+        2,
+        (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_RIGHT)),
+        values,
+        candidates,
+        MOVE_INVALID,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_DOWN);
+    assert(reason == CORE_ROOT_COMPARISON_SEARCH_BOUND);
+
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_WIN, CORE_VALUE_BOUND_EXACT, 999000.0, 1);
+    values[MOVE_RIGHT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_UPPER, 0.0, 0);
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STRICT_MINIMAX,
+        layered_moves + 1,
+        2,
+        (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_RIGHT)),
+        values,
+        candidates,
+        MOVE_INVALID,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_DOWN);
+    assert(reason == CORE_ROOT_COMPARISON_SEARCH_BOUND);
 
     SnakeFree(&me);
     SnakeFree(&you);
