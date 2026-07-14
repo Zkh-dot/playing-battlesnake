@@ -254,6 +254,7 @@ def test_fixed_depth_root_reason_and_tagged_frontier_repeat_deterministically() 
     reasons = {result["root_comparison_reason"] for result in results}
 
     assert {result["completed_depth"] for result in results} == {2}
+    assert {result["selection_reason"] for result in results} == {"minimax"}
     assert len(tagged_frontiers) == 1
     assert len(reasons) == 1
     assert reasons != {"not_compared"}
@@ -451,7 +452,7 @@ def test_low_budget_timeout_snapshot_is_coherent_smoke() -> None:
         )
 
         assert _selected_tag(timed) == _selected_tag(complete)
-        assert timed["selection_reason"] == "minimax"
+        assert timed["selection_reason"] == "timeout_best_so_far"
 
 
 def test_strict_minimax_keeps_numeric_root_selection_semantics() -> None:

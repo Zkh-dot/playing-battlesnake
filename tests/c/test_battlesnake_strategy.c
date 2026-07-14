@@ -29,6 +29,7 @@ extern bool CoreRootTimeoutSnapshotForTesting(
     MoveDirection partial_move,
     CoreSearchValue partial_value,
     CoreRootComparisonReason partial_reason,
+    bool timed_out,
     MoveDirection* out_move,
     CoreSearchValue* out_value,
     CoreRootComparisonReason* out_reason,
@@ -886,6 +887,7 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
             MOVE_RIGHT,
             partial,
             CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
+            true,
             &move,
             &value,
             &reason,
@@ -895,7 +897,7 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
             root_values
         ));
         assert(depth == 1);
-        assert(selection_reason == CORE_SELECTION_MINIMAX);
+        assert(selection_reason == CORE_SELECTION_TIMEOUT_BEST_SO_FAR);
         assert(move == MOVE_LEFT);
         assert(value.score == completed.score);
         assert(value.outcome == completed.outcome);
@@ -908,6 +910,31 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
     }
 
     assert(CoreRootTimeoutSnapshotForTesting(
+        true,
+        MOVE_LEFT,
+        completed,
+        CORE_ROOT_COMPARISON_HEURISTIC_VALUE,
+        MOVE_INVALID,
+        partial,
+        CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
+        false,
+        &move,
+        &value,
+        &reason,
+        &depth,
+        &selection_reason,
+        root_value_valid,
+        root_values
+    ));
+    assert(depth == 1);
+    assert(selection_reason == CORE_SELECTION_MINIMAX);
+    assert(move == MOVE_LEFT);
+    assert(value.score == completed.score);
+    assert(reason == CORE_ROOT_COMPARISON_HEURISTIC_VALUE);
+    assert(root_value_valid[MOVE_LEFT]);
+    assert(!root_value_valid[MOVE_RIGHT]);
+
+    assert(CoreRootTimeoutSnapshotForTesting(
         false,
         MOVE_INVALID,
         completed,
@@ -915,6 +942,7 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
         MOVE_RIGHT,
         partial,
         CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
+        true,
         &move,
         &value,
         &reason,
@@ -945,6 +973,7 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
         MOVE_INVALID,
         partial,
         CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
+        false,
         &move,
         &value,
         &reason,

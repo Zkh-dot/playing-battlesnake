@@ -5852,6 +5852,18 @@ static bool core_root_snapshot_adopt_partial_if_empty(
     return true;
 }
 
+static void core_root_snapshot_finalize_source(
+    CoreRootIterationSnapshot* snapshot,
+    bool timed_out
+) {
+    bool has_searched_result = snapshot->depth > 0 ||
+        (core_valid_move_direction(snapshot->move) &&
+         snapshot->root_value_valid[snapshot->move]);
+    if (timed_out && has_searched_result) {
+        snapshot->selection_reason = CORE_SELECTION_TIMEOUT_BEST_SO_FAR;
+    }
+}
+
 #ifdef CORE_ROOT_SELECTION_TESTING
 bool CoreRootTimeoutSnapshotForTesting(
     bool has_completed,
@@ -5861,6 +5873,7 @@ bool CoreRootTimeoutSnapshotForTesting(
     MoveDirection partial_move,
     CoreSearchValue partial_value,
     CoreRootComparisonReason partial_reason,
+    bool timed_out,
     MoveDirection* out_move,
     CoreSearchValue* out_value,
     CoreRootComparisonReason* out_reason,
@@ -5909,6 +5922,7 @@ bool CoreRootTimeoutSnapshotForTesting(
         partial_valid,
         partial_values
     );
+    core_root_snapshot_finalize_source(&snapshot, timed_out);
     *out_move = snapshot.move;
     *out_value = snapshot.value;
     *out_reason = snapshot.reason;
@@ -6119,6 +6133,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
+    core_root_snapshot_finalize_source(&completed, timed_out);
     completed_best = completed.move;
     CoreSearchValue completed_value = completed.value;
     stats->completed_depth = completed.depth;
