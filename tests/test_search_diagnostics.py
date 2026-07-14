@@ -19,6 +19,8 @@ EXPECTED_DIAGNOSTIC_KEYS = {
     "completed_depth",
     "max_depth_started",
     "timed_out",
+    "node_budget",
+    "node_budget_exhausted",
     "nodes",
     "leaf_evals",
     "clone_calls",
@@ -192,6 +194,123 @@ def _issue_30_root_worst_scores(board: Board, snake_id: str, depth: int) -> dict
 
 
 class SearchDiagnosticsTests(unittest.TestCase):
+    def test_node_budget_rejects_negative_values(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+
+        with self.assertRaisesRegex(ValueError, "node_budget"):
+            minimax_diagnostics(build_board(scenario), scenario.snake_id, node_budget=-1)
+        with self.assertRaisesRegex(ValueError, "node_budget"):
+            minimax_diagnostics(build_board(scenario), scenario.snake_id, node_budget=1 << 64)
+
+    def test_node_budget_zero_preserves_wall_clock_mode(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+
+        diagnostics = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            time_budget_ms=25,
+            node_budget=0,
+        )
+
+        self.assertEqual(diagnostics["node_budget"], 0)
+        self.assertFalse(diagnostics["node_budget_exhausted"])
+        self.assertGreater(diagnostics["nodes"], 0)
+
+    def test_node_budget_stops_before_exceeding_the_cap(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+
+        diagnostics = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            node_budget=64,
+        )
+
+        self.assertEqual(diagnostics["node_budget"], 64)
+        self.assertLessEqual(diagnostics["nodes"], 64)
+        self.assertTrue(diagnostics["node_budget_exhausted"])
+        self.assertFalse(diagnostics["timed_out"])
+        self.assertIn(
+            diagnostics["selection_reason"],
+            {"node_budget_best_so_far", "allowed_fallback"},
+        )
+
+    def test_node_budget_runs_are_deterministic(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+
+        def stable_projection(diagnostics: dict[str, object]) -> dict[str, object]:
+            root_candidates = diagnostics["root_candidates"]
+            assert isinstance(root_candidates, dict)
+            return {
+                "move": diagnostics["move"],
+                "score": diagnostics["score"],
+                "completed_depth": diagnostics["completed_depth"],
+                "max_depth_started": diagnostics["max_depth_started"],
+                "nodes": diagnostics["nodes"],
+                "root_move_scores": diagnostics["root_move_scores"],
+                "root_values": {
+                    move: {
+                        "outcome": candidate["minimax_outcome"],
+                        "bound": candidate["minimax_bound"],
+                        "score": candidate["minimax_score"],
+                        "valid": move in diagnostics["root_move_scores"],
+                        "proof": candidate["structural_proof"],
+                        "proof_cutoff": candidate["proof_cutoff"],
+                        "rejection_reason": candidate["rejection_reason"],
+                    }
+                    for move, candidate in root_candidates.items()
+                },
+                "root_comparison_reason": diagnostics["root_comparison_reason"],
+                "selection_reason": diagnostics["selection_reason"],
+            }
+
+        runs = [
+            stable_projection(
+                minimax_diagnostics(
+                    build_board(scenario),
+                    scenario.snake_id,
+                    node_budget=512,
+                )
+            )
+            for _ in range(5)
+        ]
+
+        self.assertTrue(all(run == runs[0] for run in runs[1:]))
+
+    def test_node_budget_keeps_last_complete_root_iteration(self) -> None:
+        scenario = get_scenario("duel_open_7x7")
+        depth_two = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            fixed_depth=2,
+            enable_tt=False,
+        )
+        capped = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            enable_tt=False,
+            node_budget=int(depth_two["nodes"]) + 1,
+        )
+
+        self.assertEqual(capped["completed_depth"], 2)
+        self.assertEqual(capped["max_depth_started"], 3)
+        self.assertTrue(capped["node_budget_exhausted"])
+        self.assertFalse(capped["timed_out"])
+        self.assertEqual(capped["selection_reason"], "node_budget_best_so_far")
+        for key in ("move", "score", "root_move_scores", "root_comparison_reason"):
+            self.assertEqual(capped[key], depth_two[key])
+        for move, candidate in capped["root_candidates"].items():
+            fixed_candidate = depth_two["root_candidates"][move]
+            for key in (
+                "minimax_score",
+                "minimax_outcome",
+                "minimax_bound",
+            ):
+                self.assertEqual(candidate[key], fixed_candidate[key])
+            self.assertEqual(
+                move in capped["root_move_scores"],
+                move in depth_two["root_move_scores"],
+            )
+
     def test_minimax_diagnostics_shape(self) -> None:
         scenario = get_scenario("duel_open_7x7")
         board = build_board(scenario)

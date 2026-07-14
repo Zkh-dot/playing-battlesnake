@@ -1209,6 +1209,7 @@ CoreStatus CoreSpaceTimeCompute(
 struct CoreSearchTimer {
     struct timespec start;
     struct timespec deadline;
+    bool enabled;
 };
 
 typedef struct {
@@ -1230,6 +1231,7 @@ typedef struct {
     MoveDirection principal_variation[CORE_MINIMAX_MAX_DEPTH + 1];
     MoveDirection killer_moves[CORE_MINIMAX_MAX_DEPTH + 1][2];
     int history_scores[4];
+    bool wall_time_interrupted;
 } CoreSearchContext;
 
 static CoreSearchTimer core_search_timer_start(int time_budget_ms) {
@@ -1247,7 +1249,7 @@ static CoreSearchTimer core_search_timer_start(int time_budget_ms) {
         deadline.tv_nsec -= 1000000000L;
     }
 
-    return (CoreSearchTimer){.start = start, .deadline = deadline};
+    return (CoreSearchTimer){.start = start, .deadline = deadline, .enabled = true};
 }
 
 static CoreSearchTimer core_search_timer_prefix(
@@ -1271,10 +1273,31 @@ static CoreSearchTimer core_search_timer_prefix(
 }
 
 static bool core_search_timed_out(const CoreSearchTimer* timer) {
+    if (!timer->enabled) {
+        return false;
+    }
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return now.tv_sec > timer->deadline.tv_sec ||
         (now.tv_sec == timer->deadline.tv_sec && now.tv_nsec >= timer->deadline.tv_nsec);
+}
+
+static bool core_minimax_interrupted(CoreSearchContext* context, bool record_wall_interruption) {
+    CoreSearchStats* stats = context->stats;
+    if (context->config.node_budget > 0) {
+        if (stats != NULL && stats->nodes >= context->config.node_budget) {
+            stats->node_budget_exhausted = true;
+            return true;
+        }
+        return false;
+    }
+    if (!core_search_timed_out(&context->timer)) {
+        return false;
+    }
+    if (record_wall_interruption) {
+        context->wall_time_interrupted = true;
+    }
+    return true;
 }
 
 static double core_elapsed_ms(struct timespec start, struct timespec end) {
@@ -5337,12 +5360,12 @@ static CoreStatus core_minimax_search(
     MoveDirection preferred_move,
     uint32_t incoming_cause,
     CoreSearchContext* context,
-    bool* timed_out,
+    bool* interrupted,
     CoreSearchValue* out_value,
     MoveDirection* out_best_move
 ) {
-    if (core_search_timed_out(&context->timer)) {
-        *timed_out = true;
+    if (core_minimax_interrupted(context, true)) {
+        *interrupted = true;
         return CORE_OK;
     }
     CoreSearchStats* stats = context->stats;
@@ -5510,8 +5533,8 @@ static CoreStatus core_minimax_search(
     MoveDirection best_move = own_moves[0];
 
     for (int order = 0; order < own_move_count; order++) {
-        if (core_search_timed_out(&context->timer)) {
-            *timed_out = true;
+        if (core_minimax_interrupted(context, true)) {
+            *interrupted = true;
             break;
         }
 
@@ -5542,8 +5565,8 @@ static CoreStatus core_minimax_search(
         MoveDirection worst_reply_move = MOVE_INVALID;
         bool reply_cutoff = false;
         for (int combo = 0; combo < total; combo++) {
-            if (core_search_timed_out(&context->timer)) {
-                *timed_out = true;
+            if (core_minimax_interrupted(context, true)) {
+                *interrupted = true;
                 break;
             }
 
@@ -5594,14 +5617,14 @@ static CoreStatus core_minimax_search(
                         next
                     ),
                     context,
-                    timed_out,
+                    interrupted,
                     &value,
                     NULL
                 );
                 if (!CoreSearchStateUnmake(context->state)) {
                     return CORE_ERROR;
                 }
-                if (status != CORE_OK || *timed_out) {
+                if (status != CORE_OK || *interrupted) {
                     return status;
                 }
             } else {
@@ -5641,12 +5664,12 @@ static CoreStatus core_minimax_search(
                         next
                     ),
                     context,
-                    timed_out,
+                    interrupted,
                     &value,
                     NULL
                 );
                 CoreSearchStateFree(&cloned_state);
-                if (status != CORE_OK || *timed_out) {
+                if (status != CORE_OK || *interrupted) {
                     return status;
                 }
             }
@@ -5682,7 +5705,7 @@ static CoreStatus core_minimax_search(
             }
         }
 
-        if (*timed_out) {
+        if (*interrupted) {
             break;
         }
 
@@ -5745,7 +5768,7 @@ static CoreStatus core_minimax_search(
         }
     }
 
-    if (*timed_out) {
+    if (*interrupted) {
         return CORE_OK;
     }
 
@@ -5835,7 +5858,8 @@ static bool core_root_snapshot_adopt_partial_if_empty(
     MoveDirection partial_move,
     CoreRootComparisonReason partial_reason,
     const bool root_value_valid[4],
-    const CoreSearchValue root_values[4]
+    const CoreSearchValue root_values[4],
+    CoreSelectionReason interruption_reason
 ) {
     if (snapshot->depth > 0 || !partial_valid || !core_valid_move_direction(partial_move) ||
         !root_value_valid[partial_move]) {
@@ -5844,7 +5868,7 @@ static bool core_root_snapshot_adopt_partial_if_empty(
     snapshot->move = partial_move;
     snapshot->value = root_values[partial_move];
     snapshot->reason = partial_reason;
-    snapshot->selection_reason = CORE_SELECTION_TIMEOUT_BEST_SO_FAR;
+    snapshot->selection_reason = interruption_reason;
     for (int root_move = MOVE_UP; root_move <= MOVE_RIGHT; root_move++) {
         snapshot->root_value_valid[root_move] = root_value_valid[root_move];
         snapshot->root_values[root_move] = root_values[root_move];
@@ -5854,12 +5878,15 @@ static bool core_root_snapshot_adopt_partial_if_empty(
 
 static void core_root_snapshot_finalize_source(
     CoreRootIterationSnapshot* snapshot,
-    bool timed_out
+    bool timed_out,
+    bool node_budget_exhausted
 ) {
     bool has_searched_result = snapshot->depth > 0 ||
         (core_valid_move_direction(snapshot->move) &&
          snapshot->root_value_valid[snapshot->move]);
-    if (timed_out && has_searched_result) {
+    if (node_budget_exhausted && has_searched_result) {
+        snapshot->selection_reason = CORE_SELECTION_NODE_BUDGET_BEST_SO_FAR;
+    } else if (timed_out && has_searched_result) {
         snapshot->selection_reason = CORE_SELECTION_TIMEOUT_BEST_SO_FAR;
     }
 }
@@ -5920,9 +5947,10 @@ bool CoreRootTimeoutSnapshotForTesting(
         partial_move,
         partial_reason,
         partial_valid,
-        partial_values
+        partial_values,
+        CORE_SELECTION_TIMEOUT_BEST_SO_FAR
     );
-    core_root_snapshot_finalize_source(&snapshot, timed_out);
+    core_root_snapshot_finalize_source(&snapshot, timed_out, false);
     *out_move = snapshot.move;
     *out_value = snapshot.value;
     *out_reason = snapshot.reason;
@@ -5958,6 +5986,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     CoreSearchStats local_stats;
     CoreSearchStats* stats = out_stats != NULL ? out_stats : &local_stats;
     CoreSearchStatsInit(stats);
+    stats->node_budget = config.node_budget;
     stats->parallel_mode = config.parallel_mode;
     stats->parallel_workers_used = 1;
 
@@ -6009,12 +6038,15 @@ CoreStatus CoreMinimaxMoveWithStats(
     CoreSearchTimer root_analysis_timer = core_search_timer_prefix(
         &context.timer, root_analysis_budget_ms
     );
+    if (config.node_budget > 0) {
+        root_analysis_timer.enabled = false;
+    }
     CoreStatus policy_status = core_prepare_root_policy(
         board,
         snake_id,
         config.root_policy,
         &root_analysis_timer,
-        config.fixed_depth == 0,
+        config.fixed_depth == 0 && config.node_budget == 0,
         root_allowed_mask,
         stats,
         &root_allowed_mask
@@ -6059,13 +6091,12 @@ CoreStatus CoreMinimaxMoveWithStats(
     completed.value = core_unresolved_value(0.0);
     completed.reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
     completed.selection_reason = CORE_SELECTION_ALLOWED_FALLBACK;
-    bool timed_out = false;
     struct timespec start;
     struct timespec end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int depth = 1; depth <= max_depth; depth++) {
-        bool iteration_timed_out = false;
+        bool iteration_interrupted = false;
         CoreSearchValue value = core_unresolved_value(0.0);
         MoveDirection candidate = completed_best;
         stats->max_depth_started = depth;
@@ -6083,7 +6114,7 @@ CoreStatus CoreMinimaxMoveWithStats(
             preferred_move,
             CORE_TERMINAL_CAUSE_NONE,
             &context,
-            &iteration_timed_out,
+            &iteration_interrupted,
             &value,
             &candidate
         );
@@ -6095,16 +6126,18 @@ CoreStatus CoreMinimaxMoveWithStats(
             CoreTtFree(&context.tt);
             return status;
         }
-        if (iteration_timed_out) {
+        if (iteration_interrupted) {
             (void)core_root_snapshot_adopt_partial_if_empty(
                 &completed,
                 context.root_best_valid,
                 context.root_best_move,
                 context.root_best_reason,
                 context.root_move_value_valid,
-                context.root_move_values
+                context.root_move_values,
+                stats->node_budget_exhausted
+                    ? CORE_SELECTION_NODE_BUDGET_BEST_SO_FAR
+                    : CORE_SELECTION_TIMEOUT_BEST_SO_FAR
             );
-            timed_out = true;
             break;
         }
 
@@ -6124,7 +6157,7 @@ CoreStatus CoreMinimaxMoveWithStats(
             context.root_move_value_valid,
             context.root_move_values
         );
-        if (!fixed_depth_requested && core_search_timed_out(&context.timer)) {
+        if (!fixed_depth_requested && core_minimax_interrupted(&context, false)) {
             break;
         }
         if (context.tt_enabled) {
@@ -6133,11 +6166,15 @@ CoreStatus CoreMinimaxMoveWithStats(
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
-    core_root_snapshot_finalize_source(&completed, timed_out);
+    core_root_snapshot_finalize_source(
+        &completed,
+        context.wall_time_interrupted,
+        stats->node_budget_exhausted
+    );
     completed_best = completed.move;
     CoreSearchValue completed_value = completed.value;
     stats->completed_depth = completed.depth;
-    stats->timed_out = timed_out;
+    stats->timed_out = context.wall_time_interrupted;
     stats->selection_reason = completed.selection_reason;
     stats->score = completed_value.score;
     stats->value = completed_value;

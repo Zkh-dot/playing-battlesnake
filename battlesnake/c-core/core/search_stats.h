@@ -72,6 +72,7 @@ typedef enum {
     CORE_SELECTION_TIMEOUT_BEST_SO_FAR = 1,
     CORE_SELECTION_ALLOWED_FALLBACK = 2,
     CORE_SELECTION_CORRIDOR_GUARD = 3,
+    CORE_SELECTION_NODE_BUDGET_BEST_SO_FAR = 4,
 } CoreSelectionReason;
 
 typedef enum {
@@ -152,6 +153,8 @@ typedef struct {
     int completed_depth;
     int max_depth_started;
     bool timed_out;
+    uint64_t node_budget;
+    bool node_budget_exhausted;
     double score;
     CoreSearchValue value;
     double elapsed_ms;
@@ -199,6 +202,7 @@ typedef struct {
 typedef struct {
     int time_budget_ms;
     int fixed_depth;
+    uint64_t node_budget;
     bool enable_tt;
     bool enable_move_ordering;
     bool enable_make_unmake;
