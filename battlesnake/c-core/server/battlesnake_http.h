@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 typedef struct {
+    /* Nonnegative monotonic duration; negative values are clamped to zero. */
     int elapsed_before_handle_ms;
 } BsHttpRequestContext;
 

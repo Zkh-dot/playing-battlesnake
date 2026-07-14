@@ -132,6 +132,7 @@ static void test_move_route_accounts_for_elapsed_request_age(void) {
         request, sizeof(request), "POST", "/move", "Content-Length", 0, DUEL_MOVE_BODY
     );
 
+    request_context.elapsed_before_handle_ms = 250;
     BsHttpResult normal = BsHandleHttpRequestTimed(
         request,
         strlen(request),
@@ -145,7 +146,7 @@ static void test_move_route_accounts_for_elapsed_request_age(void) {
     assert(normal.is_move);
     assert(!normal.fallback_used);
     assert(normal.game_timeout_ms == 500);
-    assert(normal.elapsed_before_search_ms >= 0);
+    assert(normal.elapsed_before_search_ms >= 250);
     assert(strstr(response, "\"move\":\"") != 0);
 
     request_context.elapsed_before_handle_ms = 301;
@@ -181,6 +182,42 @@ static void test_move_route_accounts_for_elapsed_request_age(void) {
     assert(saturated.game_timeout_ms == 500);
     assert(saturated.elapsed_before_search_ms == INT_MAX);
     assert(strstr(response, "\"move\":\"") != 0);
+
+    BsArenaFree(&arena);
+}
+
+static void test_move_route_clamps_negative_elapsed_request_age(void) {
+    BsArena arena;
+    BsStrategyConfig config = BsStrategyConfigDefault();
+    const int negative_ages[] = {-1, INT_MIN};
+    char request[4096];
+    char response[2048];
+
+    config.default_time_budget_ms = 10;
+    assert(BsArenaInit(&arena, 65536));
+    request_from_body_with_headers(
+        request, sizeof(request), "POST", "/move", "Content-Length", 0, DUEL_MOVE_BODY
+    );
+
+    for (size_t i = 0; i < sizeof(negative_ages) / sizeof(negative_ages[0]); i++) {
+        BsHttpRequestContext request_context = {
+            .elapsed_before_handle_ms = negative_ages[i],
+        };
+        BsHttpResult result = BsHandleHttpRequestTimed(
+            request,
+            strlen(request),
+            &arena,
+            &config,
+            &request_context,
+            response,
+            sizeof(response)
+        );
+        assert(result.status_code == 200);
+        assert(result.is_move);
+        assert(result.game_timeout_ms == 500);
+        assert(result.elapsed_before_search_ms >= 0);
+        assert(strstr(response, "\"move\":\"") != 0);
+    }
 
     BsArenaFree(&arena);
 }
@@ -569,6 +606,7 @@ int main(void) {
     test_info_route();
     test_move_route();
     test_move_route_accounts_for_elapsed_request_age();
+    test_move_route_clamps_negative_elapsed_request_age();
     test_unknown_route();
     test_post_without_content_length();
     test_wrong_method_returns_405();

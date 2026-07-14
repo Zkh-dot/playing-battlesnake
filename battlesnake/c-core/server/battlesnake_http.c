@@ -204,7 +204,16 @@ static int bs_elapsed_ms_ceil(struct timespec start, struct timespec end) {
 }
 
 static int bs_total_request_age_ms(int elapsed_before_handle_ms, int parse_elapsed_ms) {
-    int64_t total = (int64_t)elapsed_before_handle_ms + (int64_t)parse_elapsed_ms;
+    int64_t clamped_before_handle_ms = elapsed_before_handle_ms > 0
+        ? (int64_t)elapsed_before_handle_ms
+        : 0;
+    int64_t clamped_parse_elapsed_ms = parse_elapsed_ms > 0
+        ? (int64_t)parse_elapsed_ms
+        : 0;
+    int64_t total = clamped_before_handle_ms + clamped_parse_elapsed_ms;
+    if (total <= 0) {
+        return 0;
+    }
     return total > INT_MAX ? INT_MAX : (int)total;
 }
 
