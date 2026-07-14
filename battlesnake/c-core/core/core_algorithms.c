@@ -4748,31 +4748,21 @@ static bool core_active_values_are_exact(const CoreSearchContext* context, uint8
     return active_mask != 0;
 }
 
-static bool core_numeric_layer_has_exact_heuristic_preference(
+static bool core_active_values_are_exact_unresolved(
     const CoreSearchContext* context,
-    uint8_t before_mask,
-    uint8_t after_mask
+    uint8_t active_mask
 ) {
-    for (int winner = MOVE_UP; winner <= MOVE_RIGHT; winner++) {
-        const CoreSearchValue* winner_value = &context->root_move_values[winner];
-        if ((after_mask & (1u << winner)) == 0 ||
-            winner_value->bound != CORE_VALUE_BOUND_EXACT ||
-            winner_value->outcome != CORE_OUTCOME_UNRESOLVED) {
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        if ((active_mask & (1u << move)) == 0) {
             continue;
         }
-        for (int loser = MOVE_UP; loser <= MOVE_RIGHT; loser++) {
-            const CoreSearchValue* loser_value = &context->root_move_values[loser];
-            if ((before_mask & (1u << loser)) == 0 || (after_mask & (1u << loser)) != 0 ||
-                loser_value->bound != CORE_VALUE_BOUND_EXACT ||
-                loser_value->outcome != CORE_OUTCOME_UNRESOLVED) {
-                continue;
-            }
-            if (winner_value->score > loser_value->score) {
-                return true;
-            }
+        const CoreSearchValue* value = &context->root_move_values[move];
+        if (value->bound != CORE_VALUE_BOUND_EXACT ||
+            value->outcome != CORE_OUTCOME_UNRESOLVED) {
+            return false;
         }
     }
-    return false;
+    return active_mask != 0;
 }
 
 static uint8_t core_keep_strict_numeric_maxima(
@@ -4991,11 +4981,8 @@ static bool core_select_root_candidate(
         before = active_mask;
         active_mask = core_remove_numerically_dominated_roots(context, active_mask);
         if (core_popcount4(before) > 1 && core_popcount4(active_mask) == 1) {
-            decisive_reason = core_numeric_layer_has_exact_heuristic_preference(
-                context,
-                before,
-                active_mask
-            ) ? CORE_ROOT_COMPARISON_HEURISTIC_VALUE : CORE_ROOT_COMPARISON_SEARCH_BOUND;
+            decisive_reason = core_active_values_are_exact_unresolved(context, before) ?
+                CORE_ROOT_COMPARISON_HEURISTIC_VALUE : CORE_ROOT_COMPARISON_SEARCH_BOUND;
         }
     } else {
         uint8_t before = active_mask;

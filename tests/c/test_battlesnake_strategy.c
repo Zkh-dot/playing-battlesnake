@@ -378,6 +378,36 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
     assert(reason == CORE_ROOT_COMPARISON_STABLE_DIRECTION);
 
     values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 10.0, 0);
+    values[MOVE_UP] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 5.0, 0);
+    values[MOVE_RIGHT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_UPPER, 0.0, 0);
+    const MoveDirection mixed_numeric_orders[][3] = {
+        {MOVE_UP, MOVE_DOWN, MOVE_RIGHT},
+        {MOVE_RIGHT, MOVE_DOWN, MOVE_UP},
+    };
+    for (size_t index = 0;
+         index < sizeof(mixed_numeric_orders) / sizeof(mixed_numeric_orders[0]);
+         index++) {
+        assert(CoreSelectRootCandidateForTesting(
+            board,
+            "me",
+            CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+            mixed_numeric_orders[index],
+            3,
+            layered_mask,
+            values,
+            candidates,
+            MOVE_INVALID,
+            &selected,
+            &selected_value,
+            &reason
+        ));
+        assert(selected == MOVE_DOWN);
+        assert(selected_value.score == 10.0);
+        assert(selected_value.bound == CORE_VALUE_BOUND_EXACT);
+        assert(reason == CORE_ROOT_COMPARISON_SEARCH_BOUND);
+    }
+
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 10.0, 0);
     values[MOVE_RIGHT] = root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_UPPER, 0.0, 0);
     assert(CoreSelectRootCandidateForTesting(
         board,
