@@ -1,0 +1,914 @@
+{
+  "schema_version": 1,
+  "source": {
+    "kind": "compact_states_from_battlesnake_engine_replay_exports",
+    "note": "Only the four issue-43 turns are committed; full replay exports remain external."
+  },
+  "node_budgets": [
+    16000,
+    32000,
+    48000
+  ],
+  "positions": [
+    {
+      "case": "risky_root",
+      "evidence": {
+        "game_id": "0188bbac-32b6-4069-8bee-d24565c1cdd4",
+        "turn": 288,
+        "recorded_risky_move": "left",
+        "source_export": "exports/zkh-dot_lost_games/0188bbac-32b6-4069-8bee-d24565c1cdd4.json",
+        "engine_game_url": "https://engine.battlesnake.com/games/0188bbac-32b6-4069-8bee-d24565c1cdd4"
+      },
+      "expectation": {
+        "selected_structural_proof": "safe",
+        "risky_root_relation": "dominated_by_safe",
+        "allow_move_change_across_budgets": false
+      },
+      "snake_id": "gs_Vr7fVMKwhFCkQ3hqBvQMFJpK",
+      "width": 11,
+      "height": 11,
+      "ruleset_name": "standard",
+      "hazard_damage": 15,
+      "snakes": [
+        {
+          "id": "gs_Vr7fVMKwhFCkQ3hqBvQMFJpK",
+          "name": "scvnak",
+          "health": 86,
+          "body": [
+            [
+              9,
+              9
+            ],
+            [
+              10,
+              9
+            ],
+            [
+              10,
+              10
+            ],
+            [
+              9,
+              10
+            ],
+            [
+              8,
+              10
+            ],
+            [
+              7,
+              10
+            ],
+            [
+              6,
+              10
+            ],
+            [
+              5,
+              10
+            ],
+            [
+              5,
+              9
+            ],
+            [
+              4,
+              9
+            ],
+            [
+              4,
+              10
+            ],
+            [
+              3,
+              10
+            ],
+            [
+              3,
+              9
+            ],
+            [
+              2,
+              9
+            ],
+            [
+              2,
+              10
+            ],
+            [
+              1,
+              10
+            ],
+            [
+              0,
+              10
+            ],
+            [
+              0,
+              9
+            ],
+            [
+              1,
+              9
+            ],
+            [
+              1,
+              8
+            ],
+            [
+              0,
+              8
+            ],
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              3,
+              8
+            ],
+            [
+              4,
+              8
+            ],
+            [
+              5,
+              8
+            ],
+            [
+              6,
+              8
+            ],
+            [
+              7,
+              8
+            ],
+            [
+              8,
+              8
+            ],
+            [
+              9,
+              8
+            ]
+          ]
+        },
+        {
+          "id": "gs_XkkjHbfdgbWFY7p6FWfqWJ9c",
+          "name": "Dracosignus, Envoy of the Devourer",
+          "health": 91,
+          "body": [
+            [
+              7,
+              5
+            ],
+            [
+              8,
+              5
+            ],
+            [
+              9,
+              5
+            ],
+            [
+              9,
+              4
+            ],
+            [
+              9,
+              3
+            ],
+            [
+              9,
+              2
+            ],
+            [
+              10,
+              2
+            ],
+            [
+              10,
+              1
+            ],
+            [
+              9,
+              1
+            ],
+            [
+              8,
+              1
+            ],
+            [
+              8,
+              2
+            ],
+            [
+              8,
+              3
+            ],
+            [
+              7,
+              3
+            ],
+            [
+              7,
+              4
+            ]
+          ]
+        }
+      ],
+      "food": [
+        [
+          3,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "hazards": []
+    },
+    {
+      "case": "risky_root",
+      "evidence": {
+        "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+        "turn": 357,
+        "recorded_risky_move": "down",
+        "source_export": "exports/zkh-dot_lost_games/8fd97d0d-6f20-436a-833c-062027a12617.json",
+        "engine_game_url": "https://engine.battlesnake.com/games/8fd97d0d-6f20-436a-833c-062027a12617"
+      },
+      "expectation": {
+        "selected_structural_proof": "safe",
+        "risky_root_relation": "dominated_by_safe",
+        "allow_move_change_across_budgets": false
+      },
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "width": 11,
+      "height": 11,
+      "ruleset_name": "standard",
+      "hazard_damage": 15,
+      "snakes": [
+        {
+          "id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+          "name": "scvnak",
+          "health": 55,
+          "body": [
+            [
+              1,
+              4
+            ],
+            [
+              1,
+              5
+            ],
+            [
+              1,
+              6
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              1,
+              8
+            ],
+            [
+              0,
+              8
+            ],
+            [
+              0,
+              7
+            ],
+            [
+              0,
+              6
+            ],
+            [
+              0,
+              5
+            ],
+            [
+              0,
+              4
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              2
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              2,
+              0
+            ],
+            [
+              3,
+              0
+            ],
+            [
+              4,
+              0
+            ],
+            [
+              5,
+              0
+            ],
+            [
+              6,
+              0
+            ],
+            [
+              7,
+              0
+            ],
+            [
+              7,
+              1
+            ],
+            [
+              6,
+              1
+            ],
+            [
+              5,
+              1
+            ],
+            [
+              4,
+              1
+            ],
+            [
+              3,
+              1
+            ],
+            [
+              3,
+              2
+            ],
+            [
+              3,
+              3
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              2,
+              4
+            ]
+          ]
+        },
+        {
+          "id": "gs_MH9K8McM66JSfX3c8FfWHBWc",
+          "name": "Sandworm",
+          "health": 88,
+          "body": [
+            [
+              4,
+              5
+            ],
+            [
+              4,
+              6
+            ],
+            [
+              4,
+              7
+            ],
+            [
+              4,
+              8
+            ],
+            [
+              4,
+              9
+            ],
+            [
+              5,
+              9
+            ],
+            [
+              6,
+              9
+            ],
+            [
+              7,
+              9
+            ],
+            [
+              8,
+              9
+            ],
+            [
+              9,
+              9
+            ],
+            [
+              9,
+              8
+            ],
+            [
+              9,
+              7
+            ],
+            [
+              9,
+              6
+            ],
+            [
+              9,
+              5
+            ],
+            [
+              9,
+              4
+            ],
+            [
+              9,
+              3
+            ],
+            [
+              10,
+              3
+            ],
+            [
+              10,
+              2
+            ],
+            [
+              9,
+              2
+            ],
+            [
+              9,
+              1
+            ],
+            [
+              10,
+              1
+            ]
+          ]
+        }
+      ],
+      "food": [
+        [
+          6,
+          5
+        ],
+        [
+          8,
+          7
+        ],
+        [
+          2,
+          5
+        ]
+      ],
+      "hazards": []
+    },
+    {
+      "case": "risky_root",
+      "evidence": {
+        "game_id": "c7add22b-bc1e-443e-bad3-f271ac8886a1",
+        "turn": 278,
+        "recorded_risky_move": "left",
+        "source_export": "exports/zkh-dot_lost_games/c7add22b-bc1e-443e-bad3-f271ac8886a1.json",
+        "engine_game_url": "https://engine.battlesnake.com/games/c7add22b-bc1e-443e-bad3-f271ac8886a1"
+      },
+      "expectation": {
+        "selected_structural_proof": "safe",
+        "risky_root_relation": "dominated_by_safe",
+        "allow_move_change_across_budgets": false
+      },
+      "snake_id": "gs_JRM7M3HVpTh7yHCTJVpVRTMY",
+      "width": 11,
+      "height": 11,
+      "ruleset_name": "standard",
+      "hazard_damage": 15,
+      "snakes": [
+        {
+          "id": "gs_d3BG6DwFyFbD8XRGTYpbhDC8",
+          "name": "soma-mini v2[duels]",
+          "health": 93,
+          "body": [
+            [
+              8,
+              4
+            ],
+            [
+              8,
+              5
+            ],
+            [
+              7,
+              5
+            ],
+            [
+              7,
+              6
+            ],
+            [
+              7,
+              7
+            ],
+            [
+              8,
+              7
+            ],
+            [
+              8,
+              8
+            ],
+            [
+              8,
+              9
+            ],
+            [
+              8,
+              10
+            ],
+            [
+              9,
+              10
+            ],
+            [
+              9,
+              9
+            ],
+            [
+              9,
+              8
+            ],
+            [
+              9,
+              7
+            ]
+          ]
+        },
+        {
+          "id": "gs_JRM7M3HVpTh7yHCTJVpVRTMY",
+          "name": "scvnak",
+          "health": 72,
+          "body": [
+            [
+              5,
+              7
+            ],
+            [
+              5,
+              8
+            ],
+            [
+              5,
+              9
+            ],
+            [
+              6,
+              9
+            ],
+            [
+              7,
+              9
+            ],
+            [
+              7,
+              10
+            ],
+            [
+              6,
+              10
+            ],
+            [
+              5,
+              10
+            ],
+            [
+              4,
+              10
+            ],
+            [
+              3,
+              10
+            ],
+            [
+              2,
+              10
+            ],
+            [
+              1,
+              10
+            ],
+            [
+              1,
+              9
+            ],
+            [
+              2,
+              9
+            ],
+            [
+              3,
+              9
+            ],
+            [
+              3,
+              8
+            ],
+            [
+              2,
+              8
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              2,
+              6
+            ],
+            [
+              2,
+              5
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              3,
+              3
+            ],
+            [
+              4,
+              3
+            ],
+            [
+              4,
+              4
+            ],
+            [
+              5,
+              4
+            ],
+            [
+              5,
+              5
+            ],
+            [
+              6,
+              5
+            ],
+            [
+              6,
+              6
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        }
+      ],
+      "food": [
+        [
+          10,
+          9
+        ],
+        [
+          10,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "hazards": []
+    },
+    {
+      "case": "equivalent_maximal_frontier",
+      "evidence": {
+        "game_id": "7351410a-0ddf-4889-9f23-b66b2ef76c2f",
+        "turn": 169,
+        "recorded_risky_move": "down",
+        "source_export": "exports/zkh-dot_lost_games/7351410a-0ddf-4889-9f23-b66b2ef76c2f.json",
+        "engine_game_url": "https://engine.battlesnake.com/games/7351410a-0ddf-4889-9f23-b66b2ef76c2f"
+      },
+      "expectation": {
+        "selected_structural_proof": "safe",
+        "risky_root_relation": "dominated_by_safe",
+        "allow_move_change_across_budgets": true
+      },
+      "snake_id": "gs_kFqQMjdDbvWKKKjpVHXXfv3R",
+      "width": 11,
+      "height": 11,
+      "ruleset_name": "standard",
+      "hazard_damage": 15,
+      "snakes": [
+        {
+          "id": "gs_kFqQMjdDbvWKKKjpVHXXfv3R",
+          "name": "scvnak",
+          "health": 71,
+          "body": [
+            [
+              7,
+              8
+            ],
+            [
+              8,
+              8
+            ],
+            [
+              9,
+              8
+            ],
+            [
+              10,
+              8
+            ],
+            [
+              10,
+              7
+            ],
+            [
+              9,
+              7
+            ],
+            [
+              8,
+              7
+            ],
+            [
+              8,
+              6
+            ],
+            [
+              7,
+              6
+            ],
+            [
+              6,
+              6
+            ],
+            [
+              6,
+              7
+            ],
+            [
+              6,
+              8
+            ]
+          ]
+        },
+        {
+          "id": "gs_kvXhyQVG9wjctJjcfbvfvMw7",
+          "name": "Dracosignus, Envoy of the Devourer",
+          "health": 99,
+          "body": [
+            [
+              4,
+              1
+            ],
+            [
+              3,
+              1
+            ],
+            [
+              3,
+              2
+            ],
+            [
+              3,
+              3
+            ],
+            [
+              4,
+              3
+            ],
+            [
+              4,
+              4
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              4,
+              6
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              5,
+              5
+            ],
+            [
+              5,
+              4
+            ],
+            [
+              6,
+              4
+            ],
+            [
+              6,
+              3
+            ],
+            [
+              6,
+              2
+            ]
+          ]
+        }
+      ],
+      "food": [
+        [
+          0,
+          10
+        ],
+        [
+          10,
+          4
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          9,
+          1
+        ],
+        [
+          0,
+          9
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          6,
+          9
+        ]
+      ],
+      "hazards": []
+    }
+  ]
+}
