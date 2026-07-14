@@ -42,15 +42,20 @@ class DiagnosticsAudit:
 _OUTCOME_RANK = {"loss": 0, "unresolved": 1, "draw": 2, "win": 3}
 
 
-def _native_finite_double(value: object) -> float | None:
-    """Parse an untrusted diagnostics value as a finite native double."""
+def _native_double(value: object) -> float | None:
+    """Parse an untrusted value with native equality semantics, excluding NaN."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
         parsed = float(value)
     except (OverflowError, ValueError, TypeError):
         return None
-    return parsed if math.isfinite(parsed) else None
+    return None if math.isnan(parsed) else parsed
+
+
+def _native_finite_double(value: object) -> float | None:
+    parsed = _native_double(value)
+    return parsed if parsed is not None and math.isfinite(parsed) else None
 
 
 def _outcome_interval(candidate: dict[str, Any]) -> tuple[int, int] | None:
@@ -320,8 +325,8 @@ def _corridor_audit_candidate_is_coherent(
 def _exact_search_records_are_equal(
     proposal: dict[str, Any], incumbent: dict[str, Any]
 ) -> bool:
-    proposal_score = _native_finite_double(proposal.get("minimax_score"))
-    incumbent_score = _native_finite_double(incumbent.get("minimax_score"))
+    proposal_score = _native_double(proposal.get("minimax_score"))
+    incumbent_score = _native_double(incumbent.get("minimax_score"))
     proposal_outcome = proposal.get("minimax_outcome")
     incumbent_outcome = incumbent.get("minimax_outcome")
     proposal_distance = proposal.get("minimax_terminal_distance")

@@ -995,8 +995,8 @@ def test_out_of_uint16_terminal_distance_rejects_claimed_exact_tie() -> None:
 
 @pytest.mark.parametrize(
     "invalid_score",
-    [10**10_000, float("nan"), float("inf")],
-    ids=("huge-int", "nan", "inf"),
+    [10**10_000, float("nan")],
+    ids=("huge-int", "nan"),
 )
 def test_unrepresentable_applied_override_score_is_a_violation(
     invalid_score: object,
@@ -1021,7 +1021,66 @@ def test_unrepresentable_applied_override_score_is_a_violation(
     assert audit.corridor_guard_error is not None
 
 
-def test_ordinary_search_comparison_handles_unrepresentable_score() -> None:
+@pytest.mark.parametrize("score", [float("inf"), float("-inf")], ids=("pos", "neg"))
+def test_matching_signed_infinite_scores_allow_exact_tie(score: float) -> None:
+    diagnostics = _valid_applied_corridor_override()
+    roots = diagnostics["root_candidates"]
+    corridor_audit = diagnostics["corridor_guard"]
+    assert isinstance(roots, dict)
+    assert isinstance(corridor_audit, dict)
+    for root in roots.values():
+        assert isinstance(root, dict)
+        root["minimax_score"] = score
+    for candidate_name in ("incumbent", "proposal"):
+        candidate = corridor_audit[candidate_name]
+        assert isinstance(candidate, dict)
+        candidate["minimax_score"] = score
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is False
+    assert audit.post_search_override is True
+
+
+@pytest.mark.parametrize(
+    ("incumbent_score", "proposal_score"),
+    [(float("inf"), float("-inf")), (100.0, float("inf"))],
+    ids=("opposite-infinities", "finite-vs-infinite"),
+)
+def test_unequal_infinite_scores_reject_exact_tie(
+    incumbent_score: float, proposal_score: float
+) -> None:
+    diagnostics = _valid_applied_corridor_override()
+    roots = diagnostics["root_candidates"]
+    corridor_audit = diagnostics["corridor_guard"]
+    assert isinstance(roots, dict)
+    assert isinstance(corridor_audit, dict)
+    for move, score in (("right", incumbent_score), ("left", proposal_score)):
+        root = roots[move]
+        assert isinstance(root, dict)
+        root["minimax_score"] = score
+    for candidate_name, score in (
+        ("incumbent", incumbent_score),
+        ("proposal", proposal_score),
+    ):
+        candidate = corridor_audit[candidate_name]
+        assert isinstance(candidate, dict)
+        candidate["minimax_score"] = score
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+
+
+@pytest.mark.parametrize(
+    "score",
+    [10**10_000, float("inf"), float("-inf")],
+    ids=("huge-int", "pos-inf", "neg-inf"),
+)
+def test_ordinary_search_comparison_handles_nonfinite_or_overflow_score(
+    score: object,
+) -> None:
     diagnostics = {
         "move": "left",
         "root_candidates": {
@@ -1031,7 +1090,7 @@ def test_ordinary_search_comparison_handles_unrepresentable_score() -> None:
                 proof="unknown",
                 minimax_outcome="loss",
                 minimax_bound="exact",
-                minimax_score=10**10_000,
+                minimax_score=score,
             ),
             "right": _candidate(
                 capacity=12,

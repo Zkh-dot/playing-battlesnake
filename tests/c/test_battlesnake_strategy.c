@@ -160,6 +160,32 @@ static void test_corridor_guard_applies_only_exact_semantic_ties(void) {
     assert(stats.corridor_guard.decision == CORE_CORRIDOR_GUARD_APPLIED_EXACT_TIE);
     assert(stats.corridor_guard.comparison_ordering == CORE_ROOT_COMPARISON_EQUAL);
 
+    const double infinite_scores[] = {INFINITY, -INFINITY};
+    for (size_t i = 0; i < sizeof(infinite_scores) / sizeof(infinite_scores[0]); i++) {
+        CoreSearchValue infinite_exact = exact;
+        infinite_exact.score = infinite_scores[i];
+        assert(CoreApplyCorridorGuardForTesting(
+            MOVE_RIGHT,
+            infinite_exact,
+            same_structure,
+            proposal_metrics,
+            MOVE_LEFT,
+            infinite_exact,
+            same_structure,
+            incumbent_metrics,
+            &move,
+            &value,
+            &stats
+        ));
+        assert(move == MOVE_RIGHT);
+        assert(value.score == infinite_scores[i]);
+        assert(stats.score == infinite_scores[i]);
+        assert(stats.corridor_guard.comparison_ordering == CORE_ROOT_COMPARISON_EQUAL);
+        assert(stats.corridor_guard.comparison_reason == CORE_ROOT_COMPARISON_NOT_COMPARED);
+        assert(stats.corridor_guard.exact_tie_permitted);
+        assert(stats.corridor_guard.applied);
+    }
+
     CoreRootCandidateStats different_structure = root_test_stats(
         CORE_STRUCTURAL_PROOF_UNKNOWN, 9, 5
     );

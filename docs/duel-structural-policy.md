@@ -34,6 +34,12 @@ causes must be a canonical serializer-ordered list drawn from `wall`,
 C `int` values, with immediate exits limited to the zero-to-three neighbors
 remaining after excluding the previous cell.
 
+Score equality follows native `double` equality: matching positive infinities
+and matching negative infinities are equal, while opposite infinities, any
+finite/infinite pair, and every NaN are not. Offline heuristic interval
+dominance remains finite-only; an infinite or unrepresentable score cannot
+justify an ordinary strict-search preference.
+
 ## Diagnostics and offline audit
 
 The top-level `corridor_guard` diagnostics record contains `considered`,
