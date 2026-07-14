@@ -111,6 +111,7 @@ def test_fixture_builder_uses_live_scvnak_and_preserves_replay_evidence(
     }
     (tmp_path / f"{game_id}.json").write_text(json.dumps(export), encoding="utf-8")
     output = tmp_path / "fixture.json"
+    second_output = tmp_path / "fixture-second.json"
     monkeypatch.setattr(
         build_issue_44_fixtures,
         "POSITIONS",
@@ -118,6 +119,14 @@ def test_fixture_builder_uses_live_scvnak_and_preserves_replay_evidence(
     )
 
     assert build_issue_44_fixtures.main(export_dir=tmp_path, output_path=output) == 0
+    assert (
+        build_issue_44_fixtures.main(
+            export_dir=tmp_path,
+            output_path=second_output,
+        )
+        == 0
+    )
+    assert output.read_bytes() == second_output.read_bytes()
 
     position = json.loads(output.read_text(encoding="utf-8"))["positions"][0]
     assert position["snake_id"] == "me"
@@ -125,7 +134,7 @@ def test_fixture_builder_uses_live_scvnak_and_preserves_replay_evidence(
         "game_id": game_id,
         "turn": 7,
         "historical_guard_move": "right",
-        "expected_authoritative_move": "up",
+        "expected_incumbent_move": "up",
     }
     assert position["ruleset_name"] == "standard"
     assert position["hazard_damage"] == 9
@@ -191,6 +200,7 @@ def test_corridor_guard_audit_is_complete_and_coherent(
             assert candidate[key] == root[key]
 
     assert audit["proposal"]["move"] == position["evidence"]["historical_guard_move"]
+    assert audit["incumbent"]["move"] == position["evidence"]["expected_incumbent_move"]
     if audit["proposal"]["move"] != audit["incumbent"]["move"]:
         assert not audit["applied"] or audit["exact_tie_permitted"]
     if audit["applied"]:

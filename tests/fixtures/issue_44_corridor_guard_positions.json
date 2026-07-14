@@ -4,7 +4,8 @@
    "evidence": {
     "game_id": "091dc137-5a89-4471-b646-5540de694fe9",
     "turn": 290,
-    "historical_guard_move": "right"
+    "historical_guard_move": "right",
+    "expected_incumbent_move": "left"
    },
    "snake_id": "gs_gj3Q9RB6PQDvQ7TCVQkdHDq4",
    "width": 11,
@@ -244,7 +245,7 @@
     "game_id": "1985bf57-7fb4-4842-8ac0-b8900d31e1be",
     "turn": 424,
     "historical_guard_move": "down",
-    "expected_authoritative_move": "up"
+    "expected_incumbent_move": "up"
    },
    "snake_id": "gs_qyDQQvdSBSBB9vtpdtwrB7hX",
    "width": 11,
@@ -551,7 +552,8 @@
    "evidence": {
     "game_id": "74f38216-24fa-472c-ba98-66282577f624",
     "turn": 317,
-    "historical_guard_move": "left"
+    "historical_guard_move": "left",
+    "expected_incumbent_move": "right"
    },
    "snake_id": "gs_pRXyRvPGvTGXjJ6HfTjBH9pD",
    "width": 11,
@@ -791,7 +793,7 @@
     "game_id": "7ea501e7-db9f-40e3-9a72-d4efb77c5d59",
     "turn": 187,
     "historical_guard_move": "right",
-    "expected_authoritative_move": "down"
+    "expected_incumbent_move": "down"
    },
    "snake_id": "gs_xC8jRrBVDcGV3d6B3dMmqYfQ",
    "width": 11,
@@ -954,7 +956,8 @@
    "evidence": {
     "game_id": "f5d7c374-6c5c-4459-9bae-b897b0604165",
     "turn": 284,
-    "historical_guard_move": "up"
+    "historical_guard_move": "up",
+    "expected_incumbent_move": "down"
    },
    "snake_id": "gs_bRCkKCKw6bvJXWGwF66DVThb",
    "width": 11,
