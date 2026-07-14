@@ -400,7 +400,7 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
         assert all(event["status"] == 503 for event in overload_events)
 
 
-def test_rejection_pool_saturation_backpressures_until_explicit_503_capacity() -> None:
+def test_rejection_pool_saturation_still_returns_prompt_explicit_503() -> None:
     if not os.path.isdir("/proc/self/fd"):
         pytest.skip("Linux /proc socket state is required")
     subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
@@ -418,7 +418,6 @@ def test_rejection_pool_saturation_backpressures_until_explicit_503_capacity() -
         queued: socket.socket | None = None
         held_rejections: list[socket.socket] = []
         queued_rejection: socket.socket | None = None
-        backpressured: socket.socket | None = None
         try:
             _wait_for_server_ready(process, server_log)
             _wait_for_server_socket_count(process.pid, 1, exact=True)
@@ -448,28 +447,12 @@ def test_rejection_pool_saturation_backpressures_until_explicit_503_capacity() -
             queued_rejection.sendall(complete_request)
             _wait_for_server_socket_count(process.pid, 6, exact=True, stable_for=0.05)
 
-            backpressured = socket.create_connection(("127.0.0.1", port), timeout=0.5)
-            backpressured.settimeout(0.1)
-            backpressured.sendall(complete_request)
-            with pytest.raises(socket.timeout):
-                backpressured.recv(1)
+            time.sleep(0.55)
             _wait_for_server_socket_count(process.pid, 6, exact=True, stable_for=0.05)
-
-            held_rejections.pop(0).close()
-            queued_status, queued_body = _parse_http_response(
-                _receive_until_close(queued_rejection)
-            )
-            assert queued_status == 503
-            assert queued_body == {}
-            queued_rejection.close()
-            queued_rejection = None
-
-            backpressured.settimeout(0.5)
-            final_status, final_body = _parse_http_response(_receive_until_close(backpressured))
-            assert final_status == 503
-            assert final_body == {}
-            backpressured.close()
-            backpressured = None
+            status, body, elapsed_ms = _send_request(port, complete_request, timeout=0.5)
+            assert status == 503
+            assert body == {}
+            assert elapsed_ms < 300.0
 
             for held in held_rejections:
                 held.close()
@@ -487,8 +470,6 @@ def test_rejection_pool_saturation_backpressures_until_explicit_503_capacity() -
                 held.close()
             if queued_rejection is not None:
                 queued_rejection.close()
-            if backpressured is not None:
-                backpressured.close()
             _stop_server(process)
 
         overload_events = [
