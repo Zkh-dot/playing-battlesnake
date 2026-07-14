@@ -66,7 +66,6 @@ def _numeric_interval(candidate: dict[str, Any]) -> tuple[float, float] | None:
 def _strict_search_dominance_layer(
     selected: dict[str, Any],
     alternative: dict[str, Any],
-    search_candidates: Sequence[dict[str, Any]],
 ) -> str | None:
     """Independently prove a strict search layer; diagnostics reasons are ignored."""
     selected_outcome = _outcome_interval(selected)
@@ -86,13 +85,15 @@ def _strict_search_dominance_layer(
     ):
         return None
 
-    all_exact_losses = bool(search_candidates) and all(
-        candidate.get("minimax_outcome") == "loss"
-        and candidate.get("minimax_bound") == "exact"
-        and isinstance(candidate.get("minimax_terminal_distance"), int)
-        for candidate in search_candidates
+    both_exact_losses = (
+        selected.get("minimax_outcome") == "loss"
+        and selected.get("minimax_bound") == "exact"
+        and isinstance(selected.get("minimax_terminal_distance"), int)
+        and alternative.get("minimax_outcome") == "loss"
+        and alternative.get("minimax_bound") == "exact"
+        and isinstance(alternative.get("minimax_terminal_distance"), int)
     )
-    if all_exact_losses:
+    if both_exact_losses:
         selected_distance = int(selected["minimax_terminal_distance"])
         alternative_distance = int(alternative["minimax_terminal_distance"])
         if selected_distance > alternative_distance:
@@ -147,17 +148,12 @@ def audit_diagnostics(diagnostics: dict[str, Any]) -> DiagnosticsAudit:
         and bool(safe_alternatives)
         and not guaranteed_terminal_non_loss
     )
-    search_candidates = [
-        candidate
-        for candidate in candidates.values()
-        if candidate.get("allowed", True) and candidate.get("minimax_score") is not None
-    ]
     layers: list[str] = []
     unjustified: list[str] = []
     if structural_conflict:
         for move in safe_alternatives:
             layer = _strict_search_dominance_layer(
-                selected, candidates[move], search_candidates
+                selected, candidates[move]
             )
             if layer is None:
                 unjustified.append(move)

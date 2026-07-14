@@ -414,6 +414,46 @@ def test_shorter_exact_loss_cannot_bypass_terminal_survival_with_numeric_score()
     assert audit.justification_layers == ()
 
 
+def test_bounded_third_root_does_not_disable_exact_loss_terminal_survival() -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "up": _candidate(
+                capacity=12,
+                length=8,
+                proof="safe",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=0.0,
+                minimax_terminal_distance=10,
+            ),
+            "left": _candidate(
+                capacity=5,
+                length=8,
+                proof="unknown",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=100.0,
+                minimax_terminal_distance=5,
+            ),
+            "right": _candidate(
+                capacity=20,
+                length=8,
+                proof="safe",
+                minimax_outcome="loss",
+                minimax_bound="upper",
+                minimax_score=50.0,
+            ),
+        },
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.justified_by_search is False
+    assert audit.unjustified_safe_alternatives == ("up",)
+
+
 def test_touching_numeric_intervals_do_not_exempt_structural_violation() -> None:
     diagnostics = {
         "move": "left",

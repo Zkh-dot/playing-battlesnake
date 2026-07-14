@@ -781,6 +781,75 @@ static void test_nonfinite_bound_frontiers_do_not_claim_numeric_dominance(void) 
     BoardFree(board);
 }
 
+static void test_mixed_loss_frontier_keeps_exact_terminal_survival_pairwise(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord me_body[] = {{3, 3}, {3, 2}, {3, 1}};
+    Coord you_body[] = {{6, 6}, {6, 5}, {6, 4}};
+    Snake me = make_snake("me", me_body, 3, 90);
+    Snake you = make_snake("you", you_body, 3, 90);
+    CoreSearchValue values[4];
+    CoreRootCandidateStats candidates[4];
+    const MoveDirection orders[][3] = {
+        {MOVE_UP, MOVE_LEFT, MOVE_RIGHT},
+        {MOVE_UP, MOVE_RIGHT, MOVE_LEFT},
+        {MOVE_LEFT, MOVE_UP, MOVE_RIGHT},
+        {MOVE_LEFT, MOVE_RIGHT, MOVE_UP},
+        {MOVE_RIGHT, MOVE_UP, MOVE_LEFT},
+        {MOVE_RIGHT, MOVE_LEFT, MOVE_UP},
+    };
+    const uint8_t mask = (uint8_t)(
+        (1u << MOVE_UP) | (1u << MOVE_LEFT) | (1u << MOVE_RIGHT)
+    );
+    bool selected_exact = false;
+    bool selected_bounded = false;
+
+    memset(values, 0, sizeof(values));
+    memset(candidates, 0, sizeof(candidates));
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        candidates[move] = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 40, 3);
+    }
+    values[MOVE_UP] = root_test_value(
+        CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_EXACT, 0.0, 10
+    );
+    values[MOVE_LEFT] = root_test_value(
+        CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_EXACT, 100.0, 5
+    );
+    values[MOVE_RIGHT] = root_test_value(
+        CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_UPPER, 50.0, 0
+    );
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+
+    for (size_t index = 0; index < sizeof(orders) / sizeof(orders[0]); index++) {
+        MoveDirection selected = MOVE_INVALID;
+        CoreSearchValue selected_value;
+        CoreRootComparisonReason reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+        assert(CoreSelectRootCandidateForTesting(
+            board,
+            "me",
+            CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+            orders[index],
+            3,
+            mask,
+            values,
+            candidates,
+            MOVE_INVALID,
+            &selected,
+            &selected_value,
+            &reason
+        ));
+        assert(selected != MOVE_LEFT);
+        selected_exact = selected_exact || selected == MOVE_UP;
+        selected_bounded = selected_bounded || selected == MOVE_RIGHT;
+    }
+    assert(selected_exact);
+    assert(selected_bounded);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
 static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(void) {
     CoreSearchValue completed = root_test_value(
         CORE_OUTCOME_UNRESOLVED,
@@ -1927,6 +1996,7 @@ int main(void) {
     test_partial_root_frontier_is_permutation_invariant_and_coherent();
     test_exceptional_and_mixed_strict_root_values_are_truthful();
     test_nonfinite_bound_frontiers_do_not_claim_numeric_dominance();
+    test_mixed_loss_frontier_keeps_exact_terminal_survival_pairwise();
     test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial();
 #endif
     test_root_comparison_orders_exact_outcomes_before_structure();

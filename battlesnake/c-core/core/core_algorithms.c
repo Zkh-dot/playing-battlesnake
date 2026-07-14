@@ -4671,7 +4671,7 @@ static uint8_t core_keep_longest_exact_forced_losses(
     const CoreSearchContext* context,
     uint8_t active_mask
 ) {
-    bool all_exact_losses = active_mask != 0;
+    int exact_loss_count = 0;
     uint16_t longest_distance = 0;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         if ((active_mask & (1u << move)) == 0) {
@@ -4679,19 +4679,21 @@ static uint8_t core_keep_longest_exact_forced_losses(
         }
         const CoreSearchValue* value = &context->root_move_values[move];
         if (value->bound != CORE_VALUE_BOUND_EXACT || value->outcome != CORE_OUTCOME_LOSS) {
-            all_exact_losses = false;
-            break;
+            continue;
         }
+        exact_loss_count++;
         if (value->terminal_distance > longest_distance) {
             longest_distance = value->terminal_distance;
         }
     }
-    if (!all_exact_losses) {
+    if (exact_loss_count < 2) {
         return active_mask;
     }
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
-        if ((active_mask & (1u << move)) != 0 &&
-            context->root_move_values[move].terminal_distance < longest_distance) {
+        const CoreSearchValue* value = &context->root_move_values[move];
+        if ((active_mask & (1u << move)) != 0 && value->bound == CORE_VALUE_BOUND_EXACT &&
+            value->outcome == CORE_OUTCOME_LOSS &&
+            value->terminal_distance < longest_distance) {
             active_mask &= (uint8_t)~(1u << move);
         }
     }
