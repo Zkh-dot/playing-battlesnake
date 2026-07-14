@@ -973,7 +973,7 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
         MOVE_INVALID,
         partial,
         CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
-        false,
+        true,
         &move,
         &value,
         &reason,
@@ -985,9 +985,19 @@ static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(
     assert(depth == 0);
     assert(selection_reason == CORE_SELECTION_ALLOWED_FALLBACK);
     assert(move == MOVE_INVALID);
+    assert(value.score == 0.0);
+    assert(value.outcome == CORE_OUTCOME_UNRESOLVED);
+    assert(value.bound == CORE_VALUE_BOUND_EXACT);
+    assert(value.cause == CORE_TERMINAL_CAUSE_NONE);
+    assert(value.terminal_distance == 0);
     assert(reason == CORE_ROOT_COMPARISON_NOT_COMPARED);
     for (int root_move = MOVE_UP; root_move <= MOVE_RIGHT; root_move++) {
         assert(!root_value_valid[root_move]);
+        assert(root_values[root_move].score == 0.0);
+        assert(root_values[root_move].outcome == CORE_OUTCOME_UNRESOLVED);
+        assert(root_values[root_move].bound == CORE_VALUE_BOUND_EXACT);
+        assert(root_values[root_move].cause == CORE_TERMINAL_CAUSE_NONE);
+        assert(root_values[root_move].terminal_distance == 0);
     }
 }
 #endif
