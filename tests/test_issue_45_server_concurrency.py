@@ -109,6 +109,24 @@ def _wait_for_server_socket_count(
     raise AssertionError(f"server did not reach {expected} open sockets")
 
 
+def _wait_for_worker_socket_io(pid: int) -> None:
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        for entry in os.listdir(f"/proc/{pid}/task"):
+            if int(entry) == pid:
+                continue
+            try:
+                syscall = Path(f"/proc/{pid}/task/{entry}/syscall").read_text(encoding="utf-8")
+                first_argument = int(syscall.split()[1], 0)
+                target = os.readlink(f"/proc/{pid}/fd/{first_argument}")
+            except (IndexError, OSError, ValueError):
+                continue
+            if target.startswith("socket:"):
+                return
+        time.sleep(0.005)
+    raise AssertionError("server worker did not block reading the active connection")
+
+
 def _receive_until_close(sock: socket.socket) -> bytes:
     chunks: list[bytes] = []
     while True:
@@ -289,6 +307,7 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
             active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
             active.sendall(b"POST /move HTTP/1.1\r\nHost: active\r\n")
             _wait_for_server_socket_count(process.pid, 2, exact=True)
+            _wait_for_worker_socket_io(process.pid)
 
             queued = socket.create_connection(("127.0.0.1", port), timeout=0.5)
             queued.sendall(b"POST /move HTTP/1.1\r\nHost: queued\r\n")
