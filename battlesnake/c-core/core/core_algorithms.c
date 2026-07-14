@@ -6080,9 +6080,10 @@ CoreStatus CoreMinimaxMoveWithStats(
         return policy_status;
     }
     context.root_allowed_mask = root_allowed_mask;
-    uint8_t fallback_frontier = core_structural_maximal_root_mask(
-        stats, root_allowed_mask
-    );
+    uint8_t fallback_frontier = root_allowed_mask;
+    if (stats->root_policy_applied == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY) {
+        fallback_frontier = core_structural_maximal_root_mask(stats, root_allowed_mask);
+    }
     if (fallback_frontier == 0) {
         fallback_frontier = root_allowed_mask;
     }

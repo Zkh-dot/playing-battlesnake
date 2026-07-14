@@ -265,6 +265,38 @@ def test_tiny_node_budget_uses_structurally_maximal_fallback(
     )
 
 
+def test_strict_minimax_tiny_node_budget_preserves_first_allowed_fallback() -> None:
+    position = next(
+        position
+        for position in TINY_NODE_FALLBACK_POSITIONS
+        if position["evidence"]["game_id"]
+        == "c7add22b-bc1e-443e-bad3-f271ac8886a1"
+    )
+
+    result = minimax_diagnostics(
+        _board_from_fixture(position),
+        str(position["snake_id"]),
+        node_budget=1,
+        root_policy="strict_minimax",
+    )
+
+    assert result["root_policy_applied"] == "strict_minimax"
+    assert result["nodes"] == 1
+    assert result["completed_depth"] == 0
+    assert result["node_budget_exhausted"] is True
+    assert result["timed_out"] is False
+    assert result["move"] == "down"
+    assert result["selection_reason"] == "allowed_fallback"
+    assert result["root_comparison_reason"] == "not_compared"
+    assert result["root_move_scores"] == {}
+    assert all(
+        candidate["minimax_score"] is None
+        and candidate["minimax_outcome"] is None
+        and candidate["minimax_bound"] is None
+        for candidate in result["root_candidates"].values()
+    )
+
+
 def _json_fingerprint(result: dict[str, object]) -> str:
     return json.dumps(_decision_fingerprint(result), sort_keys=True)
 
