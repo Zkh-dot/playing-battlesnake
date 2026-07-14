@@ -68,6 +68,7 @@ def test_fixture_defaults_and_position_ids_are_routed_from_committed_data() -> N
     positions, node_budgets = benchmark.load_fixture()
 
     assert benchmark.DEFAULT_TIME_BUDGETS == (100, 200, 300)
+    assert benchmark.DEFAULT_REPEATS == 3
     assert node_budgets == (16000, 32000, 48000)
     assert [benchmark.case_id(position) for position in positions] == [
         "0188bbac-t288",
@@ -75,6 +76,50 @@ def test_fixture_defaults_and_position_ids_are_routed_from_committed_data() -> N
         "c7add22b-t278",
         "7351410a-t169",
     ]
+
+    assert benchmark.resolve_budgets(None, None, node_budgets) == (
+        (100, 200, 300),
+        (16000, 32000, 48000),
+    )
+    assert benchmark.resolve_budgets([25], None, node_budgets) == ((25,), ())
+    assert benchmark.resolve_budgets(None, [64], node_budgets) == ((), (64,))
+    assert benchmark.resolve_budgets([25], [64], node_budgets) == ((25,), (64,))
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "expected_kind"),
+    [
+        ("--time-budget-ms", "25", "time_ms"),
+        ("--node-budget", "64", "nodes"),
+    ],
+)
+def test_single_budget_family_override_does_not_append_other_defaults(
+    option: str, value: str, expected_kind: str
+) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.bench_issue_43_search_budgets",
+            "--repeats",
+            "1",
+            "--position",
+            "0188bbac-t288",
+            option,
+            value,
+            "--json",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
+    rows = [json.loads(line) for line in completed.stdout.splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["budget_kind"] == expected_kind
+    assert rows[0]["budget_value"] == int(value)
 
 
 def test_repeated_node_rows_have_identical_decision_fields() -> None:

@@ -18,6 +18,7 @@ FIXTURE_PATH = (
     / "issue_43_search_budget_positions.json"
 )
 DEFAULT_TIME_BUDGETS = (100, 200, 300)
+DEFAULT_REPEATS = 3
 
 
 def load_fixture() -> tuple[list[dict[str, Any]], tuple[int, ...]]:
@@ -28,6 +29,17 @@ def load_fixture() -> tuple[list[dict[str, Any]], tuple[int, ...]]:
 def case_id(position: dict[str, Any]) -> str:
     evidence = position["evidence"]
     return f'{evidence["game_id"][:8]}-t{evidence["turn"]}'
+
+
+def resolve_budgets(
+    time_budgets: Sequence[int] | None,
+    node_budgets: Sequence[int] | None,
+    fixture_node_budgets: Sequence[int],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Apply both families only when the caller did not select either one."""
+    if time_budgets is None and node_budgets is None:
+        return DEFAULT_TIME_BUDGETS, tuple(fixture_node_budgets)
+    return tuple(time_budgets or ()), tuple(node_budgets or ())
 
 
 def _board(position: dict[str, Any]) -> Board:
@@ -164,7 +176,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Measure issue-43 decisions at wall-clock and deterministic node budgets."
     )
-    parser.add_argument("--repeats", type=_positive, default=1)
+    parser.add_argument("--repeats", type=_positive, default=DEFAULT_REPEATS)
     parser.add_argument("--time-budget-ms", type=_positive, action="append")
     parser.add_argument("--node-budget", type=_positive, action="append")
     parser.add_argument(
@@ -176,13 +188,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="emit JSON Lines")
     args = parser.parse_args(argv)
 
+    resolved_time_budgets, resolved_node_budgets = resolve_budgets(
+        args.time_budget_ms,
+        args.node_budget,
+        fixture_node_budgets,
+    )
     time_budgets = _unique(
-        args.time_budget_ms or DEFAULT_TIME_BUDGETS,
+        resolved_time_budgets,
         "--time-budget-ms",
         parser,
     )
     node_budgets = _unique(
-        args.node_budget or fixture_node_budgets,
+        resolved_node_budgets,
         "--node-budget",
         parser,
     )
