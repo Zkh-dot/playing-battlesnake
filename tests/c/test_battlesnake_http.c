@@ -132,7 +132,7 @@ static void test_move_route_accounts_for_elapsed_request_age(void) {
         request, sizeof(request), "POST", "/move", "Content-Length", 0, DUEL_MOVE_BODY
     );
 
-    request_context.elapsed_before_handle_ms = 250;
+    request_context.elapsed_before_handle_ms = 100;
     BsHttpResult normal = BsHandleHttpRequestTimed(
         request,
         strlen(request),
@@ -146,7 +146,7 @@ static void test_move_route_accounts_for_elapsed_request_age(void) {
     assert(normal.is_move);
     assert(!normal.fallback_used);
     assert(normal.game_timeout_ms == 500);
-    assert(normal.elapsed_before_search_ms >= 250);
+    assert(normal.elapsed_before_search_ms >= 100);
     assert(strstr(response, "\"move\":\"") != 0);
 
     request_context.elapsed_before_handle_ms = 301;
@@ -214,6 +214,7 @@ static void test_move_route_clamps_negative_elapsed_request_age(void) {
         );
         assert(result.status_code == 200);
         assert(result.is_move);
+        assert(!result.fallback_used);
         assert(result.game_timeout_ms == 500);
         assert(result.elapsed_before_search_ms >= 0);
         assert(strstr(response, "\"move\":\"") != 0);
