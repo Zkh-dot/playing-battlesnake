@@ -994,6 +994,63 @@ def test_out_of_uint16_terminal_distance_rejects_claimed_exact_tie() -> None:
 
 
 @pytest.mark.parametrize(
+    "invalid_score",
+    [10**10_000, float("nan"), float("inf")],
+    ids=("huge-int", "nan", "inf"),
+)
+def test_unrepresentable_applied_override_score_is_a_violation(
+    invalid_score: object,
+) -> None:
+    diagnostics = _valid_applied_corridor_override()
+    roots = diagnostics["root_candidates"]
+    corridor_audit = diagnostics["corridor_guard"]
+    assert isinstance(roots, dict)
+    assert isinstance(corridor_audit, dict)
+    for root in roots.values():
+        assert isinstance(root, dict)
+        root["minimax_score"] = invalid_score
+    for candidate_name in ("incumbent", "proposal"):
+        candidate = corridor_audit[candidate_name]
+        assert isinstance(candidate, dict)
+        candidate["minimax_score"] = invalid_score
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+    assert audit.corridor_guard_error is not None
+
+
+def test_ordinary_search_comparison_handles_unrepresentable_score() -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(
+                capacity=5,
+                length=8,
+                proof="unknown",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=10**10_000,
+            ),
+            "right": _candidate(
+                capacity=12,
+                length=8,
+                proof="safe",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=0.0,
+            ),
+        },
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.justified_by_search is False
+
+
+@pytest.mark.parametrize(
     ("metric", "invalid_value"),
     [
         ("immediate_exits", 4),

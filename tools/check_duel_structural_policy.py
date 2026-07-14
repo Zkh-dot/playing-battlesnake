@@ -42,6 +42,17 @@ class DiagnosticsAudit:
 _OUTCOME_RANK = {"loss": 0, "unresolved": 1, "draw": 2, "win": 3}
 
 
+def _native_finite_double(value: object) -> float | None:
+    """Parse an untrusted diagnostics value as a finite native double."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        parsed = float(value)
+    except (OverflowError, ValueError, TypeError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
 def _outcome_interval(candidate: dict[str, Any]) -> tuple[int, int] | None:
     rank = _OUTCOME_RANK.get(str(candidate.get("minimax_outcome")))
     bound = candidate.get("minimax_bound")
@@ -51,16 +62,15 @@ def _outcome_interval(candidate: dict[str, Any]) -> tuple[int, int] | None:
 
 
 def _numeric_interval(candidate: dict[str, Any]) -> tuple[float, float] | None:
-    score = candidate.get("minimax_score")
+    score = _native_finite_double(candidate.get("minimax_score"))
     bound = candidate.get("minimax_bound")
-    if not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+    if score is None:
         return None
     if bound not in {"exact", "lower", "upper"}:
         return None
-    value = float(score)
     return (
-        -math.inf if bound == "upper" else value,
-        math.inf if bound == "lower" else value,
+        -math.inf if bound == "upper" else score,
+        math.inf if bound == "lower" else score,
     )
 
 
@@ -310,8 +320,8 @@ def _corridor_audit_candidate_is_coherent(
 def _exact_search_records_are_equal(
     proposal: dict[str, Any], incumbent: dict[str, Any]
 ) -> bool:
-    proposal_score = proposal.get("minimax_score")
-    incumbent_score = incumbent.get("minimax_score")
+    proposal_score = _native_finite_double(proposal.get("minimax_score"))
+    incumbent_score = _native_finite_double(incumbent.get("minimax_score"))
     proposal_outcome = proposal.get("minimax_outcome")
     incumbent_outcome = incumbent.get("minimax_outcome")
     proposal_distance = proposal.get("minimax_terminal_distance")
@@ -319,13 +329,9 @@ def _exact_search_records_are_equal(
     return (
         proposal.get("minimax_bound") == "exact"
         and incumbent.get("minimax_bound") == "exact"
-        and isinstance(proposal_score, (int, float))
-        and not isinstance(proposal_score, bool)
-        and isinstance(incumbent_score, (int, float))
-        and not isinstance(incumbent_score, bool)
-        and math.isfinite(float(proposal_score))
-        and math.isfinite(float(incumbent_score))
-        and float(proposal_score) == float(incumbent_score)
+        and proposal_score is not None
+        and incumbent_score is not None
+        and proposal_score == incumbent_score
         and isinstance(proposal_outcome, str)
         and proposal_outcome in _OUTCOME_RANK
         and isinstance(incumbent_outcome, str)
