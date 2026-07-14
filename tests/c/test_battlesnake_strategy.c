@@ -645,14 +645,20 @@ static void assert_nonfinite_frontier_uses_deterministic_fallback(
         &values[MOVE_LEFT],
         &candidates[MOVE_LEFT]
     );
-    assert(typed.ordering == CORE_ROOT_COMPARISON_INCOMPARABLE);
     CoreRootComparison reverse = CoreCompareRootCandidates(
         &values[MOVE_LEFT],
         &candidates[MOVE_LEFT],
         &values[MOVE_UP],
         &candidates[MOVE_UP]
     );
-    assert(reverse.ordering == CORE_ROOT_COMPARISON_INCOMPARABLE);
+    bool identical_tagged_infinity =
+        values[MOVE_UP].bound == values[MOVE_LEFT].bound &&
+        isinf(values[MOVE_UP].score) &&
+        values[MOVE_UP].score == values[MOVE_LEFT].score;
+    CoreRootComparisonOrdering expected_ordering = identical_tagged_infinity ?
+        CORE_ROOT_COMPARISON_EQUAL : CORE_ROOT_COMPARISON_INCOMPARABLE;
+    assert(typed.ordering == expected_ordering);
+    assert(reverse.ordering == expected_ordering);
     for (size_t order_index = 0; order_index < 2; order_index++) {
         MoveDirection expected_move = MOVE_INVALID;
         CoreRootComparisonReason expected_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
@@ -699,6 +705,7 @@ static void test_nonfinite_bound_frontiers_do_not_claim_numeric_dominance(void) 
     CoreRootCandidateStats candidates[4];
     const CoreValueBound bounds[] = {CORE_VALUE_BOUND_LOWER, CORE_VALUE_BOUND_UPPER};
     const double exceptional[] = {NAN, INFINITY, -INFINITY};
+    const MoveDirection root_moves[] = {MOVE_UP, MOVE_LEFT};
     const MoveDirection orders[][2] = {{MOVE_UP, MOVE_LEFT}, {MOVE_LEFT, MOVE_UP}};
     const uint8_t mask = (uint8_t)((1u << MOVE_UP) | (1u << MOVE_LEFT));
 
@@ -716,42 +723,56 @@ static void test_nonfinite_bound_frontiers_do_not_claim_numeric_dominance(void) 
         for (size_t value_index = 0;
              value_index < sizeof(exceptional) / sizeof(exceptional[0]);
              value_index++) {
-            values[MOVE_UP] = root_test_value(
-                CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 1.0, 0
-            );
-            values[MOVE_LEFT] = root_test_value(
-                CORE_OUTCOME_UNRESOLVED,
-                bounds[bound_index],
-                exceptional[value_index],
-                0
-            );
-            assert_nonfinite_frontier_uses_deterministic_fallback(
-                board, values, candidates, orders, mask
-            );
+            for (size_t role_index = 0;
+                 role_index < sizeof(root_moves) / sizeof(root_moves[0]);
+                 role_index++) {
+                MoveDirection exceptional_move = root_moves[role_index];
+                MoveDirection finite_move = exceptional_move == MOVE_UP ? MOVE_LEFT : MOVE_UP;
+                values[finite_move] = root_test_value(
+                    CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 1.0, 0
+                );
+                values[exceptional_move] = root_test_value(
+                    CORE_OUTCOME_UNRESOLVED,
+                    bounds[bound_index],
+                    exceptional[value_index],
+                    0
+                );
+                assert_nonfinite_frontier_uses_deterministic_fallback(
+                    board, values, candidates, orders, mask
+                );
+            }
         }
     }
 
-    for (size_t lower_index = 0;
-         lower_index < sizeof(exceptional) / sizeof(exceptional[0]);
-         lower_index++) {
-        for (size_t upper_index = 0;
-             upper_index < sizeof(exceptional) / sizeof(exceptional[0]);
-             upper_index++) {
-            values[MOVE_UP] = root_test_value(
-                CORE_OUTCOME_UNRESOLVED,
-                CORE_VALUE_BOUND_LOWER,
-                exceptional[lower_index],
-                0
-            );
-            values[MOVE_LEFT] = root_test_value(
-                CORE_OUTCOME_UNRESOLVED,
-                CORE_VALUE_BOUND_UPPER,
-                exceptional[upper_index],
-                0
-            );
-            assert_nonfinite_frontier_uses_deterministic_fallback(
-                board, values, candidates, orders, mask
-            );
+    for (size_t up_bound = 0;
+         up_bound < sizeof(bounds) / sizeof(bounds[0]);
+         up_bound++) {
+        for (size_t left_bound = 0;
+             left_bound < sizeof(bounds) / sizeof(bounds[0]);
+             left_bound++) {
+            for (size_t up_value = 0;
+                 up_value < sizeof(exceptional) / sizeof(exceptional[0]);
+                 up_value++) {
+                for (size_t left_value = 0;
+                     left_value < sizeof(exceptional) / sizeof(exceptional[0]);
+                     left_value++) {
+                    values[MOVE_UP] = root_test_value(
+                        CORE_OUTCOME_UNRESOLVED,
+                        bounds[up_bound],
+                        exceptional[up_value],
+                        0
+                    );
+                    values[MOVE_LEFT] = root_test_value(
+                        CORE_OUTCOME_UNRESOLVED,
+                        bounds[left_bound],
+                        exceptional[left_value],
+                        0
+                    );
+                    assert_nonfinite_frontier_uses_deterministic_fallback(
+                        board, values, candidates, orders, mask
+                    );
+                }
+            }
         }
     }
 
