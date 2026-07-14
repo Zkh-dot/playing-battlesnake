@@ -183,6 +183,33 @@ def test_t169_default_weights_preserve_move_and_report_actual_decisive_layer() -
         _assert_selected_value_is_coherent(result)
 
 
+def test_t169_production_budgets_never_select_deficient_root_and_repeat_coherently() -> None:
+    position = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["positions"][0]
+    board = _board_from_fixture(position)
+    snake_id = str(position["snake_id"])
+
+    for budget_ms in (100, 200, 300):
+        results = [
+            minimax_diagnostics(board, snake_id, time_budget_ms=budget_ms)
+            for _ in range(3)
+        ]
+
+        # Search depth, node count, and the tied safe direction are deliberately
+        # not asserted because they depend on host scheduling.
+        for result in results:
+            assert result["move"] != "down"
+            assert result["root_candidates"][result["move"]]["structural_proof"] == "safe"
+            for move in ("up", "down", "left"):
+                candidate = result["root_candidates"][move]
+                assert candidate["allowed"] is True
+                assert candidate["minimax_score"] is not None
+                assert candidate["minimax_outcome"] is not None
+                assert candidate["minimax_bound"] is not None
+            if result["completed_depth"] > 0:
+                assert result["root_comparison_reason"] != "not_compared"
+            _assert_selected_value_is_coherent(result)
+
+
 def test_root_visitation_order_changes_tags_without_changing_semantic_result() -> None:
     scenario = get_scenario("duel_late_game_long_bodies")
     results = [

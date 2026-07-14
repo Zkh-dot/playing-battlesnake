@@ -242,3 +242,62 @@ git commit -m "test(search): cover root comparison contract"
 - Forced-loss survival and corridor regressions: Tasks 2 and 4 #30/#33/#36/#38/#39/search suites.
 - Non-goals: no game-ID branch, no score-gap threshold, no additive proof penalty, no corridor-guard redesign, and no budget increase.
 
+## Verification evidence
+
+Verified on 2026-07-14 against base `33b34cb5773ab7ec71d357192da6cc122632b116`; the final Task 4 production fix is `58338ffeaefc0bfe28c36d1f5973479e5af8518b`.
+
+### Baseline RED and root-cause evidence
+
+After `python3 setup.py build_ext --inplace --force` in the detached base worktree, a read-only diagnostic over the committed fixtures reported:
+
+- T169: `root_comparison_reason present: False`; deficient `down` was `allowed=False`, `score=None`, proof `unknown`, capacity/length `1/12`, while `up` and `left` were SAFE and searched. This proves the base filtered the deficient root before outcome comparison.
+- The 6x6 equal-score PV/reachable fixture had reachable space `left=30`, `right=1`, equal scores `1.0/1.0`, but selected `right`. This proves the old PV rule preceded deterministic reachable geometry.
+
+Task 4's first 49-file audit exposed one additional genuine comparator fallback: game `8e68e0d4-b84f-4b5a-bda5-e63c1841a26e`, turn 659 selected deficient UNKNOWN `right` (exact loss, score -991000, distance 9, capacity/length 56/59) over SAFE `up` (upper loss, score -991000, distance 9, capacity/length 59/58). The outcome intervals were equal and numeric intervals merely touched, so no strict search layer proved `right` superior. A deterministic C selector regression failed before the fix because loss-tagged roots skipped structural pruning; touching numeric bounds retained both roots and geometry selected the deficient root. The minimal fix preserves unresolved structural-before-heuristic ordering, while applying structure to other touching/overlapping frontiers only after strict outcome, all-exact-loss distance, and numeric-interval pruning. It does not change the corridor guard.
+
+### Focused, native, and broad validation
+
+Commands and results:
+
+- `python3 setup.py build_ext --inplace --force`: PASS, no compiler warnings.
+- `pytest -q tests/test_issue_42_root_comparison.py tests/test_issue_41_branching_pockets.py tests/test_issue_38_dead_tunnel.py tests/test_issue_36_endgame.py tests/test_search_diagnostics.py tests/test_duel_structural_policy_checker.py`: exit 0; 166 tests collected.
+- `tools/run_c_server_tests.sh`: PASS, including production `CoreMinimaxMoveWithStats()` structural and terminal precedence cases plus the touching-bound regression.
+- `tools/run_c_position_eval_tests.sh`: PASS in all four build configurations.
+- Standalone strategy compilation with `gcc -Wall -Wextra -Werror` and `CORE_ROOT_SELECTION_TESTING`: PASS.
+- The requested `pytest -q -k 'not training'` cannot collect on this host because three `tests/training` modules import unavailable `pandas` before `-k` selection. The equivalent environment-scoped `pytest -q tests --ignore=tests/training` passed (279 collected, one displayed skip, exit 0). No test was weakened or dependency failure classified as a code failure.
+
+### Production-budget replay matrix
+
+Final HEAD, three consecutive repetitions for each budget:
+
+- T169: 100 ms selected `up`, depth 4, reason `heuristic_value`; 200/300 ms selected `up`, depth 5, reason `previous_pv`. The recorded bad `down` remained searched, UNKNOWN and capacity-deficient (`1/12`); every selected root was SAFE. Across separately controlled runs the semantically tied safe result also reached `left` at depths 6-7, so no wall-clock depth, one safe direction, or cross-run reason is asserted.
+- T439: 100 ms selected `up`, depth 8; 200/300 ms selected `up`, depth 9; all reasons `structural_proof`. The bad candidate remained UNKNOWN `1/36`; selected proof SAFE.
+- T288: 100 ms selected `down`, depth 6; 200/300 ms selected `down`, depth 7; all reasons `structural_proof`. The bad candidate remained UNKNOWN `3/32`; selected proof SAFE.
+
+Every run used `selection_reason=timeout_best_so_far`, retained coherent outcome/bound/score tags for searched roots, and never selected its recorded bad move. The repeated test intentionally asserts semantic coherence rather than timing-sensitive depth or tied-safe-direction identity.
+
+### Controlled base/HEAD latency comparison
+
+Five back-to-back 100 ms runs per fixture on the same host/configuration:
+
+- T169 base: 97.970-98.142 ms, 2501-2675 nodes, depth 6, `left`; HEAD: 98.248-98.357 ms, 3387-3504 nodes, depth 6, `left`.
+- T439 base: 98.782-99.194 ms, 29211-34567 nodes, depth 9, `up`; HEAD: 99.207-99.358 ms, 30265-32704 nodes, depth 9, `up`.
+- T288 base: 96.081-96.219 ms, 16083-16284 nodes, depth 8, `down`; HEAD: 96.375-96.523 ms, 15623-15767 nodes, depth 7, `down`.
+
+Measured end-to-end deltas were below 0.45 ms. T169 examines the previously filtered deficient root and therefore visits more nodes; T439/T288 node ranges overlap or decrease. The T288 depth difference is reported as measured host/search behavior, not converted into a post-hoc threshold. Moves and structural safety criteria remained correct.
+
+### Full corpus audit
+
+Command:
+
+```bash
+python3 tools/check_duel_structural_policy.py \
+  --export-root /home/sergei-scv/temp/playing-battlesnake/exports/zkh-dot_lost_games \
+  --budget-ms 100 --json
+```
+
+The checker now independently recomputes strict outcome intervals, numeric intervals after prior layers, and all-exact-loss terminal distance; it never exempts a record from `root_comparison_reason` text. Touching intervals remain non-strict. Post-search corridor overrides are reported separately for issue #44.
+
+Final result: exit 0; files 49; replay roots seen 16545; Standard-duel roots 16496; prefiltered 91; diagnostics 16405; unknown proofs 11983; cutoffs `deadline=6768`, `horizon=1280`, `policy_sufficient=538`, `resource_limit=18`, `survivability=3379`; strictly justified search selections 14; comparator violations 0; errors 0. Two timing-dependent post-search overrides remained visible (`091dc137...` T376 and `1985bf57...` T424). Their count is not asserted because proof/depth completion varies under a 100 ms wall-clock budget; neither is hidden or claimed fixed by issue #42.
+
+`git diff --check` passed. No replay exports, native libraries, build products, or other generated artifacts are tracked by this task.
