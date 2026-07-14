@@ -243,4 +243,3 @@ Expected: clean diff, only intended commits/files, no build artifacts.
 ### Step 5: Final review and PR workflow
 
 Run the required final spec and code-quality reviews against `origin/main...HEAD`, then use `finishing-a-development-branch` with the PR-preserving option. Push `issue-43-search-budget-stability`, open a PR containing `Closes #43`, request repository review, resolve every substantive thread through the implementer/reviewer loop, wait for green CI and approval, merge per repository policy, verify the merge SHA on `origin/main` and issue closure, then remove only this issue's worktree/local branch.
-
