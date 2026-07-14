@@ -543,6 +543,89 @@ def test_inactive_longer_exact_loss_does_not_block_terminal_survival(
     assert audit.justification_layers == ("terminal_survival",)
 
 
+@pytest.mark.parametrize("inactive_kind", ["disallowed", "unsearched"])
+def test_inactive_selected_root_cannot_claim_search_justification(
+    inactive_kind: str,
+) -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "up": _candidate(
+                capacity=12,
+                length=8,
+                proof="safe",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=0.0,
+                minimax_terminal_distance=5,
+            ),
+            "left": _candidate(
+                capacity=5,
+                length=8,
+                proof="unknown",
+                allowed=inactive_kind != "disallowed",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=None if inactive_kind == "unsearched" else 100.0,
+                minimax_terminal_distance=10,
+            ),
+            "right": _candidate(
+                capacity=4,
+                length=8,
+                proof="unknown",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=-100.0,
+                minimax_terminal_distance=10,
+            ),
+        },
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.justified_by_search is False
+    assert audit.unjustified_safe_alternatives == ("up",)
+    assert audit.justification_layers == ()
+
+
+@pytest.mark.parametrize("inactive_kind", ["disallowed", "unsearched"])
+def test_inactive_safe_alternative_cannot_supply_search_justification(
+    inactive_kind: str,
+) -> None:
+    diagnostics = {
+        "move": "left",
+        "root_candidates": {
+            "left": _candidate(
+                capacity=5,
+                length=8,
+                proof="unknown",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=100.0,
+                minimax_terminal_distance=10,
+            ),
+            "right": _candidate(
+                capacity=12,
+                length=8,
+                proof="safe",
+                allowed=inactive_kind != "disallowed",
+                minimax_outcome="loss",
+                minimax_bound="exact",
+                minimax_score=None if inactive_kind == "unsearched" else 0.0,
+                minimax_terminal_distance=5,
+            ),
+        },
+    }
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.justified_by_search is False
+    assert audit.unjustified_safe_alternatives == ("right",)
+    assert audit.justification_layers == ()
+
+
 def test_touching_numeric_intervals_do_not_exempt_structural_violation() -> None:
     diagnostics = {
         "move": "left",

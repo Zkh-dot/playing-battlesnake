@@ -63,14 +63,20 @@ def _numeric_interval(candidate: dict[str, Any]) -> tuple[float, float] | None:
     )
 
 
+def _is_active_search_record(candidate: dict[str, Any]) -> bool:
+    return (
+        bool(candidate.get("allowed", True))
+        and candidate.get("minimax_score") is not None
+    )
+
+
 def _active_exact_loss_max_distance(
     candidates: dict[str, dict[str, Any]],
 ) -> int | None:
     distances = [
         int(candidate["minimax_terminal_distance"])
         for candidate in candidates.values()
-        if candidate.get("allowed", True)
-        and candidate.get("minimax_score") is not None
+        if _is_active_search_record(candidate)
         and candidate.get("minimax_outcome") == "loss"
         and candidate.get("minimax_bound") == "exact"
         and isinstance(candidate.get("minimax_terminal_distance"), int)
@@ -84,6 +90,11 @@ def _strict_search_dominance_layer(
     active_exact_loss_max_distance: int | None,
 ) -> str | None:
     """Independently prove a strict search layer; diagnostics reasons are ignored."""
+    if not _is_active_search_record(selected) or not _is_active_search_record(
+        alternative
+    ):
+        return None
+
     selected_outcome = _outcome_interval(selected)
     alternative_outcome = _outcome_interval(alternative)
     if selected_outcome is None or alternative_outcome is None:
