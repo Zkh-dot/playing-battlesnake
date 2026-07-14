@@ -85,7 +85,9 @@ python3 -m benchmarks.bench_issue_45_server_concurrency \
 
 The gate releases each request pair together, applies a 500 ms external socket
 deadline, and fails on a timeout/error/503 or when external/server-total p99
-reaches the deadline. The 2026-07-15 local production-build result was 40/40
+reaches the deadline. Its `server_lifecycle` object records unexpected exit,
+final return code, and forced-kill status; any unhealthy lifecycle fails the
+gate. The 2026-07-15 local production-build result was 40/40
 legal 200 responses, zero timeout/error/503, zero fallback, external p99
 `349.444 ms`, server queue p99 `0.169 ms`, handler p99 `348.998 ms`, and total
 p99 `349.100 ms`. The measured external safety margin was `150.556 ms`.

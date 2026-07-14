@@ -19,6 +19,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SERVER_BINARY = PROJECT_ROOT / "build" / "battlesnake-server"
 FIXTURE_PATH = PROJECT_ROOT / "tests" / "fixtures" / "issue_45_timeout_replay_positions.json"
 LEGAL_MOVES = {"up", "down", "left", "right"}
+DEFAULT_BARRIER_TIMEOUT_SECONDS = 1.0
+# Socket work shares one external deadline; this extra interval is only for
+# collecting completed futures and cancelling work after that deadline.
+DEFAULT_CLEANUP_ALLOWANCE_SECONDS = 0.25
 
 
 def _percentile(values: list[float], percentile: float) -> float | None:
@@ -30,7 +34,18 @@ def _percentile(values: list[float], percentile: float) -> float | None:
 
 
 def summarize(samples: list[dict[str, object]], deadline_ms: int) -> dict[str, object]:
-    latencies = [float(sample["latency_ms"]) for sample in samples]
+    latencies: list[float] = []
+    invalid_latency = False
+    for sample in samples:
+        value = sample.get("latency_ms")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            invalid_latency = True
+            continue
+        latency = float(value)
+        if not math.isfinite(latency) or latency < 0:
+            invalid_latency = True
+            continue
+        latencies.append(latency)
     timeout_error_count = sum(
         sample.get("error") is not None or sample.get("status") != 200 for sample in samples
     )
@@ -38,6 +53,8 @@ def summarize(samples: list[dict[str, object]], deadline_ms: int) -> dict[str, o
     failure_reasons: list[str] = []
     if not samples:
         failure_reasons.append("no_samples")
+    if invalid_latency:
+        failure_reasons.append("invalid_sample_latency")
     if timeout_error_count:
         failure_reasons.append("timeout_or_error")
     if p99_ms is not None and p99_ms >= deadline_ms:
@@ -80,11 +97,41 @@ def _remaining_seconds(deadline: float) -> float:
     return remaining
 
 
-def _request(port: int, body: bytes, deadline_ms: int, barrier: threading.Barrier | None) -> dict[str, object]:
+class _BatchDeadline:
+    def __init__(self, deadline_ms: int) -> None:
+        self.deadline_ms = deadline_ms
+        self.deadline: float | None = None
+
+    def start(self) -> None:
+        self.deadline = time.monotonic() + self.deadline_ms / 1000.0
+
+
+def _error_sample(error: str, started: float | None = None) -> dict[str, object]:
+    return {
+        "latency_ms": 0.0 if started is None else (time.monotonic() - started) * 1000.0,
+        "status": None,
+        "error": error,
+    }
+
+
+def _request(
+    port: int,
+    body: bytes,
+    deadline_ms: int,
+    barrier: threading.Barrier | None,
+    batch_deadline: _BatchDeadline | None = None,
+    barrier_timeout_seconds: float = DEFAULT_BARRIER_TIMEOUT_SECONDS,
+) -> dict[str, object]:
     if barrier is not None:
-        barrier.wait()
+        barrier_started = time.monotonic()
+        try:
+            barrier.wait(timeout=barrier_timeout_seconds)
+        except threading.BrokenBarrierError:
+            return _error_sample("barrier_broken", barrier_started)
     started = time.monotonic()
-    deadline = started + deadline_ms / 1000.0
+    deadline = batch_deadline.deadline if batch_deadline is not None else None
+    if deadline is None:
+        deadline = started + deadline_ms / 1000.0
     request = (
         b"POST /move HTTP/1.1\r\n"
         b"Host: 127.0.0.1\r\n"
@@ -126,6 +173,66 @@ def _request(port: int, body: bytes, deadline_ms: int, barrier: threading.Barrie
     }
 
 
+def run_batch(
+    *,
+    executor: Any,
+    port: int,
+    payload: bytes,
+    concurrency: int,
+    deadline_ms: int,
+    barrier_timeout_seconds: float = DEFAULT_BARRIER_TIMEOUT_SECONDS,
+    cleanup_allowance_seconds: float = DEFAULT_CLEANUP_ALLOWANCE_SECONDS,
+) -> list[dict[str, object]]:
+    startup_deadline = time.monotonic() + barrier_timeout_seconds
+    batch_deadline = _BatchDeadline(deadline_ms)
+    barrier = threading.Barrier(concurrency + 1, action=batch_deadline.start)
+    futures: list[concurrent.futures.Future[dict[str, object]]] = []
+    samples: list[dict[str, object]] = []
+    try:
+        for _ in range(concurrency):
+            futures.append(
+                executor.submit(
+                    _request,
+                    port,
+                    payload,
+                    deadline_ms,
+                    barrier,
+                    batch_deadline,
+                    barrier_timeout_seconds,
+                )
+            )
+    except Exception as exc:
+        barrier.abort()
+        samples.extend(
+            _error_sample(f"thread_startup_error: {type(exc).__name__}: {exc}")
+            for _ in range(concurrency - len(futures))
+        )
+
+    if len(futures) == concurrency:
+        try:
+            barrier.wait(timeout=barrier_timeout_seconds)
+        except threading.BrokenBarrierError:
+            barrier.abort()
+
+    collection_deadline = (
+        batch_deadline.deadline + cleanup_allowance_seconds
+        if batch_deadline.deadline is not None
+        else startup_deadline + cleanup_allowance_seconds
+    )
+    remaining = max(0.0, collection_deadline - time.monotonic())
+    _, pending = concurrent.futures.wait(futures, timeout=remaining)
+    for future in futures:
+        if future in pending:
+            future.cancel()
+            samples.append(_error_sample("batch_collection_deadline"))
+            continue
+        try:
+            samples.append(future.result())
+        except Exception as exc:
+            samples.append(_error_sample(f"worker_error: {type(exc).__name__}: {exc}"))
+    return samples
+
+
 def _load_payload(deadline_ms: int) -> bytes:
     fixtures = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     payload = fixtures[0]["payload"]
@@ -146,6 +253,28 @@ def _server_events(log_file: Any) -> list[dict[str, object]]:
         if isinstance(event, dict):
             events.append(event)
     return events
+
+
+def wait_for_move_events(
+    log_file: Any,
+    process: Any,
+    *,
+    expected: int,
+    timeout_seconds: float,
+) -> list[dict[str, object]]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        move_events = [
+            event for event in _server_events(log_file) if event.get("event") == "move_request"
+        ]
+        if len(move_events) >= expected:
+            return move_events
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"server exited before warmup move telemetry with status {process.returncode}"
+            )
+        time.sleep(0.005)
+    raise RuntimeError("warmup move telemetry did not appear before bounded deadline")
 
 
 def _metric_summary(events: list[dict[str, object]], key: str) -> dict[str, float | None]:
@@ -174,6 +303,7 @@ def assemble_result(
     samples: list[dict[str, object]],
     move_events: list[dict[str, object]],
     overload_events: list[dict[str, object]],
+    lifecycle: dict[str, object],
 ) -> dict[str, object]:
     deadline_ms = configuration["deadline_ms"]
     external = summarize(samples, deadline_ms)
@@ -191,6 +321,12 @@ def assemble_result(
         failure_reasons.append("malformed_move_telemetry")
     if server_total_p99 is None or server_total_p99 >= deadline_ms:
         failure_reasons.append("server_total_p99_at_or_above_deadline")
+    if lifecycle["unexpected_exit"]:
+        failure_reasons.append("unexpected_server_exit")
+    if lifecycle["return_code"] != 0:
+        failure_reasons.append("server_nonzero_exit")
+    if lifecycle["forced_kill"]:
+        failure_reasons.append("server_forced_kill")
 
     return {
         "configuration": configuration,
@@ -206,8 +342,30 @@ def assemble_result(
         "status_503_count": status_503_count,
         "timeout_count": sum(sample.get("error") == "timeout" for sample in samples),
         "error_count": sum(sample.get("error") not in {None, "timeout"} for sample in samples),
+        "server_lifecycle": lifecycle,
         "passed": not failure_reasons,
         "failure_reasons": failure_reasons,
+    }
+
+
+def shutdown_server(process: Any, timeout_seconds: float = 5.0) -> dict[str, object]:
+    unexpected_exit = process.poll() is not None
+    forced_kill = False
+    if not unexpected_exit:
+        try:
+            process.terminate()
+        except OSError:
+            unexpected_exit = True
+        try:
+            process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            forced_kill = True
+            process.kill()
+            process.wait(timeout=timeout_seconds)
+    return {
+        "unexpected_exit": unexpected_exit,
+        "return_code": process.returncode,
+        "forced_kill": forced_kill,
     }
 
 
@@ -237,33 +395,46 @@ def run_benchmark(
             stdout=server_log,
             stderr=subprocess.STDOUT,
         )
+        warmup_move_event_count = 0
+        samples: list[dict[str, object]] = []
         try:
             _wait_for_ready(process, server_log)
+            move_events_before_warmup = len(
+                [
+                    event
+                    for event in _server_events(server_log)
+                    if event.get("event") == "move_request"
+                ]
+            )
             warmup = _request(port, payload, deadline_ms, None)
             if warmup["error"] is not None or warmup["status"] != 200:
                 raise RuntimeError(f"warmup request failed: {warmup}")
+            wait_for_move_events(
+                server_log,
+                process,
+                expected=move_events_before_warmup + 1,
+                timeout_seconds=deadline_ms / 1000.0 + DEFAULT_CLEANUP_ALLOWANCE_SECONDS,
+            )
+            warmup_move_event_count = move_events_before_warmup + 1
 
-            samples: list[dict[str, object]] = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
                 for _ in range(batches):
-                    barrier = threading.Barrier(concurrency + 1)
-                    futures = [
-                        executor.submit(_request, port, payload, deadline_ms, barrier)
-                        for _ in range(concurrency)
-                    ]
-                    barrier.wait()
-                    samples.extend(future.result() for future in futures)
+                    samples.extend(
+                        run_batch(
+                            executor=executor,
+                            port=port,
+                            payload=payload,
+                            concurrency=concurrency,
+                            deadline_ms=deadline_ms,
+                        )
+                    )
         finally:
-            process.terminate()
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5.0)
+            lifecycle = shutdown_server(process)
 
         events = _server_events(server_log)
 
-    move_events = [event for event in events if event.get("event") == "move_request"][1:]
+    all_move_events = [event for event in events if event.get("event") == "move_request"]
+    move_events = all_move_events[warmup_move_event_count:]
     overload_events = [event for event in events if event.get("event") == "server_overload"]
     return assemble_result(
         configuration={
@@ -277,6 +448,7 @@ def run_benchmark(
         samples=samples,
         move_events=move_events,
         overload_events=overload_events,
+        lifecycle=lifecycle,
     )
 
 
@@ -302,6 +474,8 @@ def main(argv: list[str] | None = None) -> int:
         setattr(args, option, _positive(parser, f"--{option.replace('_', '-')}", getattr(args, option)))
     if args.workers > 64:
         parser.error("--workers must be at most 64")
+    if args.search_budget_ms > 65535:
+        parser.error("--search-budget-ms must be at most 65535")
 
     result = run_benchmark(
         workers=args.workers,
@@ -311,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
         deadline_ms=args.deadline_ms,
         search_budget_ms=args.search_budget_ms,
     )
-    document = json.dumps(result, sort_keys=True)
+    document = json.dumps(result, sort_keys=True, allow_nan=False)
     print(document)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)

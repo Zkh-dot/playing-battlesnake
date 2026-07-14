@@ -1,15 +1,38 @@
 from __future__ import annotations
 
 import json
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from benchmarks import bench_issue_45_server_concurrency as benchmark
-from benchmarks.bench_issue_45_server_concurrency import assemble_result, summarize
+from benchmarks.bench_issue_45_server_concurrency import (
+    assemble_result,
+    run_batch,
+    shutdown_server,
+    summarize,
+    wait_for_move_events,
+)
 
 
-def _sample(latency_ms: float, *, status: int = 200, error: str | None = None) -> dict[str, object]:
+def _sample(latency_ms: object, *, status: int = 200, error: str | None = None) -> dict[str, object]:
     return {"latency_ms": latency_ms, "status": status, "error": error}
+
+
+def _move_event() -> dict[str, object]:
+    return {
+        "event": "move_request",
+        "queue_ms": 1.0,
+        "handler_ms": 2.0,
+        "total_ms": 3.0,
+        "fallback": False,
+    }
+
+
+def _healthy_lifecycle() -> dict[str, object]:
+    return {"unexpected_exit": False, "return_code": 0, "forced_kill": False}
 
 
 def test_summarize_reports_nearest_rank_latency_and_positive_margin() -> None:
@@ -65,6 +88,215 @@ def test_summarize_fails_when_p99_reaches_deadline() -> None:
     assert result["failure_reasons"] == ["p99_at_or_above_deadline"]
 
 
+@pytest.mark.parametrize("latency", [-1.0, float("nan"), float("inf"), "bad"])
+def test_summarize_fails_nonfinite_negative_or_nonnumeric_latency(latency: object) -> None:
+    result = summarize([_sample(latency)], deadline_ms=500)
+
+    assert result["passed"] is False
+    assert result["failure_reasons"] == ["invalid_sample_latency"]
+    assert result["p99_ms"] is None
+    json.dumps(result, allow_nan=False)
+
+
+class _FailingSecondSubmit:
+    def __init__(self, executor: ThreadPoolExecutor) -> None:
+        self.executor = executor
+        self.submissions = 0
+
+    def submit(self, function: object, *arguments: object) -> object:
+        self.submissions += 1
+        if self.submissions == 2:
+            raise RuntimeError("synthetic thread startup failure")
+        return self.executor.submit(function, *arguments)
+
+
+def test_run_batch_aborts_broken_barrier_without_stranding_executor() -> None:
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        samples = run_batch(
+            executor=_FailingSecondSubmit(executor),
+            port=1,
+            payload=b"{}",
+            concurrency=2,
+            deadline_ms=50,
+            barrier_timeout_seconds=0.05,
+            cleanup_allowance_seconds=0.05,
+        )
+
+    assert time.monotonic() - started < 0.5
+    assert len(samples) == 2
+    assert all(sample["error"] is not None for sample in samples)
+
+
+def test_run_batch_bounds_controller_barrier_timeout_and_future_collection() -> None:
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        samples = run_batch(
+            executor=executor,
+            port=1,
+            payload=b"{}",
+            concurrency=2,
+            deadline_ms=50,
+            barrier_timeout_seconds=0.05,
+            cleanup_allowance_seconds=0.05,
+        )
+
+    assert time.monotonic() - started < 0.5
+    assert len(samples) == 2
+    assert [sample["error"] for sample in samples] == ["barrier_broken", "barrier_broken"]
+
+
+class _RunningProcess:
+    returncode = None
+
+    @staticmethod
+    def poll() -> None:
+        return None
+
+
+def test_wait_for_move_events_times_out_promptly_when_warmup_telemetry_is_absent() -> None:
+    with tempfile.TemporaryFile() as server_log:
+        started = time.monotonic()
+        with pytest.raises(RuntimeError, match="warmup move telemetry"):
+            wait_for_move_events(server_log, _RunningProcess(), expected=1, timeout_seconds=0.02)
+    assert time.monotonic() - started < 0.5
+
+
+def test_wait_for_move_events_returns_the_known_warmup_event() -> None:
+    with tempfile.TemporaryFile() as server_log:
+        server_log.write(b'{"event":"move_request","total_ms":1}\n')
+        server_log.flush()
+
+        events = wait_for_move_events(
+            server_log, _RunningProcess(), expected=1, timeout_seconds=0.02
+        )
+
+    assert len(events) == 1
+
+
+class _FakeProcess:
+    def __init__(self, *, return_code: int | None, requires_kill: bool = False) -> None:
+        self.returncode = return_code
+        self.requires_kill = requires_kill
+        self.terminate_calls = 0
+        self.kill_calls = 0
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def wait(self, timeout: float) -> int:
+        if self.requires_kill and self.kill_calls == 0:
+            raise benchmark.subprocess.TimeoutExpired("server", timeout)
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        self.returncode = -9
+
+
+def test_shutdown_server_reports_unexpected_preexisting_exit() -> None:
+    process = _FakeProcess(return_code=7)
+
+    lifecycle = shutdown_server(process)
+
+    assert lifecycle == {"unexpected_exit": True, "return_code": 7, "forced_kill": False}
+    assert process.terminate_calls == 0
+
+
+def test_shutdown_server_reports_forced_kill_and_final_return_code() -> None:
+    process = _FakeProcess(return_code=None, requires_kill=True)
+
+    lifecycle = shutdown_server(process, timeout_seconds=0.01)
+
+    assert lifecycle == {"unexpected_exit": False, "return_code": -9, "forced_kill": True}
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "failure_reason"),
+    [
+        (
+            {"unexpected_exit": True, "return_code": 7, "forced_kill": False},
+            "unexpected_server_exit",
+        ),
+        (
+            {"unexpected_exit": False, "return_code": 7, "forced_kill": False},
+            "server_nonzero_exit",
+        ),
+        (
+            {"unexpected_exit": False, "return_code": -9, "forced_kill": True},
+            "server_forced_kill",
+        ),
+    ],
+)
+def test_result_gate_exposes_and_fails_bad_server_lifecycle(
+    lifecycle: dict[str, object], failure_reason: str
+) -> None:
+    result = assemble_result(
+        configuration={"deadline_ms": 500},
+        samples=[_sample(10.0)],
+        move_events=[_move_event()],
+        overload_events=[],
+        lifecycle=lifecycle,
+    )
+
+    assert result["server_lifecycle"] == lifecycle
+    assert result["passed"] is False
+    assert failure_reason in result["failure_reasons"]
+
+
+def test_cli_accepts_server_maximum_search_budget(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, int] = {}
+
+    def fake_run_benchmark(**arguments: int) -> dict[str, object]:
+        captured.update(arguments)
+        return {"passed": True}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", fake_run_benchmark)
+
+    assert benchmark.main(["--search-budget-ms", "65535"]) == 0
+    assert captured["search_budget_ms"] == 65535
+    assert json.loads(capsys.readouterr().out) == {"passed": True}
+
+
+def test_cli_rejects_search_budget_above_server_parser_maximum(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    called = False
+
+    def fake_run_benchmark(**_arguments: int) -> dict[str, object]:
+        nonlocal called
+        called = True
+        return {"passed": True}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", fake_run_benchmark)
+
+    with pytest.raises(SystemExit) as error:
+        benchmark.main(["--search-budget-ms", "65536"])
+    assert error.value.code == 2
+    assert called is False
+    assert "--search-budget-ms must be at most 65535" in capsys.readouterr().err
+
+
+def test_cli_refuses_nonstandard_nan_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        benchmark,
+        "run_benchmark",
+        lambda **_arguments: {"passed": False, "invalid": float("nan")},
+    )
+
+    with pytest.raises(ValueError, match="Out of range float values"):
+        benchmark.main([])
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -105,6 +337,7 @@ def test_result_gate_fails_missing_or_malformed_move_telemetry(event: dict[str, 
         samples=[_sample(10.0)],
         move_events=[event],
         overload_events=[],
+        lifecycle=_healthy_lifecycle(),
     )
 
     assert result["passed"] is False
@@ -125,6 +358,7 @@ def test_result_gate_fails_when_samples_outnumber_move_events() -> None:
             }
         ],
         overload_events=[],
+        lifecycle=_healthy_lifecycle(),
     )
 
     assert result["passed"] is False
@@ -167,6 +401,7 @@ def test_cli_returns_nonzero_for_invalid_move_telemetry(
         samples=samples,
         move_events=move_events,
         overload_events=[],
+        lifecycle=_healthy_lifecycle(),
     )
     monkeypatch.setattr(benchmark, "run_benchmark", lambda **_arguments: failed_result)
 
