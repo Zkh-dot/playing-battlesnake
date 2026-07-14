@@ -88,6 +88,8 @@ def test_fixture_builder_uses_live_scvnak_and_preserves_replay_evidence(
     opponent = _snake("them", "opponent", [(0, 0)])
     ours = _snake("me", "scvnak", [(1, 1), (1, 0)])
     ours_next = _snake("me", "scvnak", [(2, 1), (1, 1)])
+    dead = _snake("dead", "eliminated", [(2, 0)])
+    dead["Death"] = {"Cause": "snake-collision", "Turn": 6}
     export = {
         "game": {
             "Width": 3,
@@ -97,7 +99,7 @@ def test_fixture_builder_uses_live_scvnak_and_preserves_replay_evidence(
         "frames": [
             {
                 "Turn": 7,
-                "Snakes": [opponent, ours],
+                "Snakes": [opponent, dead, ours],
                 "Food": [{"X": 2, "Y": 2}],
                 "Hazards": [{"X": 0, "Y": 2}],
             },
@@ -138,6 +140,20 @@ def test_fixture_builder_uses_live_scvnak_and_preserves_replay_evidence(
     }
     assert position["ruleset_name"] == "standard"
     assert position["hazard_damage"] == 9
+    assert position["snakes"] == [
+        {
+            "id": "them",
+            "name": "opponent",
+            "health": 90,
+            "body": [[0, 0]],
+        },
+        {
+            "id": "me",
+            "name": "scvnak",
+            "health": 90,
+            "body": [[1, 1], [1, 0]],
+        },
+    ]
     assert position["food"] == [[2, 2]]
     assert position["hazards"] == [[0, 2]]
 
@@ -150,6 +166,8 @@ def test_t424_keeps_structurally_safe_authoritative_root() -> None:
     assert up["structural_proof"] == "safe"
     assert down["structural_proof"] == "unknown"
     assert down["relaxed_static_capacity"] < down["post_move_length"]
+    assert up["minimax_bound"] == "exact"
+    assert down["minimax_bound"] == "exact"
     assert result["move"] == "up"
     assert result["move"] != T424["evidence"]["historical_guard_move"]
     audit = result["corridor_guard"]
@@ -171,6 +189,8 @@ def test_corridor_guard_audit_is_complete_and_coherent(
     position: dict[str, object],
 ) -> None:
     result = _fixed_depth(position)
+    assert result["completed_depth"] == 11
+    assert result["timed_out"] is False
     audit = result["corridor_guard"]
 
     assert set(audit) == AUDIT_KEYS
@@ -215,6 +235,15 @@ def test_corridor_guard_audit_is_complete_and_coherent(
 
 def test_t187_rejects_equal_numeric_but_structurally_different_proposal() -> None:
     result = _fixed_depth(T187)
+    down = result["root_candidates"]["down"]
+    right = result["root_candidates"]["right"]
+
+    assert result["completed_depth"] == 11
+    assert result["timed_out"] is False
+    assert down["minimax_score"] == right["minimax_score"]
+    # Equal floating values across unequal bounds are not an exact semantic tie.
+    assert down["minimax_bound"] == "upper"
+    assert right["minimax_bound"] == "exact"
     audit = result["corridor_guard"]
 
     assert audit["incumbent"]["move"] == "down"
