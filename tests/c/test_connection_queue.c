@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdbool.h>
 #include <time.h>
 
@@ -9,7 +10,6 @@ typedef struct {
     BsConnectionQueue* queue;
     pthread_mutex_t mutex;
     pthread_cond_t condition;
-    bool started;
     bool completed;
     bool pop_result;
     BsConnectionJob job;
@@ -17,11 +17,6 @@ typedef struct {
 
 static void* pop_in_thread(void* argument) {
     PopThreadContext* context = (PopThreadContext*)argument;
-    assert(pthread_mutex_lock(&context->mutex) == 0);
-    context->started = true;
-    assert(pthread_cond_signal(&context->condition) == 0);
-    assert(pthread_mutex_unlock(&context->mutex) == 0);
-
     context->pop_result = BsConnectionQueuePop(context->queue, &context->job);
 
     assert(pthread_mutex_lock(&context->mutex) == 0);
@@ -29,6 +24,19 @@ static void* pop_in_thread(void* argument) {
     assert(pthread_cond_signal(&context->condition) == 0);
     assert(pthread_mutex_unlock(&context->mutex) == 0);
     return 0;
+}
+
+static void wait_for_waiting_consumer(BsConnectionQueue* queue) {
+    for (int attempt = 0; attempt < 100000; attempt++) {
+        assert(pthread_mutex_lock(&queue->mutex) == 0);
+        size_t waiting_consumers = queue->waiting_consumers;
+        assert(pthread_mutex_unlock(&queue->mutex) == 0);
+        if (waiting_consumers > 0) {
+            return;
+        }
+        sched_yield();
+    }
+    assert(!"consumer did not enter the queue wait state");
 }
 
 static void wait_for_flag(PopThreadContext* context, bool* flag) {
@@ -84,7 +92,7 @@ static void test_blocked_pop_wakes_after_push(void) {
     init_context(&context, &queue);
     pthread_t thread;
     assert(pthread_create(&thread, 0, pop_in_thread, &context) == 0);
-    wait_for_flag(&context, &context.started);
+    wait_for_waiting_consumer(&queue);
 
     assert(BsConnectionQueueTryPush(&queue, job_with_fd(44)));
     wait_for_flag(&context, &context.completed);
@@ -114,7 +122,7 @@ static void test_stop_drains_jobs_then_wakes_blocked_pop(void) {
     init_context(&context, &queue);
     pthread_t thread;
     assert(pthread_create(&thread, 0, pop_in_thread, &context) == 0);
-    wait_for_flag(&context, &context.started);
+    wait_for_waiting_consumer(&queue);
     BsConnectionQueueStop(&queue);
     wait_for_flag(&context, &context.completed);
     assert(pthread_join(thread, 0) == 0);

@@ -73,7 +73,9 @@ bool BsConnectionQueuePop(BsConnectionQueue* queue, BsConnectionJob* out_job) {
 
     pthread_mutex_lock(&queue->mutex);
     while (queue->count == 0 && !queue->stopped) {
+        queue->waiting_consumers++;
         pthread_cond_wait(&queue->nonempty, &queue->mutex);
+        queue->waiting_consumers--;
     }
     if (queue->count == 0) {
         pthread_mutex_unlock(&queue->mutex);

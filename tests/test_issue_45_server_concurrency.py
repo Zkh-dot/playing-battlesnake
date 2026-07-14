@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import tempfile
 import threading
 import time
 from contextlib import closing
+
+import pytest
 
 from benchmarks.battlesnake_payloads import move_payload
 from benchmarks.scenarios import SCENARIOS
@@ -28,6 +31,41 @@ def _wait_for_port(port: int) -> None:
         except OSError:
             time.sleep(0.02)
     raise RuntimeError(f"server did not listen on {port}")
+
+
+def _start_server(port: int, server_log: object) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        ["build/battlesnake-server"],
+        env={
+            **os.environ,
+            "BATTLESNAKE_PORT": str(port),
+            "BATTLESNAKE_WORKERS": "2",
+            "BATTLESNAKE_QUEUE_CAPACITY": "8",
+            "BATTLESNAKE_SEARCH_BUDGET_MS": "400",
+        },
+        stdout=server_log,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def _stop_server(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5.0)
+
+
+def _blocked_signals(pid: int, tid: int) -> int:
+    status = f"/proc/{pid}/task/{tid}/status"
+    with open(status, encoding="utf-8") as status_file:
+        for line in status_file:
+            if line.startswith("SigBlk:"):
+                return int(line.split()[1], 16)
+    raise AssertionError(f"SigBlk missing from {status}")
 
 
 def _move_request(body: str) -> bytes:
@@ -68,18 +106,7 @@ def test_simultaneous_move_requests_complete_within_external_deadline() -> None:
     barrier = threading.Barrier(2)
 
     with tempfile.TemporaryFile(mode="w+") as server_log:
-        process = subprocess.Popen(
-            ["build/battlesnake-server"],
-            env={
-                **os.environ,
-                "BATTLESNAKE_PORT": str(port),
-                "BATTLESNAKE_WORKERS": "2",
-                "BATTLESNAKE_QUEUE_CAPACITY": "8",
-                "BATTLESNAKE_SEARCH_BUDGET_MS": "400",
-            },
-            stdout=server_log,
-            stderr=subprocess.STDOUT,
-        )
+        process = _start_server(port, server_log)
         try:
             _wait_for_port(port)
             results: list[tuple[int, dict[str, str], float] | BaseException | None] = [None, None]
@@ -106,9 +133,43 @@ def test_simultaneous_move_requests_complete_within_external_deadline() -> None:
                 assert body["move"] in {"up", "left", "right"}
                 assert elapsed_ms < 500.0
         finally:
+            _stop_server(process)
+
+
+def test_worker_threads_block_termination_signals() -> None:
+    if not os.path.isdir("/proc/self/task"):
+        pytest.skip("Linux /proc task signal masks are required")
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(port, server_log)
+        try:
+            _wait_for_port(port)
+            task_ids = sorted(int(entry) for entry in os.listdir(f"/proc/{process.pid}/task"))
+            assert process.pid in task_ids
+            worker_ids = [tid for tid in task_ids if tid != process.pid]
+            assert len(worker_ids) == 2
+
+            termination_mask = (1 << (signal.SIGINT - 1)) | (1 << (signal.SIGTERM - 1))
+            assert _blocked_signals(process.pid, process.pid) & termination_mask == 0
+            for worker_id in worker_ids:
+                assert _blocked_signals(process.pid, worker_id) & termination_mask == termination_mask
+        finally:
+            _stop_server(process)
+
+
+def test_idle_server_exits_promptly_on_sigterm() -> None:
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(port, server_log)
+        try:
+            _wait_for_port(port)
+            started = time.monotonic()
             process.terminate()
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5.0)
+            return_code = process.wait(timeout=1.0)
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            assert return_code == 0
+            assert elapsed_ms < 1000.0
+        finally:
+            _stop_server(process)

@@ -42,6 +42,16 @@ static void handle_signal(int signal_number) {
     g_should_stop = 1;
 }
 
+static bool set_signal_mask(int how, const sigset_t* mask, const char* failure_message) {
+    int status = pthread_sigmask(how, mask, 0);
+    if (status == 0) {
+        return true;
+    }
+    errno = status;
+    perror(failure_message);
+    return false;
+}
+
 static int parse_env_int(const char* name, int fallback, int minimum) {
     const char* value = getenv(name);
     if (value == NULL || value[0] == '\0') {
@@ -350,17 +360,37 @@ static int create_listen_socket(int port) {
 int main(void) {
     BsServerConfig config = config_from_env();
 
+    sigset_t termination_signals;
+    sigset_t previous_signal_mask;
+    sigemptyset(&termination_signals);
+    sigaddset(&termination_signals, SIGINT);
+    sigaddset(&termination_signals, SIGTERM);
+    int block_status = pthread_sigmask(
+        SIG_BLOCK,
+        &termination_signals,
+        &previous_signal_mask
+    );
+    if (block_status != 0) {
+        errno = block_status;
+        perror("failed to block termination signals");
+        return 1;
+    }
+
     struct sigaction stop_action;
     memset(&stop_action, 0, sizeof(stop_action));
     stop_action.sa_handler = handle_signal;
     sigemptyset(&stop_action.sa_mask);
-    sigaction(SIGINT, &stop_action, 0);
-    sigaction(SIGTERM, &stop_action, 0);
+    if (sigaction(SIGINT, &stop_action, 0) != 0 || sigaction(SIGTERM, &stop_action, 0) != 0) {
+        perror("failed to install termination signal handlers");
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
+        return 1;
+    }
     signal(SIGPIPE, SIG_IGN);
 
     BsConnectionQueue queue;
     if (!BsConnectionQueueInit(&queue, config.queue_capacity)) {
         fputs("failed to initialize connection queue\n", stderr);
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
     }
 
@@ -368,6 +398,7 @@ int main(void) {
     if (workers == 0) {
         BsConnectionQueueDestroy(&queue);
         fputs("failed to allocate server workers\n", stderr);
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
     }
     BsWorkerContext worker_context = {.queue = &queue, .config = &config};
@@ -388,6 +419,7 @@ int main(void) {
             }
             free(workers);
             BsConnectionQueueDestroy(&queue);
+            set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
             return 1;
         }
     }
@@ -401,6 +433,26 @@ int main(void) {
         }
         free(workers);
         BsConnectionQueueDestroy(&queue);
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
+        return 1;
+    }
+
+    sigset_t main_signal_mask = previous_signal_mask;
+    sigdelset(&main_signal_mask, SIGINT);
+    sigdelset(&main_signal_mask, SIGTERM);
+    if (!set_signal_mask(
+            SIG_SETMASK,
+            &main_signal_mask,
+            "failed to unblock termination signals on main thread"
+        )) {
+        close(listen_fd);
+        BsConnectionQueueStop(&queue);
+        for (int i = 0; i < created_workers; i++) {
+            pthread_join(workers[i], 0);
+        }
+        free(workers);
+        BsConnectionQueueDestroy(&queue);
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
     }
 
@@ -432,6 +484,11 @@ int main(void) {
     }
     free(workers);
     BsConnectionQueueDestroy(&queue);
+    bool restored_signal_mask = set_signal_mask(
+        SIG_SETMASK,
+        &previous_signal_mask,
+        "failed to restore signal mask"
+    );
     puts("battlesnake native server stopped");
-    return 0;
+    return restored_signal_mask ? 0 : 1;
 }

@@ -16,6 +16,7 @@ typedef struct {
     size_t tail;
     size_t count;
     size_t capacity;
+    size_t waiting_consumers;
     bool stopped;
     pthread_mutex_t mutex;
     pthread_cond_t nonempty;
