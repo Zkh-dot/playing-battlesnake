@@ -158,6 +158,59 @@ def _metric_summary(events: list[dict[str, object]], key: str) -> dict[str, floa
     }
 
 
+def _valid_move_event(event: dict[str, object]) -> bool:
+    for key in ("queue_ms", "handler_ms", "total_ms"):
+        value = event.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if not math.isfinite(float(value)) or value < 0:
+            return False
+    return isinstance(event.get("fallback"), bool)
+
+
+def assemble_result(
+    *,
+    configuration: dict[str, int],
+    samples: list[dict[str, object]],
+    move_events: list[dict[str, object]],
+    overload_events: list[dict[str, object]],
+) -> dict[str, object]:
+    deadline_ms = configuration["deadline_ms"]
+    external = summarize(samples, deadline_ms)
+    valid_move_events = [event for event in move_events if _valid_move_event(event)]
+    server_total_p99 = _percentile(
+        [float(event["total_ms"]) for event in valid_move_events], 0.99
+    )
+    failure_reasons = list(external["failure_reasons"])
+    status_503_count = sum(sample.get("status") == 503 for sample in samples)
+    if status_503_count:
+        failure_reasons.append("http_503")
+    if len(move_events) != len(samples):
+        failure_reasons.append("missing_move_telemetry")
+    if len(valid_move_events) != len(move_events):
+        failure_reasons.append("malformed_move_telemetry")
+    if server_total_p99 is None or server_total_p99 >= deadline_ms:
+        failure_reasons.append("server_total_p99_at_or_above_deadline")
+
+    return {
+        "configuration": configuration,
+        "external": external,
+        "server": {
+            "request_count": len(move_events),
+            "queue": _metric_summary(valid_move_events, "queue_ms"),
+            "handler": _metric_summary(valid_move_events, "handler_ms"),
+            "total": _metric_summary(valid_move_events, "total_ms"),
+            "fallback_count": sum(event["fallback"] is True for event in valid_move_events),
+            "overload_event_count": len(overload_events),
+        },
+        "status_503_count": status_503_count,
+        "timeout_count": sum(sample.get("error") == "timeout" for sample in samples),
+        "error_count": sum(sample.get("error") not in {None, "timeout"} for sample in samples),
+        "passed": not failure_reasons,
+        "failure_reasons": failure_reasons,
+    }
+
+
 def run_benchmark(
     *, workers: int, queue_capacity: int, concurrency: int, batches: int,
     deadline_ms: int, search_budget_ms: int,
@@ -212,21 +265,8 @@ def run_benchmark(
 
     move_events = [event for event in events if event.get("event") == "move_request"][1:]
     overload_events = [event for event in events if event.get("event") == "server_overload"]
-    external = summarize(samples, deadline_ms)
-    server_total_p99 = _percentile(
-        [float(event["total_ms"]) for event in move_events if "total_ms" in event], 0.99
-    )
-    failure_reasons = list(external["failure_reasons"])
-    status_503_count = sum(sample.get("status") == 503 for sample in samples)
-    if status_503_count:
-        failure_reasons.append("http_503")
-    if len(move_events) != len(samples):
-        failure_reasons.append("missing_move_telemetry")
-    if server_total_p99 is None or server_total_p99 >= deadline_ms:
-        failure_reasons.append("server_total_p99_at_or_above_deadline")
-
-    return {
-        "configuration": {
+    return assemble_result(
+        configuration={
             "workers": workers,
             "queue_capacity": queue_capacity,
             "concurrency": concurrency,
@@ -234,21 +274,10 @@ def run_benchmark(
             "deadline_ms": deadline_ms,
             "search_budget_ms": search_budget_ms,
         },
-        "external": external,
-        "server": {
-            "request_count": len(move_events),
-            "queue": _metric_summary(move_events, "queue_ms"),
-            "handler": _metric_summary(move_events, "handler_ms"),
-            "total": _metric_summary(move_events, "total_ms"),
-            "fallback_count": sum(event.get("fallback") is True for event in move_events),
-            "overload_event_count": len(overload_events),
-        },
-        "status_503_count": status_503_count,
-        "timeout_count": sum(sample.get("error") == "timeout" for sample in samples),
-        "error_count": sum(sample.get("error") not in {None, "timeout"} for sample in samples),
-        "passed": not failure_reasons,
-        "failure_reasons": failure_reasons,
-    }
+        samples=samples,
+        move_events=move_events,
+        overload_events=overload_events,
+    )
 
 
 def _positive(parser: argparse.ArgumentParser, option: str, value: int) -> int:

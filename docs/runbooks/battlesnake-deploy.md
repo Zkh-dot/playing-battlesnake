@@ -164,6 +164,8 @@ docker run -d \
   --restart unless-stopped \
   -e BATTLESNAKE_PORT=8000 \
   -e BATTLESNAKE_SEARCH_BUDGET_MS=400 \
+  -e BATTLESNAKE_WORKERS=2 \
+  -e BATTLESNAKE_QUEUE_CAPACITY=8 \
   -p 0.0.0.0:8121:8000 \
   "$TAG"
 ```
@@ -326,6 +328,8 @@ docker run -d \
   --restart unless-stopped \
   -e BATTLESNAKE_PORT=8000 \
   -e BATTLESNAKE_SEARCH_BUDGET_MS=400 \
+  -e BATTLESNAKE_WORKERS=2 \
+  -e BATTLESNAKE_QUEUE_CAPACITY=8 \
   -p 0.0.0.0:8121:8000 \
   playing-battlesnake:OLD_TAG
 ```
