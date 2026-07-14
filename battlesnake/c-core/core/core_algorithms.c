@@ -4628,27 +4628,33 @@ static uint8_t core_remove_outcome_dominated_roots(
 
 static uint8_t core_remove_structurally_dominated_roots(
     const CoreSearchContext* context,
-    uint8_t active_mask
+    uint8_t active_mask,
+    bool unresolved_frontier
 ) {
     uint8_t dominated_mask = 0;
     for (int incumbent = MOVE_UP; incumbent <= MOVE_RIGHT; incumbent++) {
-        if ((active_mask & (1u << incumbent)) == 0 ||
-            context->root_move_values[incumbent].outcome != CORE_OUTCOME_UNRESOLVED) {
+        if ((active_mask & (1u << incumbent)) == 0) {
             continue;
         }
         const CoreRootCandidateStats* incumbent_stats =
             &context->stats->root_candidates[incumbent];
         for (int candidate = MOVE_UP; candidate <= MOVE_RIGHT; candidate++) {
-            if (candidate == incumbent || (active_mask & (1u << candidate)) == 0 ||
-                context->root_move_values[candidate].outcome != CORE_OUTCOME_UNRESOLVED) {
+            if (candidate == incumbent || (active_mask & (1u << candidate)) == 0) {
+                continue;
+            }
+            bool both_unresolved =
+                context->root_move_values[candidate].outcome == CORE_OUTCOME_UNRESOLVED &&
+                context->root_move_values[incumbent].outcome == CORE_OUTCOME_UNRESOLVED;
+            if (both_unresolved != unresolved_frontier) {
                 continue;
             }
             const CoreRootCandidateStats* candidate_stats =
                 &context->stats->root_candidates[candidate];
-            /* The pairwise comparator applies this same relation only after
-             * exact/same-outcome checks. The global unresolved frontier may
-             * apply it to overlapping non-exact records: bounds limit search
-             * claims, not an independent structural proof. */
+            /* Unresolved heuristic values reach this relation before numeric
+             * ordering. Other outcome frontiers reach it only after strict
+             * outcome, loss-distance, and numeric interval dominance. Bounds
+             * that merely overlap or touch do not outrank an independent
+             * structural proof. */
             if (core_structure_dominates(candidate_stats, incumbent_stats)) {
                 dominated_mask |= (uint8_t)(1u << incumbent);
                 break;
@@ -5070,8 +5076,7 @@ static bool core_select_root_candidate(
             return true;
         }
 
-        before = active_mask;
-        active_mask = core_remove_structurally_dominated_roots(context, active_mask);
+        active_mask = core_remove_structurally_dominated_roots(context, active_mask, true);
         if (core_finalize_singleton_root_selection(
             context,
             active_mask,
@@ -5097,6 +5102,16 @@ static bool core_select_root_candidate(
         reason = core_active_values_are_exact_unresolved(context, before) ?
             CORE_ROOT_COMPARISON_HEURISTIC_VALUE : CORE_ROOT_COMPARISON_SEARCH_BOUND;
         if (core_finalize_singleton_root_selection(context, active_mask, reason, out_selection)) {
+            return true;
+        }
+
+        active_mask = core_remove_structurally_dominated_roots(context, active_mask, false);
+        if (core_finalize_singleton_root_selection(
+            context,
+            active_mask,
+            CORE_ROOT_COMPARISON_STRUCTURAL_PROOF,
+            out_selection
+        )) {
             return true;
         }
     } else {

@@ -200,7 +200,7 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
         board,
         "me",
         CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
-        orders[0],
+        orders[1],
         2,
         (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_LEFT)),
         values,
@@ -233,7 +233,7 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
         board,
         "me",
         CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
-        orders[1],
+        orders[0],
         2,
         (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_LEFT)),
         values,
@@ -244,6 +244,30 @@ static void test_partial_root_frontier_is_permutation_invariant_and_coherent(voi
         &reason
     ));
     assert(selected == MOVE_LEFT);
+    assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
+
+    /* A touching exact/upper loss frontier proves neither root superior. The
+     * SAFE certificate must therefore precede PV/geometry fallback even when
+     * the incomplete search tags both roots as losses. */
+    values[MOVE_LEFT] = root_test_value(CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_EXACT, -991000.0, 9);
+    values[MOVE_DOWN] = root_test_value(CORE_OUTCOME_LOSS, CORE_VALUE_BOUND_UPPER, -991000.0, 9);
+    candidates[MOVE_LEFT] = root_test_stats(CORE_STRUCTURAL_PROOF_UNKNOWN, 4, 5);
+    candidates[MOVE_DOWN] = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 40, 5);
+    assert(CoreSelectRootCandidateForTesting(
+        board,
+        "me",
+        CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+        orders[0],
+        2,
+        (uint8_t)((1u << MOVE_DOWN) | (1u << MOVE_LEFT)),
+        values,
+        candidates,
+        MOVE_DOWN,
+        &selected,
+        &selected_value,
+        &reason
+    ));
+    assert(selected == MOVE_DOWN);
     assert(reason == CORE_ROOT_COMPARISON_STRUCTURAL_PROOF);
 
     selected = MOVE_INVALID;
@@ -1499,6 +1523,77 @@ static void test_duel_root_profile_prefers_contingent_survival_over_terminal_mov
     BoardFree(board);
 }
 
+static void test_production_minimax_structural_precedence_searches_deficient_root(void) {
+    Board* board = BoardCreate(11, 11, "standard", 15);
+    Coord me_body[] = {
+        {7, 8}, {8, 8}, {9, 8}, {10, 8}, {10, 7}, {9, 7},
+        {8, 7}, {8, 6}, {7, 6}, {6, 6}, {6, 7}, {6, 8},
+    };
+    Coord you_body[] = {
+        {4, 1}, {3, 1}, {3, 2}, {3, 3}, {4, 3}, {4, 4}, {4, 5},
+        {4, 6}, {5, 6}, {5, 5}, {5, 4}, {6, 4}, {6, 3}, {6, 2},
+    };
+    Coord food[] = {
+        {0, 10}, {10, 4}, {0, 0}, {2, 0}, {9, 1},
+        {0, 9}, {7, 4}, {3, 10}, {6, 9},
+    };
+    Snake me = make_snake("me", me_body, 12, 71);
+    Snake you = make_snake("you", you_body, 14, 99);
+    CoreSearchConfig config = CoreSearchConfigDefault(5000);
+    CoreSearchStats stats;
+    MoveDirection move = MOVE_INVALID;
+
+    config.fixed_depth = 1;
+    memset(&config.weights, 0, sizeof(config.weights));
+    config.weights.terminal_win = 1000000.0;
+    config.weights.terminal_loss = -1000000.0;
+    config.weights.center = 1.0;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    for (size_t index = 0; index < sizeof(food) / sizeof(food[0]); ++index) {
+        assert(BoardAddFood(board, food[index]));
+    }
+
+    assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
+    assert(stats.root_candidates[MOVE_DOWN].allowed);
+    assert(stats.root_move_score_valid[MOVE_DOWN]);
+    assert(stats.root_candidates[MOVE_DOWN].structural_proof == CORE_STRUCTURAL_PROOF_UNKNOWN);
+    assert(stats.root_candidates[MOVE_DOWN].relaxed_static_capacity
+        < stats.root_candidates[MOVE_DOWN].post_move_length);
+    assert(move == MOVE_UP || move == MOVE_LEFT);
+    assert(stats.root_candidates[move].structural_proof == CORE_STRUCTURAL_PROOF_SAFE);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
+static void test_production_minimax_terminal_outcome_precedes_structural_proof(void) {
+    Board* board = BoardCreate(6, 6, "standard", 0);
+    Coord me_body[] = {{5, 1}, {4, 1}, {3, 1}, {3, 0}, {2, 0}, {1, 0}};
+    Coord you_body[] = {{4, 0}, {5, 0}};
+    Snake me = make_snake("me", me_body, 6, 90);
+    Snake you = make_snake("you", you_body, 2, 90);
+    CoreSearchConfig config = CoreSearchConfigDefault(1000);
+    CoreSearchStats stats;
+    MoveDirection move = MOVE_INVALID;
+
+    config.fixed_depth = 1;
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(CoreMinimaxMoveWithStats(board, "me", config, &move, &stats) == CORE_OK);
+    assert(stats.root_candidates[MOVE_DOWN].minimax_value_valid);
+    assert(stats.root_candidates[MOVE_DOWN].minimax_value.outcome == CORE_OUTCOME_WIN);
+    assert(stats.root_candidates[MOVE_DOWN].minimax_value.bound == CORE_VALUE_BOUND_EXACT);
+    assert(stats.root_candidates[MOVE_UP].structural_proof == CORE_STRUCTURAL_PROOF_SAFE);
+    assert(move == MOVE_DOWN);
+    assert(stats.root_comparison_reason == CORE_ROOT_COMPARISON_TERMINAL_OUTCOME);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
 static void test_default_search_config_uses_ladder_policy(void) {
     CoreSearchConfig config = CoreSearchConfigDefault(50);
     CoreSearchConfig zeroed;
@@ -1678,6 +1773,8 @@ int main(void) {
     test_effective_budget_floors_tiny_request_timeout();
     test_effective_budget_allows_zero_margin();
     test_duel_root_profile_prefers_contingent_survival_over_terminal_moves();
+    test_production_minimax_structural_precedence_searches_deficient_root();
+    test_production_minimax_terminal_outcome_precedes_structural_proof();
     test_default_search_config_uses_ladder_policy();
     test_branching_pocket_proves_every_branch_dies();
     test_repeatable_loop_is_structurally_safe();
