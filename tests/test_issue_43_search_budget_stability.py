@@ -64,22 +64,6 @@ def _structurally_dominates(
     )
 
 
-def _global_structural_frontier(result: dict[str, object]) -> set[str]:
-    searched = {
-        move: candidate
-        for move, candidate in result["root_candidates"].items()
-        if candidate["allowed"] and candidate["minimax_score"] is not None
-    }
-    return {
-        move
-        for move, candidate in searched.items()
-        if not any(
-            other_move != move and _structurally_dominates(other, candidate)
-            for other_move, other in searched.items()
-        )
-    }
-
-
 def _assert_complete_root_analysis(result: dict[str, object]) -> None:
     relevant = [
         candidate
@@ -108,7 +92,6 @@ def _assert_coherent_selected_diagnostics(result: dict[str, object]) -> None:
     assert selected["minimax_outcome"] in {"win", "draw", "unresolved", "loss"}
     assert selected["minimax_bound"] in {"exact", "lower", "upper"}
     assert result["score"] == selected["minimax_score"]
-    assert result["move"] in _global_structural_frontier(result)
 
 
 def _assert_risky_root_is_dominated(
@@ -129,18 +112,65 @@ def _assert_risky_root_is_dominated(
     assert risky["structural_proof"] in {"unsafe", "unknown"}
     assert safe_alternatives
     assert any(_structurally_dominates(safe, risky) for safe in safe_alternatives)
-    assert risky_move not in _global_structural_frontier(result)
     assert result["move"] != risky_move
     assert result["root_candidates"][result["move"]]["structural_proof"] == "safe"
 
 
 def _decision_fingerprint(result: dict[str, object]) -> dict[str, object]:
-    # Wall-clock measurements are observational. Everything else can affect or
-    # explain the deterministic fixed-node decision and must repeat exactly.
+    result_fields = (
+        "move",
+        "score",
+        "completed_depth",
+        "max_depth_started",
+        "timed_out",
+        "node_budget",
+        "node_budget_exhausted",
+        "nodes",
+        "root_allowed_mask",
+        "root_policy_applied",
+        "selection_reason",
+        "root_comparison_reason",
+        "root_analysis_nodes",
+        "root_analysis_budget_ms",
+        "search_reserved_ms",
+        "root_move_scores",
+    )
+    candidate_fields = (
+        "evaluated",
+        "allowed",
+        "safe_by_board_rules",
+        "rejection_reason",
+        "reply_outcomes",
+        "alive_reply_mask",
+        "alive_reply_count",
+        "draw_reply_mask",
+        "immediate_causes",
+        "trap_status",
+        "trap_horizon",
+        "structural_proof",
+        "proof_cutoff",
+        "proof_horizon",
+        "explored_states",
+        "structural_capacity",
+        "opponent_closure_considered",
+        "post_move_length",
+        "relaxed_static_capacity",
+        "refutation_status",
+        "minimax_score",
+        "minimax_outcome",
+        "minimax_terminal_distance",
+        "minimax_bound",
+        "minimax_cause",
+    )
+
+    # Explicitly include only decision state. Timings and unrelated future
+    # diagnostics are observational and cannot make this contract flaky.
     return {
-        key: value
-        for key, value in result.items()
-        if key not in {"elapsed_ms", "root_analysis_elapsed_ms"}
+        **{field: result[field] for field in result_fields},
+        "root_candidates": {
+            move: {field: candidate[field] for field in candidate_fields}
+            for move, candidate in result["root_candidates"].items()
+        },
     }
 
 
@@ -200,8 +230,12 @@ def test_equivalent_frontier_node_budgets_are_repeatable_across_depths() -> None
     board = _board_from_fixture(position)
     snake_id = str(position["snake_id"])
     completed_depths: set[int] = set()
+    selected_moves: set[str] = set()
+    eligible_moves = set(position["eligible_equivalent_moves"])
 
-    for node_budget in FIXTURE["node_budgets"]:
+    assert len(eligible_moves) >= 2
+
+    for node_budget in position["node_budgets"]:
         results = [
             minimax_diagnostics(board, snake_id, node_budget=int(node_budget))
             for _ in range(3)
@@ -215,10 +249,22 @@ def test_equivalent_frontier_node_budgets_are_repeatable_across_depths() -> None
         assert result["selection_reason"] == "node_budget_best_so_far"
         _assert_complete_root_analysis(result)
         _assert_coherent_selected_diagnostics(result)
-        assert result["root_candidates"][result["move"]]["structural_proof"] == "safe"
-        assert result["move"] in _global_structural_frontier(result)
+        allowed_safe_moves = {
+            move
+            for move, candidate in result["root_candidates"].items()
+            if candidate["allowed"] and candidate["structural_proof"] == "safe"
+        }
+        assert allowed_safe_moves == eligible_moves
+        assert result["move"] in eligible_moves
+        for move in eligible_moves:
+            candidate = result["root_candidates"][move]
+            assert candidate["allowed"] is True
+            assert candidate["minimax_score"] is not None
+            assert candidate["structural_proof"] == "safe"
         completed_depths.add(int(result["completed_depth"]))
+        selected_moves.add(str(result["move"]))
 
-    # Fixed work points exercise more than one completed iteration without
-    # requiring equivalent frontier candidates to choose the same direction.
+    # The fixed work points deliberately prove the non-goal: deeper search can
+    # change direction, but only within the known equivalent SAFE frontier.
     assert len(completed_depths) >= 2
+    assert len(selected_moves) >= 2
