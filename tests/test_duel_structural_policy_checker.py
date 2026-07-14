@@ -52,13 +52,13 @@ def _candidate(
         "relaxed_static_capacity": capacity,
         "post_move_length": length,
         "structural_proof": proof,
-        "trap_status": "open",
+        "trap_status": "not_analyzed",
         "trap_horizon": 0,
         "proof_cutoff": "none",
         "proof_horizon": 0,
         "structural_capacity": capacity,
         "opponent_closure_considered": False,
-        "refutation_status": "none",
+        "refutation_status": "not_analyzed",
         "alive_reply_count": alive_replies,
         "allowed": allowed,
         "rejection_reason": rejection_reason,
@@ -66,7 +66,7 @@ def _candidate(
         "minimax_bound": minimax_bound,
         "minimax_score": minimax_score,
         "minimax_terminal_distance": minimax_terminal_distance,
-        "minimax_cause": ["none"],
+        "minimax_cause": [],
         "reply_outcomes": reply_outcomes or {},
     }
 
@@ -104,6 +104,7 @@ def _corridor_audit(
     exact_tie_permitted: bool,
     decision: str,
     comparison_ordering: str,
+    comparison_reason: object = "not_compared",
 ) -> dict[str, object]:
     return {
         "considered": True,
@@ -122,10 +123,38 @@ def _corridor_audit(
             reachable=12,
         ),
         "comparison_ordering": comparison_ordering,
-        "comparison_reason": "semantic_equality",
+        "comparison_reason": comparison_reason,
         "exact_tie_permitted": exact_tie_permitted,
         "applied": applied,
         "decision": decision,
+    }
+
+
+def _valid_applied_corridor_override() -> dict[str, object]:
+    roots = {
+        move: _candidate(
+            capacity=12,
+            length=8,
+            proof="safe",
+            minimax_bound="exact",
+            minimax_score=100.0,
+            minimax_terminal_distance=4,
+        )
+        for move in ("right", "left")
+    }
+    return {
+        "move": "left",
+        "selection_reason": "corridor_guard",
+        "root_candidates": roots,
+        "corridor_guard": _corridor_audit(
+            "right",
+            "left",
+            roots,
+            applied=True,
+            exact_tie_permitted=True,
+            decision="applied_exact_tie",
+            comparison_ordering="equal",
+        ),
     }
 
 
@@ -887,6 +916,126 @@ def test_semantically_equal_better_corridor_is_counted_as_allowed_override() -> 
     assert audit.post_search_override is True
 
 
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("trap_status", "open"),
+        ("trap_status", ["unknown"]),
+        ("structural_proof", "probably_safe"),
+        ("proof_cutoff", "finished"),
+        ("refutation_status", "clear"),
+        ("trap_horizon", True),
+        ("structural_capacity", True),
+        ("structural_capacity", 2_147_483_648),
+        ("opponent_closure_considered", 1),
+        ("post_move_length", -1),
+    ],
+)
+def test_identical_invalid_structural_fields_reject_claimed_exact_tie(
+    field: str, invalid_value: object
+) -> None:
+    diagnostics = _valid_applied_corridor_override()
+    roots = diagnostics["root_candidates"]
+    corridor_audit = diagnostics["corridor_guard"]
+    assert isinstance(roots, dict)
+    assert isinstance(corridor_audit, dict)
+    for root in roots.values():
+        assert isinstance(root, dict)
+        root[field] = invalid_value
+    for candidate_name in ("incumbent", "proposal"):
+        candidate = corridor_audit[candidate_name]
+        assert isinstance(candidate, dict)
+        if field in candidate:
+            candidate[field] = invalid_value
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+
+
+@pytest.mark.parametrize(
+    "invalid_cause",
+    [
+        "wall",
+        ["invented"],
+        ["self_body", "wall"],
+        ["wall", "wall"],
+    ],
+)
+def test_identical_invalid_cause_encoding_rejects_claimed_exact_tie(
+    invalid_cause: object,
+) -> None:
+    diagnostics = _valid_applied_corridor_override()
+    roots = diagnostics["root_candidates"]
+    assert isinstance(roots, dict)
+    for root in roots.values():
+        assert isinstance(root, dict)
+        root["minimax_cause"] = invalid_cause
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+
+
+def test_out_of_uint16_terminal_distance_rejects_claimed_exact_tie() -> None:
+    diagnostics = _valid_applied_corridor_override()
+    roots = diagnostics["root_candidates"]
+    assert isinstance(roots, dict)
+    for root in roots.values():
+        assert isinstance(root, dict)
+        root["minimax_terminal_distance"] = 65_536
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+
+
+@pytest.mark.parametrize(
+    ("metric", "invalid_value"),
+    [
+        ("immediate_exits", 4),
+        ("forced_steps", -1),
+        ("reachable", -1),
+        ("reachable", 2_147_483_648),
+        ("forced_steps", True),
+    ],
+)
+def test_invalid_corridor_metrics_reject_claimed_exact_tie(
+    metric: str, invalid_value: object
+) -> None:
+    diagnostics = _valid_applied_corridor_override()
+    corridor_audit = diagnostics["corridor_guard"]
+    assert isinstance(corridor_audit, dict)
+    proposal = corridor_audit["proposal"]
+    assert isinstance(proposal, dict)
+    metrics = proposal["corridor_metrics"]
+    assert isinstance(metrics, dict)
+    metrics[metric] = invalid_value
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+
+
+@pytest.mark.parametrize("comparison_reason", ["semantic_equality", "", 0])
+def test_invalid_equal_comparison_reason_rejects_claimed_exact_tie(
+    comparison_reason: object,
+) -> None:
+    diagnostics = _valid_applied_corridor_override()
+    corridor_audit = diagnostics["corridor_guard"]
+    assert isinstance(corridor_audit, dict)
+    corridor_audit["comparison_reason"] = comparison_reason
+
+    audit = audit_diagnostics(diagnostics)
+
+    assert audit.violation is True
+    assert audit.post_search_override is False
+
+
 def test_different_minimax_causes_reject_claimed_exact_tie() -> None:
     roots = {
         move: _candidate(
@@ -898,7 +1047,7 @@ def test_different_minimax_causes_reject_claimed_exact_tie() -> None:
         )
         for move in ("right", "left")
     }
-    roots["left"]["minimax_cause"] = ["body_collision"]
+    roots["left"]["minimax_cause"] = ["wall"]
     diagnostics = {
         "move": "left",
         "selection_reason": "corridor_guard",

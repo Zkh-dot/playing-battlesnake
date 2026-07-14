@@ -176,16 +176,110 @@ _ROOT_STRUCTURE_SEMANTIC_FIELDS = (
     "refutation_status",
 )
 
+_TRAP_STATUSES = frozenset(
+    {
+        "not_analyzed",
+        "immediate_death",
+        "proven_self_trap",
+        "open_branch",
+        "survives_cycle",
+        "survives_horizon",
+        "unknown",
+    }
+)
+_STRUCTURAL_PROOFS = frozenset({"not_analyzed", "safe", "unsafe", "unknown"})
+_PROOF_CUTOFFS = frozenset(
+    {
+        "none",
+        "capacity",
+        "cycle",
+        "horizon",
+        "dead_end",
+        "deadline",
+        "resource_limit",
+        "allocation_failure",
+        "policy_sufficient",
+        "survivability",
+        "bounded_lasso",
+    }
+)
+_REFUTATION_STATUSES = frozenset(
+    {"not_analyzed", "proven_refutable", "not_refutable", "unknown"}
+)
+_TERMINAL_CAUSE_ORDER = (
+    "wall",
+    "self_body",
+    "other_body",
+    "head_to_head",
+    "starvation",
+    "hazard",
+    "invalid_command",
+    "opponent_eliminated",
+)
+_NATIVE_INT_MAX = 2_147_483_647
+
+
+def _is_native_nonnegative_int(value: object) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _NATIVE_INT_MAX
+    )
+
+
+def _is_canonical_terminal_cause(value: object) -> bool:
+    if not isinstance(value, list) or any(
+        not isinstance(cause, str) or cause not in _TERMINAL_CAUSE_ORDER
+        for cause in value
+    ):
+        return False
+    return value == [cause for cause in _TERMINAL_CAUSE_ORDER if cause in value]
+
+
+def _root_structure_record_is_valid(candidate: dict[str, Any]) -> bool:
+    integer_fields = (
+        "trap_horizon",
+        "proof_horizon",
+        "structural_capacity",
+        "post_move_length",
+        "relaxed_static_capacity",
+    )
+    trap_status = candidate.get("trap_status")
+    structural_proof = candidate.get("structural_proof")
+    proof_cutoff = candidate.get("proof_cutoff")
+    refutation_status = candidate.get("refutation_status")
+    return (
+        isinstance(trap_status, str)
+        and trap_status in _TRAP_STATUSES
+        and isinstance(structural_proof, str)
+        and structural_proof in _STRUCTURAL_PROOFS
+        and isinstance(proof_cutoff, str)
+        and proof_cutoff in _PROOF_CUTOFFS
+        and isinstance(refutation_status, str)
+        and refutation_status in _REFUTATION_STATUSES
+        and all(
+            field in candidate and _is_native_nonnegative_int(candidate[field])
+            for field in integer_fields
+        )
+        and isinstance(candidate.get("opponent_closure_considered"), bool)
+    )
+
+
+def _corridor_metrics_are_valid(metrics: dict[str, Any]) -> bool:
+    return (
+        _is_native_nonnegative_int(metrics.get("immediate_exits"))
+        and metrics["immediate_exits"] <= 3
+        and _is_native_nonnegative_int(metrics.get("forced_steps"))
+        and _is_native_nonnegative_int(metrics.get("reachable"))
+    )
+
 
 def _corridor_metrics_are_better(
     proposal: dict[str, Any], incumbent: dict[str, Any]
 ) -> bool:
     """Mirror the native corridor tuple without adding policy thresholds."""
-    keys = ("immediate_exits", "forced_steps", "reachable")
-    if any(
-        not isinstance(candidate.get(key), int) or isinstance(candidate.get(key), bool)
-        for candidate in (proposal, incumbent)
-        for key in keys
+    if not _corridor_metrics_are_valid(proposal) or not _corridor_metrics_are_valid(
+        incumbent
     ):
         return False
     if proposal["immediate_exits"] != incumbent["immediate_exits"]:
@@ -239,13 +333,15 @@ def _exact_search_records_are_equal(
         and proposal_outcome == incumbent_outcome
         and isinstance(proposal_distance, int)
         and not isinstance(proposal_distance, bool)
-        and proposal_distance >= 0
+        and 0 <= proposal_distance <= 65_535
         and isinstance(incumbent_distance, int)
         and not isinstance(incumbent_distance, bool)
-        and incumbent_distance >= 0
+        and 0 <= incumbent_distance <= 65_535
         and proposal_distance == incumbent_distance
         and "minimax_cause" in proposal
         and "minimax_cause" in incumbent
+        and _is_canonical_terminal_cause(proposal["minimax_cause"])
+        and _is_canonical_terminal_cause(incumbent["minimax_cause"])
         and proposal["minimax_cause"] == incumbent["minimax_cause"]
     )
 
@@ -254,11 +350,15 @@ def _root_structures_are_semantically_equal(
     proposal: dict[str, Any], incumbent: dict[str, Any]
 ) -> bool:
     """Mirror every field in native core_root_structure_semantically_equal."""
-    return all(
-        field in proposal
-        and field in incumbent
-        and proposal[field] == incumbent[field]
-        for field in _ROOT_STRUCTURE_SEMANTIC_FIELDS
+    return (
+        _root_structure_record_is_valid(proposal)
+        and _root_structure_record_is_valid(incumbent)
+        and all(
+            field in proposal
+            and field in incumbent
+            and proposal[field] == incumbent[field]
+            for field in _ROOT_STRUCTURE_SEMANTIC_FIELDS
+        )
     )
 
 
@@ -295,6 +395,8 @@ def _audit_corridor_override(
         return False, "applied_corridor_guard_decision_mismatch"
     if audit.get("comparison_ordering") != "equal":
         return False, "applied_corridor_guard_not_comparator_equal"
+    if audit.get("comparison_reason") != "not_compared":
+        return False, "applied_corridor_guard_comparison_reason_mismatch"
     if not selection_claims_override:
         return False, "applied_corridor_guard_selection_reason_mismatch"
     if not _corridor_audit_candidate_is_coherent(incumbent, candidates):

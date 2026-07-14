@@ -17,13 +17,22 @@ when all of these conditions hold:
   `trap_horizon`, `structural_proof`, `proof_cutoff`, `proof_horizon`,
   `structural_capacity`, `opponent_closure_considered`, `post_move_length`,
   `relaxed_static_capacity`, and `refutation_status`;
-- `CoreCompareRootCandidates` returns `EQUAL`; and
+- `CoreCompareRootCandidates` returns `EQUAL` with its serialized equal-result
+  reason `not_compared`; and
 - the proposal has strictly better board-derived corridor metrics, ordered by
   immediate exits descending, forced steps ascending, then reachable space
   descending.
 
 `INCOMPARABLE` is not `EQUAL`. Equal floating-point scores alone do not permit
 an override, including when their bounds or any structural field differ.
+Accepted audit values must also be representable native diagnostics: enum
+strings must come from the native serializers, structural integers must be
+nonnegative C `int` values, terminal distance must fit `uint16_t`, and terminal
+causes must be a canonical serializer-ordered list drawn from `wall`,
+`self_body`, `other_body`, `head_to_head`, `starvation`, `hazard`,
+`invalid_command`, and `opponent_eliminated`. Corridor metrics are nonnegative
+C `int` values, with immediate exits limited to the zero-to-three neighbors
+remaining after excluding the previous cell.
 
 ## Diagnostics and offline audit
 
