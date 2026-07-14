@@ -5943,43 +5943,135 @@ static void core_root_snapshot_finalize_source(
     }
 }
 
-static bool core_populate_corridor_guard_candidate(
+static void core_record_corridor_guard_candidate(
     CoreCorridorGuardCandidateAudit* audit,
-    const Board* board,
-    const char* snake_id,
     MoveDirection move,
-    const CoreRootIterationSnapshot* completed,
-    const CoreSearchStats* stats,
-    const CoreCorridorMoveMetrics* precomputed_metrics
+    const CoreSearchValue* value,
+    const CoreRootCandidateStats* stats,
+    const CoreCorridorMoveMetrics* metrics
+) {
+    memset(audit, 0, sizeof(*audit));
+    audit->move = move;
+    audit->corridor_metrics = *metrics;
+    audit->structural_proof = stats->structural_proof;
+    audit->relaxed_static_capacity = stats->relaxed_static_capacity;
+    audit->post_move_length = stats->post_move_length;
+    audit->minimax_value_valid = true;
+    audit->minimax_value = *value;
+    audit->valid = true;
+}
+
+static bool core_apply_corridor_guard_decision(
+    MoveDirection proposal_move,
+    const CoreSearchValue* proposal_value,
+    const CoreRootCandidateStats* proposal_stats,
+    const CoreCorridorMoveMetrics* proposal_metrics,
+    MoveDirection* incumbent_move,
+    CoreSearchValue* incumbent_value,
+    const CoreRootCandidateStats* incumbent_stats,
+    const CoreCorridorMoveMetrics* incumbent_metrics,
+    CoreSearchStats* stats
 ) {
     if (
-        audit == NULL || board == NULL || snake_id == NULL || completed == NULL ||
-        stats == NULL || !core_valid_move_direction(move)
+        proposal_value == NULL || proposal_stats == NULL || proposal_metrics == NULL ||
+        incumbent_move == NULL || incumbent_value == NULL || incumbent_stats == NULL ||
+        incumbent_metrics == NULL || stats == NULL ||
+        !core_valid_move_direction(proposal_move) ||
+        !core_valid_move_direction(*incumbent_move) ||
+        !proposal_metrics->valid || !incumbent_metrics->valid
     ) {
         return false;
     }
 
-    memset(audit, 0, sizeof(*audit));
-    audit->move = move;
-    audit->structural_proof = stats->root_candidates[move].structural_proof;
-    audit->relaxed_static_capacity = stats->root_candidates[move].relaxed_static_capacity;
-    audit->post_move_length = stats->root_candidates[move].post_move_length;
-    audit->minimax_value_valid = completed->root_value_valid[move];
-    if (audit->minimax_value_valid) {
-        audit->minimax_value = completed->root_values[move];
+    core_record_corridor_guard_candidate(
+        &stats->corridor_guard.incumbent,
+        *incumbent_move,
+        incumbent_value,
+        incumbent_stats,
+        incumbent_metrics
+    );
+    core_record_corridor_guard_candidate(
+        &stats->corridor_guard.proposal,
+        proposal_move,
+        proposal_value,
+        proposal_stats,
+        proposal_metrics
+    );
+    stats->corridor_guard.considered = true;
+    CoreRootComparison comparison = CoreCompareRootCandidates(
+        proposal_value, proposal_stats, incumbent_value, incumbent_stats
+    );
+    stats->corridor_guard.comparison_ordering = comparison.ordering;
+    stats->corridor_guard.comparison_reason = comparison.reason;
+
+    if (proposal_move == *incumbent_move) {
+        stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_SAME_AS_INCUMBENT;
+        return false;
     }
-    bool metrics_valid = false;
-    if (precomputed_metrics != NULL && precomputed_metrics->valid) {
-        audit->corridor_metrics = *precomputed_metrics;
-        metrics_valid = true;
-    } else {
-        metrics_valid = core_corridor_metrics_after_move(
-            board, snake_id, move, &audit->corridor_metrics
-        );
+
+    bool exact_tie_permitted =
+        proposal_value->bound == CORE_VALUE_BOUND_EXACT &&
+        incumbent_value->bound == CORE_VALUE_BOUND_EXACT &&
+        core_search_value_semantically_equal(proposal_value, incumbent_value) &&
+        comparison.ordering == CORE_ROOT_COMPARISON_EQUAL &&
+        core_corridor_metrics_are_better(proposal_metrics, incumbent_metrics);
+    stats->corridor_guard.exact_tie_permitted = exact_tie_permitted;
+    if (!exact_tie_permitted) {
+        stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_REJECTED_SEARCH_ORDER;
+        return false;
     }
-    audit->valid = audit->minimax_value_valid && metrics_valid;
-    return audit->valid;
+
+    *incumbent_move = proposal_move;
+    *incumbent_value = *proposal_value;
+    stats->move = proposal_move;
+    stats->score = proposal_value->score;
+    stats->value = *proposal_value;
+    stats->selection_reason = CORE_SELECTION_CORRIDOR_GUARD;
+    stats->root_comparison_reason = CORE_ROOT_COMPARISON_CORRIDOR_GUARD;
+    stats->corridor_guard.applied = true;
+    stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_APPLIED_EXACT_TIE;
+    return true;
 }
+
+#ifdef CORE_ROOT_SELECTION_TESTING
+bool CoreApplyCorridorGuardForTesting(
+    MoveDirection proposal_move,
+    CoreSearchValue proposal_value,
+    CoreRootCandidateStats proposal_stats,
+    CoreCorridorMetricsAudit proposal_metrics,
+    MoveDirection incumbent_move,
+    CoreSearchValue incumbent_value,
+    CoreRootCandidateStats incumbent_stats,
+    CoreCorridorMetricsAudit incumbent_metrics,
+    MoveDirection* out_move,
+    CoreSearchValue* out_value,
+    CoreSearchStats* out_stats
+) {
+    if (out_move == NULL || out_value == NULL || out_stats == NULL) {
+        return false;
+    }
+    CoreSearchStatsInit(out_stats);
+    out_stats->move = incumbent_move;
+    out_stats->score = incumbent_value.score;
+    out_stats->value = incumbent_value;
+    out_stats->selection_reason = CORE_SELECTION_MINIMAX;
+    out_stats->root_comparison_reason = CORE_ROOT_COMPARISON_NUMERIC_VALUE;
+    bool applied = core_apply_corridor_guard_decision(
+        proposal_move,
+        &proposal_value,
+        &proposal_stats,
+        &proposal_metrics,
+        &incumbent_move,
+        &incumbent_value,
+        &incumbent_stats,
+        &incumbent_metrics,
+        out_stats
+    );
+    *out_move = incumbent_move;
+    *out_value = incumbent_value;
+    return applied;
+}
+#endif
 
 #ifdef CORE_ROOT_SELECTION_TESTING
 bool CoreRootTimeoutSnapshotForTesting(
@@ -6323,6 +6415,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     }
     MoveDirection corridor_guard_move = MOVE_INVALID;
     CoreCorridorMoveMetrics corridor_guard_metrics = {0, 0, 0, 0};
+    CoreCorridorMoveMetrics completed_metrics = {0, 0, 0, 0};
     if (
         core_valid_move_direction(completed_best) &&
         core_best_root_corridor_proposal(
@@ -6336,62 +6429,21 @@ CoreStatus CoreMinimaxMoveWithStats(
             &corridor_guard_metrics,
             &corridor_guard_move
         ) &&
-        core_populate_corridor_guard_candidate(
-            &stats->corridor_guard.incumbent,
-            board,
-            snake_id,
-            completed_best,
-            &completed,
-            stats,
-            NULL
-        ) &&
-        core_populate_corridor_guard_candidate(
-            &stats->corridor_guard.proposal,
-            board,
-            snake_id,
-            corridor_guard_move,
-            &completed,
-            stats,
-            &corridor_guard_metrics
+        core_corridor_metrics_after_move(
+            board, snake_id, completed_best, &completed_metrics
         )
     ) {
-        stats->corridor_guard.considered = true;
-        CoreRootComparison comparison = CoreCompareRootCandidates(
+        (void)core_apply_corridor_guard_decision(
+            corridor_guard_move,
             &completed.root_values[corridor_guard_move],
             &stats->root_candidates[corridor_guard_move],
-            &completed.root_values[completed_best],
-            &stats->root_candidates[completed_best]
+            &corridor_guard_metrics,
+            &completed_best,
+            &completed_value,
+            &stats->root_candidates[completed_best],
+            &completed_metrics,
+            stats
         );
-        stats->corridor_guard.comparison_ordering = comparison.ordering;
-        stats->corridor_guard.comparison_reason = comparison.reason;
-
-        if (corridor_guard_move == completed_best) {
-            stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_SAME_AS_INCUMBENT;
-        } else {
-            CoreSearchValue corridor_guard_value = completed.root_values[corridor_guard_move];
-            bool exact_tie_permitted =
-                corridor_guard_value.bound == CORE_VALUE_BOUND_EXACT &&
-                completed_value.bound == CORE_VALUE_BOUND_EXACT &&
-                core_search_value_semantically_equal(&corridor_guard_value, &completed_value) &&
-                comparison.ordering == CORE_ROOT_COMPARISON_EQUAL &&
-                core_corridor_metrics_are_better(
-                    &stats->corridor_guard.proposal.corridor_metrics,
-                    &stats->corridor_guard.incumbent.corridor_metrics
-                );
-            stats->corridor_guard.exact_tie_permitted = exact_tie_permitted;
-            if (exact_tie_permitted) {
-                completed_best = corridor_guard_move;
-                completed_value = corridor_guard_value;
-                stats->score = completed_value.score;
-                stats->value = completed_value;
-                stats->selection_reason = CORE_SELECTION_CORRIDOR_GUARD;
-                stats->root_comparison_reason = CORE_ROOT_COMPARISON_CORRIDOR_GUARD;
-                stats->corridor_guard.applied = true;
-                stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_APPLIED_EXACT_TIE;
-            } else {
-                stats->corridor_guard.decision = CORE_CORRIDOR_GUARD_REJECTED_SEARCH_ORDER;
-            }
-        }
     }
     stats->move = completed_best;
     stats->elapsed_ms = core_elapsed_ms(start, end);

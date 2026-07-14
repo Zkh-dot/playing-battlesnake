@@ -261,3 +261,35 @@ def test_t187_does_not_treat_upper_bound_alternative_as_exact_tie() -> None:
     assert audit["applied"] is False
     assert audit["decision"] == "same_as_incumbent"
     assert result["move"] == "right"
+
+
+def test_corridor_guard_not_considered_has_stable_none_shape() -> None:
+    result = minimax_diagnostics(
+        _board_from_fixture(T424),
+        str(T424["snake_id"]),
+        time_budget_ms=60_000,
+        node_budget=1,
+    )
+    audit = result["corridor_guard"]
+
+    assert result["completed_depth"] == 0
+    assert audit["considered"] is False
+    assert audit["exact_tie_permitted"] is False
+    assert audit["applied"] is False
+    assert audit["comparison_ordering"] == "incomparable"
+    assert audit["comparison_reason"] == "not_compared"
+    assert audit["decision"] == "not_considered"
+    for candidate_name in ("incumbent", "proposal"):
+        candidate = audit[candidate_name]
+        assert candidate["move"] is None
+        assert candidate["structural_proof"] is None
+        assert candidate["relaxed_static_capacity"] is None
+        assert candidate["post_move_length"] is None
+        assert candidate["minimax_score"] is None
+        assert candidate["minimax_outcome"] is None
+        assert candidate["minimax_bound"] is None
+        assert candidate["corridor_metrics"] == {
+            "immediate_exits": None,
+            "forced_steps": None,
+            "reachable": None,
+        }
