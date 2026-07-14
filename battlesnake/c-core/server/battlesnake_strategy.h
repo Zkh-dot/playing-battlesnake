@@ -2,6 +2,8 @@
 
 #include "../datatypes/board.h"
 
+#include <stdbool.h>
+
 typedef struct {
     int default_time_budget_ms;
     int game_timeout_ms;
@@ -17,6 +19,12 @@ typedef enum {
 
 BsStrategyConfig BsStrategyConfigDefault(void);
 int BsStrategyEffectiveBudgetMs(const BsStrategyConfig* config);
+bool BsStrategyHasSearchWindow(const BsStrategyConfig* config, int elapsed_ms);
+BsStrategyStatus BsChooseFallbackMove(
+    const Board* board,
+    const char* snake_id,
+    MoveDirection* out_move
+);
 BsStrategyStatus BsChooseMove(
     const Board* board,
     const char* snake_id,

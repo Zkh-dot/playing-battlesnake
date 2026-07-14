@@ -3,11 +3,13 @@
 #include "battlesnake_json.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
+#include <time.h>
 
 typedef struct {
     const char* start;
@@ -144,6 +146,7 @@ static BsHttpResult bs_write_response(
     char* response,
     size_t response_capacity
 ) {
+    BsHttpResult result = {0};
     if (version == 0) {
         version = "HTTP/1.1";
     }
@@ -151,7 +154,8 @@ static BsHttpResult bs_write_response(
         if (response != 0 && response_capacity > 0) {
             response[0] = '\0';
         }
-        return (BsHttpResult){500, 0};
+        result.status_code = 500;
+        return result;
     }
 
     size_t body_len = strlen(body);
@@ -172,10 +176,49 @@ static BsHttpResult bs_write_response(
     );
     if (written < 0 || (size_t)written >= response_capacity) {
         response[0] = '\0';
-        return (BsHttpResult){500, 0};
+        result.status_code = 500;
+        return result;
     }
 
-    return (BsHttpResult){status_code, (size_t)written};
+    result.status_code = status_code;
+    result.response_len = (size_t)written;
+    return result;
+}
+
+static int bs_elapsed_ms_ceil(struct timespec start, struct timespec end) {
+    int64_t seconds = (int64_t)end.tv_sec - (int64_t)start.tv_sec;
+    int64_t nanoseconds = (int64_t)end.tv_nsec - (int64_t)start.tv_nsec;
+    if (nanoseconds < 0) {
+        seconds--;
+        nanoseconds += 1000000000LL;
+    }
+    if (seconds < 0) {
+        return 0;
+    }
+    if (seconds > INT_MAX / 1000) {
+        return INT_MAX;
+    }
+
+    int64_t elapsed_ms = seconds * 1000 + (nanoseconds + 999999LL) / 1000000LL;
+    return elapsed_ms > INT_MAX ? INT_MAX : (int)elapsed_ms;
+}
+
+static int bs_total_request_age_ms(int elapsed_before_handle_ms, int parse_elapsed_ms) {
+    int64_t total = (int64_t)elapsed_before_handle_ms + (int64_t)parse_elapsed_ms;
+    return total > INT_MAX ? INT_MAX : (int)total;
+}
+
+static BsHttpResult bs_with_move_metadata(
+    BsHttpResult result,
+    int game_timeout_ms,
+    int elapsed_before_search_ms,
+    bool fallback_used
+) {
+    result.is_move = true;
+    result.fallback_used = fallback_used;
+    result.game_timeout_ms = game_timeout_ms;
+    result.elapsed_before_search_ms = elapsed_before_search_ms;
+    return result;
 }
 
 static ssize_t bs_find_crlf(const char* data, size_t len, size_t start) {
@@ -408,9 +451,31 @@ BsHttpResult BsHandleHttpRequest(
     char* response,
     size_t response_capacity
 ) {
+    return BsHandleHttpRequestTimed(
+        request,
+        request_len,
+        arena,
+        strategy_config,
+        0,
+        response,
+        response_capacity
+    );
+}
+
+BsHttpResult BsHandleHttpRequestTimed(
+    const char* request,
+    size_t request_len,
+    BsArena* arena,
+    const BsStrategyConfig* strategy_config,
+    const BsHttpRequestContext* request_context,
+    char* response,
+    size_t response_capacity
+) {
     static const char* info_body =
         "{\"apiversion\":\"1\",\"author\":\"codex\",\"color\":\"#2563eb\",\"head\":\"default\",\"tail\":\"default\",\"version\":\"0.1.0-native\"}";
     static const char* empty_body = "{}";
+    struct timespec handle_started_at;
+    bool have_start_time = clock_gettime(CLOCK_MONOTONIC, &handle_started_at) == 0;
 
     if (request == 0 || arena == 0) {
         return bs_write_response("HTTP/1.1", 500, empty_body, response, response_capacity);
@@ -475,6 +540,19 @@ BsHttpResult BsHandleHttpRequest(
         return bs_write_response(parsed.version, 500, empty_body, response, response_capacity);
     }
 
+    struct timespec parsing_finished_at;
+    int parse_elapsed_ms = 0;
+    if (have_start_time && clock_gettime(CLOCK_MONOTONIC, &parsing_finished_at) == 0) {
+        parse_elapsed_ms = bs_elapsed_ms_ceil(handle_started_at, parsing_finished_at);
+    }
+    int elapsed_before_handle_ms = request_context != 0
+        ? request_context->elapsed_before_handle_ms
+        : 0;
+    int total_request_age_ms = bs_total_request_age_ms(
+        elapsed_before_handle_ms,
+        parse_elapsed_ms
+    );
+
     if (route == BS_HTTP_ROUTE_START || route == BS_HTTP_ROUTE_END) {
         BsGameRequestFree(&game_request);
         return bs_write_response(parsed.version, 200, empty_body, response, response_capacity);
@@ -484,24 +562,50 @@ BsHttpResult BsHandleHttpRequest(
     if (strategy_config != 0) {
         request_strategy_config = *strategy_config;
     }
-    request_strategy_config.game_timeout_ms = game_request.timeout_ms;
+    int game_timeout_ms = game_request.timeout_ms;
+    request_strategy_config.game_timeout_ms = game_timeout_ms;
 
     MoveDirection move = MOVE_INVALID;
-    BsStrategyStatus strategy_status = BsChooseMove(
-        game_request.board,
-        game_request.you_id,
-        &request_strategy_config,
-        &move
-    );
+    BsStrategyStatus strategy_status;
+    if (!BsStrategyHasSearchWindow(&request_strategy_config, total_request_age_ms)) {
+        strategy_status = BsChooseFallbackMove(game_request.board, game_request.you_id, &move);
+    } else {
+        int64_t remaining_timeout_ms =
+            (int64_t)game_timeout_ms - (int64_t)total_request_age_ms;
+        if (remaining_timeout_ms > INT_MAX) {
+            request_strategy_config.game_timeout_ms = INT_MAX;
+        } else {
+            request_strategy_config.game_timeout_ms = remaining_timeout_ms > 1
+                ? (int)remaining_timeout_ms
+                : 1;
+        }
+        strategy_status = BsChooseMove(
+            game_request.board,
+            game_request.you_id,
+            &request_strategy_config,
+            &move
+        );
+    }
+    bool fallback_used = strategy_status == BS_STRATEGY_FALLBACK_USED;
     if (strategy_status == BS_STRATEGY_ERROR) {
         BsGameRequestFree(&game_request);
-        return bs_write_response(parsed.version, 500, empty_body, response, response_capacity);
+        return bs_with_move_metadata(
+            bs_write_response(parsed.version, 500, empty_body, response, response_capacity),
+            game_timeout_ms,
+            total_request_age_ms,
+            fallback_used
+        );
     }
 
     const char* move_text = MoveDirectionToString(move);
     if (move_text == 0 || move_text[0] == '\0') {
         BsGameRequestFree(&game_request);
-        return bs_write_response(parsed.version, 500, empty_body, response, response_capacity);
+        return bs_with_move_metadata(
+            bs_write_response(parsed.version, 500, empty_body, response, response_capacity),
+            game_timeout_ms,
+            total_request_age_ms,
+            fallback_used
+        );
     }
 
     /* Longest move payload is {"move":"right"} (16 bytes incl. NUL); the buffer
@@ -512,8 +616,18 @@ BsHttpResult BsHandleHttpRequest(
     int body_written = snprintf(body, sizeof(body), "{\"move\":\"%s\"}", move_text);
     BsGameRequestFree(&game_request);
     if (body_written < 0 || (size_t)body_written >= sizeof(body)) {
-        return bs_write_response(parsed.version, 500, empty_body, response, response_capacity);
+        return bs_with_move_metadata(
+            bs_write_response(parsed.version, 500, empty_body, response, response_capacity),
+            game_timeout_ms,
+            total_request_age_ms,
+            fallback_used
+        );
     }
 
-    return bs_write_response(parsed.version, 200, body, response, response_capacity);
+    return bs_with_move_metadata(
+        bs_write_response(parsed.version, 200, body, response, response_capacity),
+        game_timeout_ms,
+        total_request_age_ms,
+        fallback_used
+    );
 }
