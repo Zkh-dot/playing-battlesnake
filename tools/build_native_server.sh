@@ -3,11 +3,17 @@ set -euo pipefail
 
 mkdir -p build
 
-gcc \
+extra_cflags=()
+if [[ -n ${CFLAGS:-} ]]; then
+  read -r -a extra_cflags <<< "${CFLAGS}"
+fi
+
+"${CC:-gcc}" \
   -std=c2x \
   -D_POSIX_C_SOURCE=200809L \
   -O3 \
   -DNDEBUG \
+  "${extra_cflags[@]}" \
   -Ibattlesnake/c-core \
   battlesnake/c-core/datatypes/coord.c \
   battlesnake/c-core/datatypes/snake.c \
@@ -24,6 +30,8 @@ gcc \
   battlesnake/c-core/server/battlesnake_json.c \
   battlesnake/c-core/server/battlesnake_strategy.c \
   battlesnake/c-core/server/battlesnake_http.c \
+  battlesnake/c-core/server/connection_queue.c \
   battlesnake/c-core/server/server_main.c \
   -lm \
+  -pthread \
   -o build/battlesnake-server

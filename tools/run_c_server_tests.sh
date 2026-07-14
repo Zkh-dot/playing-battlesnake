@@ -3,14 +3,27 @@ set -euo pipefail
 
 mkdir -p build/tests
 
-"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -Ibattlesnake/c-core \
+extra_cflags=()
+if [[ -n ${CFLAGS:-} ]]; then
+  read -r -a extra_cflags <<< "${CFLAGS}"
+fi
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
+  tests/c/test_connection_queue.c \
+  battlesnake/c-core/server/connection_queue.c \
+  -pthread \
+  -o build/tests/test_connection_queue
+
+build/tests/test_connection_queue
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
   tests/c/test_arena.c \
   battlesnake/c-core/server/arena.c \
   -o build/tests/test_arena
 
 build/tests/test_arena
 
-"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -Ibattlesnake/c-core \
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
   tests/c/test_battlesnake_json.c \
   battlesnake/c-core/server/arena.c \
   battlesnake/c-core/server/battlesnake_json.c \
@@ -21,7 +34,7 @@ build/tests/test_arena
 
 build/tests/test_battlesnake_json
 
-"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -DCORE_ROOT_SELECTION_TESTING -Ibattlesnake/c-core \
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -DCORE_ROOT_SELECTION_TESTING "${extra_cflags[@]}" -Ibattlesnake/c-core \
   tests/c/test_battlesnake_strategy.c \
   battlesnake/c-core/server/battlesnake_strategy.c \
   battlesnake/c-core/datatypes/coord.c \
@@ -40,7 +53,7 @@ build/tests/test_battlesnake_json
 
 build/tests/test_battlesnake_strategy
 
-"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L -Ibattlesnake/c-core \
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
   tests/c/test_battlesnake_http.c \
   battlesnake/c-core/server/arena.c \
   battlesnake/c-core/server/battlesnake_json.c \
