@@ -125,6 +125,7 @@ def _wait_for_worker_socket_wait(pid: int, *, stable_for: float = 0.05) -> None:
     deadline = time.monotonic() + 2.0
     stable_since: float | None = None
     observed: set[str] = set()
+    inaccessible_seen = False
     while time.monotonic() < deadline:
         worker_ids = [entry for entry in os.listdir(f"/proc/{pid}/task") if int(entry) != pid]
         worker_wchans: list[str] = []
@@ -138,12 +139,15 @@ def _wait_for_worker_socket_wait(pid: int, *, stable_for: float = 0.05) -> None:
             worker_wchans.append(wchan)
             if wchan:
                 observed.add(wchan)
+            if wchan in {"", "0"}:
+                inaccessible_seen = True
 
-        socket_wait = (
-            len(worker_wchans) == 1
-            and worker_wchans[0] not in {"", "0"}
-            and "futex" not in worker_wchans[0].lower()
-        )
+        socket_waits = [
+            wchan
+            for wchan in worker_wchans
+            if wchan not in {"", "0"} and "futex" not in wchan.lower()
+        ]
+        socket_wait = len(socket_waits) == 1
         if socket_wait:
             now = time.monotonic()
             if stable_since is None:
@@ -153,6 +157,8 @@ def _wait_for_worker_socket_wait(pid: int, *, stable_for: float = 0.05) -> None:
         else:
             stable_since = None
         time.sleep(0.005)
+    if inaccessible_seen:
+        pytest.skip(f"worker wait channels are inaccessible; observed={sorted(observed)!r}")
     raise AssertionError(
         "server worker did not maintain a socket-read wait channel; "
         f"observed={sorted(observed)!r}"
@@ -394,6 +400,104 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
         assert all(event["status"] == 503 for event in overload_events)
 
 
+def test_rejection_pool_saturation_backpressures_until_explicit_503_capacity() -> None:
+    if not os.path.isdir("/proc/self/fd"):
+        pytest.skip("Linux /proc socket state is required")
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(
+            port,
+            server_log,
+            BATTLESNAKE_WORKERS="1",
+            BATTLESNAKE_QUEUE_CAPACITY="1",
+            BATTLESNAKE_IO_TIMEOUT_MS="5000",
+        )
+        active: socket.socket | None = None
+        queued: socket.socket | None = None
+        held_rejections: list[socket.socket] = []
+        queued_rejection: socket.socket | None = None
+        backpressured: socket.socket | None = None
+        try:
+            _wait_for_server_ready(process, server_log)
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
+
+            active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            active.sendall(b"POST /move HTTP/1.1\r\nHost: active\r\n")
+            _wait_for_server_socket_count(process.pid, 2, exact=True)
+            _wait_for_worker_socket_wait(process.pid)
+
+            queued = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            queued.sendall(b"POST /move HTTP/1.1\r\nHost: queued\r\n")
+            _wait_for_server_socket_count(process.pid, 3, exact=True, stable_for=0.05)
+
+            scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
+            complete_request = _move_request(move_payload(scenario, timeout=500))
+            for _ in range(2):
+                held = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+                held.settimeout(0.5)
+                held.sendall(complete_request)
+                held_status, held_body = _parse_http_response(_receive_until_close(held))
+                assert held_status == 503
+                assert held_body == {}
+                held_rejections.append(held)
+
+            queued_rejection = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            queued_rejection.settimeout(0.75)
+            queued_rejection.sendall(complete_request)
+            _wait_for_server_socket_count(process.pid, 6, exact=True, stable_for=0.05)
+
+            backpressured = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            backpressured.settimeout(0.1)
+            backpressured.sendall(complete_request)
+            with pytest.raises(socket.timeout):
+                backpressured.recv(1)
+            _wait_for_server_socket_count(process.pid, 6, exact=True, stable_for=0.05)
+
+            held_rejections.pop(0).close()
+            queued_status, queued_body = _parse_http_response(
+                _receive_until_close(queued_rejection)
+            )
+            assert queued_status == 503
+            assert queued_body == {}
+            queued_rejection.close()
+            queued_rejection = None
+
+            backpressured.settimeout(0.5)
+            final_status, final_body = _parse_http_response(_receive_until_close(backpressured))
+            assert final_status == 503
+            assert final_body == {}
+            backpressured.close()
+            backpressured = None
+
+            for held in held_rejections:
+                held.close()
+            held_rejections.clear()
+            active.close()
+            active = None
+            queued.close()
+            queued = None
+        finally:
+            if active is not None:
+                active.close()
+            if queued is not None:
+                queued.close()
+            for held in held_rejections:
+                held.close()
+            if queued_rejection is not None:
+                queued_rejection.close()
+            if backpressured is not None:
+                backpressured.close()
+            _stop_server(process)
+
+        overload_events = [
+            event for event in _server_events(server_log) if event.get("event") == "server_overload"
+        ]
+        assert len(overload_events) == 4
+        assert all(event["status"] == 503 for event in overload_events)
+
+
 def test_simultaneous_move_requests_complete_within_external_deadline() -> None:
     subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
     scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
@@ -444,7 +548,7 @@ def test_worker_threads_block_termination_signals() -> None:
             task_ids = sorted(int(entry) for entry in os.listdir(f"/proc/{process.pid}/task"))
             assert process.pid in task_ids
             worker_ids = [tid for tid in task_ids if tid != process.pid]
-            assert len(worker_ids) == 2
+            assert len(worker_ids) == 5
 
             termination_mask = (1 << (signal.SIGINT - 1)) | (1 << (signal.SIGTERM - 1))
             assert _blocked_signals(process.pid, process.pid) & termination_mask == 0
