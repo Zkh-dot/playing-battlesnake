@@ -208,23 +208,35 @@ def test_idle_server_exits_promptly_on_sigterm() -> None:
                 _stop_server(process)
 
 
-def test_recognized_malformed_move_emits_one_telemetry_line() -> None:
+@pytest.mark.parametrize(
+    "raw_request",
+    [
+        (
+            b"POST /move HTTP/1.1\r\n"
+            b"Host: 127.0.0.1\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 1\r\n\r\n"
+            b"{"
+        ),
+        (
+            b"POST /move HTTP/1.1\r\n"
+            b"Host 127.0.0.1\r\n"
+            b"Content-Length: 2\r\n\r\n"
+            b"{}"
+        ),
+    ],
+    ids=["malformed-json", "malformed-header"],
+)
+def test_recognized_malformed_move_emits_one_telemetry_line(raw_request: bytes) -> None:
     subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
     port = _free_port()
-    request = (
-        b"POST /move HTTP/1.1\r\n"
-        b"Host: 127.0.0.1\r\n"
-        b"Content-Type: application/json\r\n"
-        b"Content-Length: 1\r\n\r\n"
-        b"{"
-    )
     with tempfile.TemporaryFile(mode="w+") as server_log:
         process = _start_server(port, server_log)
         try:
             _wait_for_port(port)
             with socket.create_connection(("127.0.0.1", port), timeout=0.5) as sock:
                 sock.settimeout(1.0)
-                sock.sendall(request)
+                sock.sendall(raw_request)
                 response = _receive_until_close(sock)
             assert response.startswith(b"HTTP/1.1 400 Bad Request\r\n")
         finally:

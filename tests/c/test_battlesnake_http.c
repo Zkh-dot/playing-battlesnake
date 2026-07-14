@@ -525,6 +525,8 @@ static void test_malformed_header_syntax_returns_400(void) {
     assert(BsArenaInit(&arena, 65536));
     BsHttpResult result = BsHandleHttpRequest(request, strlen(request), &arena, &config, response, sizeof(response));
     assert(result.status_code == 400);
+    assert(result.is_move);
+    assert(result.game_timeout_ms == 0);
     assert(strstr(response, "HTTP/1.1 400 Bad Request") != 0);
     BsArenaFree(&arena);
 }

@@ -506,7 +506,10 @@ BsHttpResult BsHandleHttpRequestTimed(
         );
     }
     if (parsed.malformed) {
-        return bs_write_response(parsed.version, 400, empty_body, response, response_capacity);
+        return bs_with_route_metadata(
+            bs_write_response(parsed.version, 400, empty_body, response, response_capacity),
+            route
+        );
     }
     if (route == BS_HTTP_ROUTE_UNKNOWN) {
         return bs_write_response(parsed.version, 404, empty_body, response, response_capacity);
