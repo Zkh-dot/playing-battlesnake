@@ -336,6 +336,22 @@ def test_strict_numeric_interval_dominance_after_overlap_is_justified() -> None:
     assert audit.justification_layers == ("numeric_interval",)
 
 
+@pytest.mark.parametrize("bound", ["lower", "upper"])
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_bound_has_no_numeric_interval(
+    bound: str, score: float
+) -> None:
+    candidate = _candidate(
+        capacity=12,
+        length=8,
+        proof="safe",
+        minimax_bound=bound,
+        minimax_score=score,
+    )
+
+    assert checker._numeric_interval(candidate) is None
+
+
 def test_unresolved_heuristic_score_cannot_bypass_safe_structural_proof() -> None:
     diagnostics = {
         "move": "left",

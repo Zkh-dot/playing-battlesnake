@@ -632,6 +632,134 @@ static void test_exceptional_and_mixed_strict_root_values_are_truthful(void) {
     BoardFree(board);
 }
 
+static void assert_nonfinite_frontier_uses_deterministic_fallback(
+    Board* board,
+    const CoreSearchValue values[4],
+    const CoreRootCandidateStats candidates[4],
+    const MoveDirection orders[][2],
+    uint8_t mask
+) {
+    CoreRootComparison typed = CoreCompareRootCandidates(
+        &values[MOVE_UP],
+        &candidates[MOVE_UP],
+        &values[MOVE_LEFT],
+        &candidates[MOVE_LEFT]
+    );
+    assert(typed.ordering == CORE_ROOT_COMPARISON_INCOMPARABLE);
+    CoreRootComparison reverse = CoreCompareRootCandidates(
+        &values[MOVE_LEFT],
+        &candidates[MOVE_LEFT],
+        &values[MOVE_UP],
+        &candidates[MOVE_UP]
+    );
+    assert(reverse.ordering == CORE_ROOT_COMPARISON_INCOMPARABLE);
+    for (size_t order_index = 0; order_index < 2; order_index++) {
+        MoveDirection expected_move = MOVE_INVALID;
+        CoreRootComparisonReason expected_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+        for (int repeat = 0; repeat < 2; repeat++) {
+            MoveDirection selected = MOVE_INVALID;
+            CoreSearchValue selected_value;
+            CoreRootComparisonReason reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+            assert(CoreSelectRootCandidateForTesting(
+                board,
+                "me",
+                CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY,
+                orders[order_index],
+                2,
+                mask,
+                values,
+                candidates,
+                MOVE_INVALID,
+                &selected,
+                &selected_value,
+                &reason
+            ));
+            assert(selected == MOVE_UP || selected == MOVE_LEFT);
+            assert(reason != CORE_ROOT_COMPARISON_SEARCH_BOUND);
+            assert(reason != CORE_ROOT_COMPARISON_HEURISTIC_VALUE);
+            assert(reason != CORE_ROOT_COMPARISON_NUMERIC_VALUE);
+            if (repeat == 0) {
+                expected_move = selected;
+                expected_reason = reason;
+            } else {
+                assert(selected == expected_move);
+                assert(reason == expected_reason);
+            }
+        }
+    }
+}
+
+static void test_nonfinite_bound_frontiers_do_not_claim_numeric_dominance(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord me_body[] = {{3, 3}, {3, 2}, {3, 1}};
+    Coord you_body[] = {{6, 6}, {6, 5}, {6, 4}};
+    Snake me = make_snake("me", me_body, 3, 90);
+    Snake you = make_snake("you", you_body, 3, 90);
+    CoreSearchValue values[4];
+    CoreRootCandidateStats candidates[4];
+    const CoreValueBound bounds[] = {CORE_VALUE_BOUND_LOWER, CORE_VALUE_BOUND_UPPER};
+    const double exceptional[] = {NAN, INFINITY, -INFINITY};
+    const MoveDirection orders[][2] = {{MOVE_UP, MOVE_LEFT}, {MOVE_LEFT, MOVE_UP}};
+    const uint8_t mask = (uint8_t)((1u << MOVE_UP) | (1u << MOVE_LEFT));
+
+    memset(values, 0, sizeof(values));
+    memset(candidates, 0, sizeof(candidates));
+    for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+        candidates[move] = root_test_stats(CORE_STRUCTURAL_PROOF_SAFE, 40, 3);
+    }
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+
+    for (size_t bound_index = 0;
+         bound_index < sizeof(bounds) / sizeof(bounds[0]);
+         bound_index++) {
+        for (size_t value_index = 0;
+             value_index < sizeof(exceptional) / sizeof(exceptional[0]);
+             value_index++) {
+            values[MOVE_UP] = root_test_value(
+                CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, 1.0, 0
+            );
+            values[MOVE_LEFT] = root_test_value(
+                CORE_OUTCOME_UNRESOLVED,
+                bounds[bound_index],
+                exceptional[value_index],
+                0
+            );
+            assert_nonfinite_frontier_uses_deterministic_fallback(
+                board, values, candidates, orders, mask
+            );
+        }
+    }
+
+    for (size_t lower_index = 0;
+         lower_index < sizeof(exceptional) / sizeof(exceptional[0]);
+         lower_index++) {
+        for (size_t upper_index = 0;
+             upper_index < sizeof(exceptional) / sizeof(exceptional[0]);
+             upper_index++) {
+            values[MOVE_UP] = root_test_value(
+                CORE_OUTCOME_UNRESOLVED,
+                CORE_VALUE_BOUND_LOWER,
+                exceptional[lower_index],
+                0
+            );
+            values[MOVE_LEFT] = root_test_value(
+                CORE_OUTCOME_UNRESOLVED,
+                CORE_VALUE_BOUND_UPPER,
+                exceptional[upper_index],
+                0
+            );
+            assert_nonfinite_frontier_uses_deterministic_fallback(
+                board, values, candidates, orders, mask
+            );
+        }
+    }
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
 static void test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial(void) {
     CoreSearchValue completed = root_test_value(
         CORE_OUTCOME_UNRESOLVED,
@@ -1745,6 +1873,7 @@ int main(void) {
 #ifdef CORE_ROOT_SELECTION_TESTING
     test_partial_root_frontier_is_permutation_invariant_and_coherent();
     test_exceptional_and_mixed_strict_root_values_are_truthful();
+    test_nonfinite_bound_frontiers_do_not_claim_numeric_dominance();
     test_timeout_snapshot_preserves_complete_or_adopts_coherent_partial();
 #endif
     test_root_comparison_orders_exact_outcomes_before_structure();

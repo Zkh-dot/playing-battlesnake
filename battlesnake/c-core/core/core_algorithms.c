@@ -4695,13 +4695,17 @@ static uint8_t core_keep_longest_exact_forced_losses(
     return active_mask;
 }
 
-static void core_numeric_interval(
+static bool core_numeric_interval(
     const CoreSearchValue* value,
     double* out_lower,
     double* out_upper
 ) {
+    if (!isfinite(value->score)) {
+        return false;
+    }
     *out_lower = value->bound == CORE_VALUE_BOUND_UPPER ? -DBL_MAX : value->score;
     *out_upper = value->bound == CORE_VALUE_BOUND_LOWER ? DBL_MAX : value->score;
+    return true;
 }
 
 static uint8_t core_remove_numerically_dominated_roots(
@@ -4715,7 +4719,7 @@ static uint8_t core_remove_numerically_dominated_roots(
         }
         double incumbent_lower = 0.0;
         double incumbent_upper = 0.0;
-        core_numeric_interval(
+        bool incumbent_interval_valid = core_numeric_interval(
             &context->root_move_values[incumbent],
             &incumbent_lower,
             &incumbent_upper
@@ -4742,13 +4746,18 @@ static uint8_t core_remove_numerically_dominated_roots(
                     continue;
                 }
             }
+            if (!incumbent_interval_valid) {
+                continue;
+            }
             double candidate_lower = 0.0;
             double candidate_upper = 0.0;
-            core_numeric_interval(
+            if (!core_numeric_interval(
                 &context->root_move_values[candidate],
                 &candidate_lower,
                 &candidate_upper
-            );
+            )) {
+                continue;
+            }
             if (candidate_lower > incumbent_upper) {
                 dominated_mask |= (uint8_t)(1u << incumbent);
                 break;
