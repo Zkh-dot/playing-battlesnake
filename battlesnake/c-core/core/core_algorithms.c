@@ -4493,7 +4493,7 @@ static bool core_best_root_corridor_proposal(
         return false;
     }
 
-    CoreCorridorMoveMetrics best_metrics = {0, 0, 0};
+    CoreCorridorMoveMetrics best_metrics = {0};
     MoveDirection best_move = MOVE_INVALID;
     bool has_best = false;
     for (int i = 0; i < move_count; i++) {
@@ -4976,7 +4976,7 @@ static uint8_t core_keep_best_terminal_corridor_roots(
     uint8_t active_mask
 ) {
     CoreCorridorMoveMetrics metrics[4];
-    CoreCorridorMoveMetrics best = {0, 0, 0};
+    CoreCorridorMoveMetrics best = {0};
     bool has_best = false;
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
         if ((active_mask & (1u << move)) == 0) {
