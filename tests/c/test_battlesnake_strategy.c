@@ -1229,10 +1229,26 @@ static void test_root_comparison_handles_non_finite_heuristics_conservatively(vo
     assert_root_comparison(
         root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, INFINITY, 0),
         structure,
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, INFINITY, 0),
+        structure,
+        CORE_ROOT_COMPARISON_EQUAL,
+        CORE_ROOT_COMPARISON_NOT_COMPARED
+    );
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, -INFINITY, 0),
+        structure,
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, -INFINITY, 0),
+        structure,
+        CORE_ROOT_COMPARISON_EQUAL,
+        CORE_ROOT_COMPARISON_NOT_COMPARED
+    );
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, INFINITY, 0),
+        structure,
         root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, -INFINITY, 0),
         structure,
         CORE_ROOT_COMPARISON_INCOMPARABLE,
-        CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+        CORE_ROOT_COMPARISON_NOT_COMPARED
     );
     assert_root_comparison(
         root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, NAN, 0),
@@ -1240,7 +1256,23 @@ static void test_root_comparison_handles_non_finite_heuristics_conservatively(vo
         root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, NAN, 0),
         structure,
         CORE_ROOT_COMPARISON_INCOMPARABLE,
-        CORE_ROOT_COMPARISON_HEURISTIC_VALUE
+        CORE_ROOT_COMPARISON_NOT_COMPARED
+    );
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, INFINITY, 0),
+        structure,
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, NAN, 0),
+        structure,
+        CORE_ROOT_COMPARISON_INCOMPARABLE,
+        CORE_ROOT_COMPARISON_NOT_COMPARED
+    );
+    assert_root_comparison(
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, -INFINITY, 0),
+        structure,
+        root_test_value(CORE_OUTCOME_UNRESOLVED, CORE_VALUE_BOUND_EXACT, NAN, 0),
+        structure,
+        CORE_ROOT_COMPARISON_INCOMPARABLE,
+        CORE_ROOT_COMPARISON_NOT_COMPARED
     );
 }
 

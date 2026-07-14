@@ -1672,7 +1672,10 @@ CoreRootComparison CoreCompareRootCandidates(
             candidate_value->score,
             incumbent_value->score
         );
-        if (score_preference != CORE_ROOT_COMPARISON_EQUAL) {
+        if (
+            score_preference == CORE_ROOT_COMPARISON_CANDIDATE ||
+            score_preference == CORE_ROOT_COMPARISON_INCUMBENT
+        ) {
             return core_root_comparison(
                 score_preference,
                 CORE_ROOT_COMPARISON_HEURISTIC_VALUE
