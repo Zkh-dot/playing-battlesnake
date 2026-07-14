@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -91,6 +92,24 @@ def _wait_for_server_socket_count(pid: int, expected: int, *, exact: bool = Fals
     raise AssertionError(f"server did not reach {expected} open sockets")
 
 
+def _wait_for_worker_socket_io(pid: int) -> None:
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        for entry in os.listdir(f"/proc/{pid}/task"):
+            if int(entry) == pid:
+                continue
+            try:
+                syscall = Path(f"/proc/{pid}/task/{entry}/syscall").read_text(encoding="utf-8")
+                first_argument = int(syscall.split()[1], 0)
+                target = os.readlink(f"/proc/{pid}/fd/{first_argument}")
+            except (IndexError, OSError, ValueError):
+                continue
+            if target.startswith("socket:"):
+                return
+        time.sleep(0.005)
+    raise AssertionError("server worker did not block reading the active connection")
+
+
 def _receive_until_close(sock: socket.socket) -> bytes:
     chunks: list[bytes] = []
     while True:
@@ -98,6 +117,28 @@ def _receive_until_close(sock: socket.socket) -> bytes:
         if not chunk:
             return b"".join(chunks)
         chunks.append(chunk)
+
+
+def _parse_http_response(response: bytes) -> tuple[int, dict[str, str]]:
+    header, response_body = response.split(b"\r\n\r\n", 1)
+    status = int(header.split(b" ", 2)[1])
+    return status, json.loads(response_body)
+
+
+def _send_request(port: int, request: bytes, *, timeout: float) -> tuple[int, dict[str, str], float]:
+    started = time.monotonic()
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        sock.sendall(request)
+        response = _receive_until_close(sock)
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    status, body = _parse_http_response(response)
+    return status, body, elapsed_ms
+
+
+def _server_events(server_log: object) -> list[dict[str, object]]:
+    server_log.seek(0)
+    return [json.loads(line) for line in server_log if line.startswith("{")]
 
 
 def _move_request(body: str) -> bytes:
@@ -125,9 +166,173 @@ def _simultaneous_post(port: int, request: bytes, barrier: threading.Barrier) ->
             chunks.append(chunk)
         elapsed_ms = (time.monotonic() - started) * 1000.0
 
-    header, response_body = b"".join(chunks).split(b"\r\n\r\n", 1)
-    status = int(header.split(b" ", 2)[1])
-    return status, json.loads(response_body), elapsed_ms
+    status, body = _parse_http_response(b"".join(chunks))
+    return status, body, elapsed_ms
+
+
+def _next_head(head: dict[str, int], move: str) -> tuple[int, int]:
+    dx, dy = {
+        "up": (0, 1),
+        "down": (0, -1),
+        "left": (-1, 0),
+        "right": (1, 0),
+    }[move]
+    return head["x"] + dx, head["y"] + dy
+
+
+def test_timeout_replay_positions_return_expected_safe_move_over_production_http() -> None:
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    fixture_path = Path(__file__).parent / "fixtures" / "issue_45_timeout_replay_positions.json"
+    positions = json.loads(fixture_path.read_text(encoding="utf-8"))
+    port = _free_port()
+
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(port, server_log)
+        try:
+            _wait_for_port(port)
+            for position in positions:
+                game_turn = f"{position['game_id']} turn {position['turn']}"
+                payload = position["payload"]
+                request = _move_request(json.dumps(payload, separators=(",", ":")))
+                status, body, elapsed_ms = _send_request(port, request, timeout=0.75)
+
+                assert status == 200, game_turn
+                assert body["move"] == position["expected_move"], game_turn
+                assert body["move"] != position["previous_direction"], game_turn
+                next_x, next_y = _next_head(payload["you"]["head"], body["move"])
+                assert 0 <= next_x < payload["board"]["width"], game_turn
+                assert 0 <= next_y < payload["board"]["height"], game_turn
+                assert elapsed_ms < payload["game"]["timeout"], game_turn
+        finally:
+            _stop_server(process)
+
+
+def test_queued_move_uses_legal_fallback_with_queue_wait_accounted() -> None:
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
+    request = _move_request(move_payload(scenario, timeout=500))
+    port = _free_port()
+    barrier = threading.Barrier(2)
+
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(
+            port,
+            server_log,
+            BATTLESNAKE_WORKERS="1",
+            BATTLESNAKE_QUEUE_CAPACITY="2",
+            BATTLESNAKE_SEARCH_BUDGET_MS="400",
+        )
+        try:
+            _wait_for_port(port)
+            results: list[tuple[int, dict[str, str], float] | BaseException | None] = [None, None]
+
+            def run(index: int) -> None:
+                try:
+                    results[index] = _simultaneous_post(port, request, barrier)
+                except BaseException as error:
+                    results[index] = error
+
+            threads = [threading.Thread(target=run, args=(index,)) for index in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=1.5)
+            assert all(not thread.is_alive() for thread in threads)
+
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+                assert result is not None
+                status, body, elapsed_ms = result
+                assert status == 200
+                assert body["move"] in {"up", "left", "right"}
+                assert elapsed_ms < 500.0
+        finally:
+            _stop_server(process)
+
+        move_events = [
+            event
+            for event in _server_events(server_log)
+            if event.get("event") == "move_request" and event.get("status") == 200
+        ]
+        assert len(move_events) == 2
+        material_queue_delay_ms = 50.0
+        queued_events = [
+            event for event in move_events if event["queue_ms"] >= material_queue_delay_ms
+        ]
+        assert len(queued_events) == 1
+        assert queued_events[0]["fallback"] is True
+        unqueued_events = [event for event in move_events if event is not queued_events[0]]
+        assert unqueued_events[0]["fallback"] is False
+
+
+def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healthy() -> None:
+    if not os.path.isdir("/proc/self/fd"):
+        pytest.skip("Linux /proc socket state is required")
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(
+            port,
+            server_log,
+            BATTLESNAKE_WORKERS="1",
+            BATTLESNAKE_QUEUE_CAPACITY="1",
+            BATTLESNAKE_IO_TIMEOUT_MS="1500",
+        )
+        active: socket.socket | None = None
+        queued: socket.socket | None = None
+        try:
+            _wait_for_port(port)
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
+
+            active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            active.sendall(b"POST /move HTTP/1.1\r\nHost: active\r\n")
+            _wait_for_server_socket_count(process.pid, 2, exact=True)
+            _wait_for_worker_socket_io(process.pid)
+
+            queued = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            queued.sendall(b"POST /move HTTP/1.1\r\nHost: queued\r\n")
+            _wait_for_server_socket_count(process.pid, 3, exact=True)
+
+            scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
+            complete_request = _move_request(move_payload(scenario, timeout=500))
+            status, body, elapsed_ms = _send_request(port, complete_request, timeout=0.5)
+            assert status == 503
+            assert body == {}
+            assert elapsed_ms < 500.0
+
+            active.close()
+            active = None
+            queued.close()
+            queued = None
+
+            health_deadline = time.monotonic() + 1.0
+            while True:
+                try:
+                    health_status, _, _ = _send_request(
+                        port,
+                        b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                        timeout=0.25,
+                    )
+                    break
+                except (OSError, ValueError):
+                    if time.monotonic() >= health_deadline:
+                        raise
+                    time.sleep(0.01)
+            assert health_status == 200
+        finally:
+            if active is not None:
+                active.close()
+            if queued is not None:
+                queued.close()
+            _stop_server(process)
+
+        overload_events = [
+            event for event in _server_events(server_log) if event.get("event") == "server_overload"
+        ]
+        assert len(overload_events) == 1
+        assert overload_events[0]["status"] == 503
 
 
 def test_simultaneous_move_requests_complete_within_external_deadline() -> None:
