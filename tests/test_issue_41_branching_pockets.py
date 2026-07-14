@@ -492,6 +492,34 @@ def test_t288_node_budget_preserves_iterative_root_proof_policy() -> None:
     assert all(candidate["evaluated"] for candidate in result["root_candidates"].values())
 
 
+def test_t169_partial_frontier_reports_structural_filtering() -> None:
+    position = _positions()[0]
+
+    result = minimax_diagnostics(
+        _fixture_board(position),
+        str(position["snake_id"]),
+        node_budget=5,
+    )
+    selected = result["root_candidates"]["up"]
+    excluded = result["root_candidates"]["down"]
+
+    assert result["nodes"] == 5
+    assert result["completed_depth"] == 0
+    assert result["node_budget_exhausted"] is True
+    assert result["timed_out"] is False
+    assert result["move"] == "up"
+    assert result["selection_reason"] == "node_budget_best_so_far"
+    assert result["root_comparison_reason"] == "structural_proof"
+    assert set(result["root_move_scores"]) == {"up", "down"}
+    assert selected["structural_proof"] == "safe"
+    assert selected["minimax_score"] == result["score"]
+    assert selected["minimax_bound"] in {"exact", "lower", "upper"}
+    assert excluded["structural_proof"] == "unknown"
+    assert excluded["relaxed_static_capacity"] < excluded["post_move_length"]
+    assert excluded["minimax_score"] == result["root_move_scores"]["down"]
+    assert excluded["minimax_bound"] in {"exact", "lower", "upper"}
+
+
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
 @pytest.mark.parametrize("budget_ms", [100, 200, 300])
 def test_replay_branching_pocket_is_structurally_dominated(

@@ -6212,6 +6212,21 @@ CoreStatus CoreMinimaxMoveWithStats(
                 fallback_frontier,
                 &partial_selection
             );
+            if (
+                partial_valid &&
+                partial_selection.reason == CORE_ROOT_COMPARISON_NOT_COMPARED &&
+                stats->root_policy_applied == CORE_ROOT_POLICY_STANDARD_LADDER_OPPORTUNITY
+            ) {
+                for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
+                    bool published = context.root_move_value_valid[move];
+                    bool outside_frontier =
+                        (fallback_frontier & (1u << move)) == 0;
+                    if (published && outside_frontier) {
+                        partial_selection.reason = CORE_ROOT_COMPARISON_STRUCTURAL_PROOF;
+                        break;
+                    }
+                }
+            }
             (void)core_root_snapshot_adopt_partial_if_empty(
                 &completed,
                 partial_valid,
