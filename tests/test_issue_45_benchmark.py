@@ -111,13 +111,61 @@ def test_result_gate_fails_missing_or_malformed_move_telemetry(event: dict[str, 
     assert "malformed_move_telemetry" in result["failure_reasons"]
 
 
-def test_cli_returns_nonzero_for_malformed_move_telemetry(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_result_gate_fails_when_samples_outnumber_move_events() -> None:
+    result = assemble_result(
+        configuration={"deadline_ms": 500},
+        samples=[_sample(10.0), _sample(11.0)],
+        move_events=[
+            {
+                "event": "move_request",
+                "queue_ms": 1.0,
+                "handler_ms": 2.0,
+                "total_ms": 3.0,
+                "fallback": False,
+            }
+        ],
+        overload_events=[],
+    )
+
+    assert result["passed"] is False
+    assert "missing_move_telemetry" in result["failure_reasons"]
+
+
+@pytest.mark.parametrize(
+    ("samples", "move_events", "failure_reason"),
+    [
+        (
+            [_sample(10.0)],
+            [{"event": "move_request"}],
+            "malformed_move_telemetry",
+        ),
+        (
+            [_sample(10.0), _sample(11.0)],
+            [
+                {
+                    "event": "move_request",
+                    "queue_ms": 1.0,
+                    "handler_ms": 2.0,
+                    "total_ms": 3.0,
+                    "fallback": False,
+                }
+            ],
+            "missing_move_telemetry",
+        ),
+    ],
+    ids=["malformed", "missing"],
+)
+def test_cli_returns_nonzero_for_invalid_move_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    samples: list[dict[str, object]],
+    move_events: list[dict[str, object]],
+    failure_reason: str,
 ) -> None:
     failed_result = assemble_result(
         configuration={"deadline_ms": 500},
-        samples=[_sample(10.0)],
-        move_events=[{"event": "move_request"}],
+        samples=samples,
+        move_events=move_events,
         overload_events=[],
     )
     monkeypatch.setattr(benchmark, "run_benchmark", lambda **_arguments: failed_result)
@@ -125,4 +173,4 @@ def test_cli_returns_nonzero_for_malformed_move_telemetry(
     assert benchmark.main([]) == 1
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["passed"] is False
-    assert "malformed_move_telemetry" in emitted["failure_reasons"]
+    assert failure_reason in emitted["failure_reasons"]
