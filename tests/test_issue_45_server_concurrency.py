@@ -308,18 +308,19 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
             queued = None
 
             health_deadline = time.monotonic() + 1.0
-            while True:
+            health_status: int | None = None
+            while time.monotonic() < health_deadline:
                 try:
                     health_status, _, _ = _send_request(
                         port,
                         b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
                         timeout=0.25,
                     )
-                    break
                 except (OSError, ValueError):
-                    if time.monotonic() >= health_deadline:
-                        raise
-                    time.sleep(0.01)
+                    pass
+                if health_status == 200:
+                    break
+                time.sleep(0.01)
             assert health_status == 200
         finally:
             if active is not None:

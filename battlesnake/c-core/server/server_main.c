@@ -387,6 +387,37 @@ static void reject_overloaded_connection(int client_fd, const BsServerConfig* co
         "{}";
     apply_socket_timeout(client_fd, config->io_timeout_ms);
     (void)write_all(client_fd, response, sizeof(response) - 1);
+    (void)shutdown(client_fd, SHUT_WR);
+
+    struct timespec drain_started_at = {0};
+    bool drain_started_at_valid = clock_gettime(CLOCK_MONOTONIC, &drain_started_at) == 0;
+    size_t drained = 0;
+    char buffer[4096];
+    while (drained < config->request_bytes) {
+        if (drain_started_at_valid) {
+            struct timespec now;
+            if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+                int remaining_ms = config->io_timeout_ms
+                    - elapsed_ms_ceil_saturated(drain_started_at, now);
+                if (remaining_ms <= 0) {
+                    break;
+                }
+                apply_socket_timeout(client_fd, remaining_ms);
+            }
+        }
+
+        size_t remaining_bytes = config->request_bytes - drained;
+        size_t read_size = remaining_bytes < sizeof(buffer) ? remaining_bytes : sizeof(buffer);
+        ssize_t received = read(client_fd, buffer, read_size);
+        if (received > 0) {
+            drained += (size_t)received;
+            continue;
+        }
+        if (received < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
     close(client_fd);
     log_server_overload();
 }
