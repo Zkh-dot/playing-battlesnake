@@ -469,6 +469,29 @@ def test_t288_fixed_depth_downgrades_unvalidated_no_growth_cycle() -> None:
     assert strict["root_candidates"]["left"]["allowed"] is True
 
 
+def test_t288_node_budget_preserves_iterative_root_proof_policy() -> None:
+    position = _positions()[2]
+
+    result = minimax_diagnostics(
+        _fixture_board(position),
+        str(position["snake_id"]),
+        node_budget=32000,
+    )
+    safe = result["root_candidates"]["down"]
+    risky = result["root_candidates"]["left"]
+
+    assert result["nodes"] == 32000
+    assert result["node_budget_exhausted"] is True
+    assert result["timed_out"] is False
+    assert result["move"] == "down"
+    assert safe["structural_proof"] == "safe"
+    assert safe["proof_cutoff"] == "bounded_lasso"
+    assert safe["structural_capacity"] >= safe["post_move_length"]
+    assert risky["structural_proof"] != "safe"
+    assert risky["relaxed_static_capacity"] < risky["post_move_length"]
+    assert all(candidate["evaluated"] for candidate in result["root_candidates"].values())
+
+
 @pytest.mark.parametrize("position", _positions(), ids=lambda raw: f"T{raw['evidence']['turn']}")
 @pytest.mark.parametrize("budget_ms", [100, 200, 300])
 def test_replay_branching_pocket_is_structurally_dominated(

@@ -6046,7 +6046,7 @@ CoreStatus CoreMinimaxMoveWithStats(
         snake_id,
         config.root_policy,
         &root_analysis_timer,
-        config.fixed_depth == 0 && config.node_budget == 0,
+        config.fixed_depth == 0,
         root_allowed_mask,
         stats,
         &root_allowed_mask
