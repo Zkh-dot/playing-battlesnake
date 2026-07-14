@@ -1516,6 +1516,31 @@ static bool core_structure_dominates(
         incumbent_is_deficient_unknown;
 }
 
+static uint8_t core_structural_maximal_root_mask(
+    const CoreSearchStats* stats,
+    uint8_t active_mask
+) {
+    uint8_t dominated_mask = 0;
+    for (int incumbent = MOVE_UP; incumbent <= MOVE_RIGHT; incumbent++) {
+        if ((active_mask & (1u << incumbent)) == 0) {
+            continue;
+        }
+        for (int candidate = MOVE_UP; candidate <= MOVE_RIGHT; candidate++) {
+            if (candidate == incumbent || (active_mask & (1u << candidate)) == 0) {
+                continue;
+            }
+            if (core_structure_dominates(
+                &stats->root_candidates[candidate],
+                &stats->root_candidates[incumbent]
+            )) {
+                dominated_mask |= (uint8_t)(1u << incumbent);
+                break;
+            }
+        }
+    }
+    return active_mask & (uint8_t)~dominated_mask;
+}
+
 static bool core_search_value_semantically_equal(
     const CoreSearchValue* candidate,
     const CoreSearchValue* incumbent
@@ -6055,15 +6080,24 @@ CoreStatus CoreMinimaxMoveWithStats(
         return policy_status;
     }
     context.root_allowed_mask = root_allowed_mask;
+    uint8_t fallback_frontier = core_structural_maximal_root_mask(
+        stats, root_allowed_mask
+    );
+    if (fallback_frontier == 0) {
+        fallback_frontier = root_allowed_mask;
+    }
     for (int move = MOVE_UP; move <= MOVE_RIGHT; move++) {
-        if ((root_allowed_mask & (1u << move)) != 0) {
+        if ((fallback_frontier & (1u << move)) != 0) {
             completed_best = (MoveDirection)move;
             break;
         }
     }
+    CoreRootComparisonReason fallback_reason = fallback_frontier != root_allowed_mask
+        ? CORE_ROOT_COMPARISON_STRUCTURAL_PROOF
+        : CORE_ROOT_COMPARISON_NOT_COMPARED;
     context.root_best_valid = true;
     context.root_best_move = completed_best;
-    context.root_best_reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+    context.root_best_reason = fallback_reason;
     bool fixed_depth_requested = config.fixed_depth > 0;
     int max_depth = fixed_depth_requested ? config.fixed_depth : CORE_MINIMAX_MAX_DEPTH;
     size_t tt_capacity = fixed_depth_requested ? (1u << 12) : (1u << 20);
@@ -6089,7 +6123,7 @@ CoreStatus CoreMinimaxMoveWithStats(
     memset(&completed, 0, sizeof(completed));
     completed.move = completed_best;
     completed.value = core_unresolved_value(0.0);
-    completed.reason = CORE_ROOT_COMPARISON_NOT_COMPARED;
+    completed.reason = fallback_reason;
     completed.selection_reason = CORE_SELECTION_ALLOWED_FALLBACK;
     struct timespec start;
     struct timespec end;

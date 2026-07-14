@@ -19,6 +19,15 @@ EQUIVALENT_POSITION = next(
     for position in POSITIONS
     if position["case"] == "equivalent_maximal_frontier"
 )
+TINY_NODE_FALLBACK_POSITIONS = [
+    position
+    for position in RISKY_POSITIONS
+    if position["evidence"]["game_id"]
+    in {
+        "8fd97d0d-6f20-436a-833c-062027a12617",
+        "c7add22b-bc1e-443e-bad3-f271ac8886a1",
+    }
+]
 
 
 def _board_from_fixture(raw: dict[str, object]) -> Board:
@@ -219,6 +228,41 @@ def test_node_budget_is_repeatable_and_preserves_structural_safety(
             _assert_complete_root_analysis(result)
             _assert_coherent_selected_diagnostics(result)
             _assert_risky_root_is_dominated(position, result)
+
+
+@pytest.mark.parametrize("position", TINY_NODE_FALLBACK_POSITIONS, ids=_case_id)
+def test_tiny_node_budget_uses_structurally_maximal_fallback(
+    position: dict[str, object],
+) -> None:
+    risky_move = str(position["evidence"]["recorded_risky_move"])
+
+    result = minimax_diagnostics(
+        _board_from_fixture(position),
+        str(position["snake_id"]),
+        node_budget=1,
+    )
+    selected = result["root_candidates"][result["move"]]
+    risky = result["root_candidates"][risky_move]
+
+    assert result["nodes"] == 1
+    assert result["completed_depth"] == 0
+    assert result["node_budget_exhausted"] is True
+    assert result["timed_out"] is False
+    assert result["selection_reason"] == "allowed_fallback"
+    assert result["root_comparison_reason"] == "structural_proof"
+    assert result["move"] == "right"
+    assert selected["structural_proof"] == "safe"
+    assert _structurally_dominates(selected, risky)
+    assert result["root_move_scores"] == {}
+    assert all(
+        candidate["evaluated"] is True
+        and candidate["structural_proof"] != "not_analyzed"
+        and candidate["proof_cutoff"] != "not_analyzed"
+        and candidate["minimax_score"] is None
+        and candidate["minimax_outcome"] is None
+        and candidate["minimax_bound"] is None
+        for candidate in result["root_candidates"].values()
+    )
 
 
 def _json_fingerprint(result: dict[str, object]) -> str:
