@@ -205,16 +205,36 @@ class SearchDiagnosticsTests(unittest.TestCase):
     def test_node_budget_zero_preserves_wall_clock_mode(self) -> None:
         scenario = get_scenario("duel_open_7x7")
 
-        diagnostics = minimax_diagnostics(
+        default = minimax_diagnostics(
             build_board(scenario),
             scenario.snake_id,
-            time_budget_ms=25,
+            time_budget_ms=5000,
+            fixed_depth=2,
+        )
+        explicit_zero = minimax_diagnostics(
+            build_board(scenario),
+            scenario.snake_id,
+            time_budget_ms=5000,
+            fixed_depth=2,
             node_budget=0,
         )
 
-        self.assertEqual(diagnostics["node_budget"], 0)
-        self.assertFalse(diagnostics["node_budget_exhausted"])
-        self.assertGreater(diagnostics["nodes"], 0)
+        for diagnostics in (default, explicit_zero):
+            self.assertEqual(diagnostics["node_budget"], 0)
+            self.assertFalse(diagnostics["node_budget_exhausted"])
+        for key in (
+            "move",
+            "score",
+            "completed_depth",
+            "max_depth_started",
+            "timed_out",
+            "nodes",
+            "root_move_scores",
+            "root_candidates",
+            "root_comparison_reason",
+            "selection_reason",
+        ):
+            self.assertEqual(explicit_zero[key], default[key])
 
     def test_node_budget_stops_before_exceeding_the_cap(self) -> None:
         scenario = get_scenario("duel_open_7x7")
@@ -226,13 +246,10 @@ class SearchDiagnosticsTests(unittest.TestCase):
         )
 
         self.assertEqual(diagnostics["node_budget"], 64)
-        self.assertLessEqual(diagnostics["nodes"], 64)
+        self.assertEqual(diagnostics["nodes"], 64)
         self.assertTrue(diagnostics["node_budget_exhausted"])
         self.assertFalse(diagnostics["timed_out"])
-        self.assertIn(
-            diagnostics["selection_reason"],
-            {"node_budget_best_so_far", "allowed_fallback"},
-        )
+        self.assertEqual(diagnostics["selection_reason"], "node_budget_best_so_far")
 
     def test_node_budget_runs_are_deterministic(self) -> None:
         scenario = get_scenario("duel_open_7x7")
