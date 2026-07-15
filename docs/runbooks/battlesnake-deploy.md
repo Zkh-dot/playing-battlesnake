@@ -45,6 +45,7 @@ BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200
 BATTLESNAKE_MIN_SEARCH_BUDGET_MS=50
 BATTLESNAKE_WORKERS=2
 BATTLESNAKE_QUEUE_CAPACITY=8
+BATTLESNAKE_DUEL_WEIGHT_SET=duel-default@1
 ```
 
 `BATTLESNAKE_BIND_ADDRESS` defaults to `0.0.0.0`, preserving the production
@@ -79,10 +80,54 @@ transposition table, and search workspace are constructed for the request. The
 space-time scratch declared `_Thread_local` is private to each worker thread.
 The configured strategy values are read-only while workers are running.
 
+### Duel evaluation profile
+
+The two reviewable source envelopes are
+`configs/evaluation_weights/default.json` (`duel-default@1`, status
+`production-default`) and
+`configs/evaluation_weights/tuned-opponent-pressure.json`
+(`tuned-opponent-pressure@1`, status `candidate`). A profile-source change must
+explicitly regenerate the checked-in C registry and integrity manifest:
+
+```bash
+python3 tools/tuning/generate_duel_weight_profiles.py
+```
+
+Then require a clean source/code-generation check before building or deploying:
+
+```bash
+python3 tools/tuning/generate_duel_weight_profiles.py --check
+```
+
+The native build does not run Python or parse the JSON envelopes. Before
+compilation it uses portable `sha256sum` verification of the manifest covering
+both source envelopes and the checked-in generated C/H files. This works in the
+`gcc:14-bookworm` builder. The Python extension build and acceptance checks run
+strict generator `--check`, so malformed source envelopes, stale generated
+output, and manifest drift are caught before compilation. Runtime selector
+validation is separate and remains startup-fatal as described below.
+
+The server accepts only the exact selector
+`BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>` from that compiled registry; it
+does not load arbitrary runtime files. If the variable is unset, it
+intentionally selects `duel-default@1`. If it is explicitly empty, malformed,
+or unknown, startup fails before the listener is created and never falls back
+to the default. Set `duel-default@1` explicitly in production configuration so
+the operator's intent is reviewable. The candidate is selectable for isolated
+verification only; it is not the production default. Promotion requires a
+separate evidence-reviewed PR that changes the source status/default.
+
+Startup emits one `server_startup` JSON event with `weight_set`,
+`weight_version`, `weight_sha256`, and `weight_status`. Every recognized
+`move_request`, including parse failures and non-duel fallback requests, emits
+the same immutable `weight_set`, `weight_version`, and `weight_sha256`. Confirm
+those fields match the selected generated registry entry before accepting a
+candidate binary.
+
 Each recognized `/move` request emits one atomic JSON telemetry line on stderr:
 
 ```json
-{"event":"move_request","status":200,"queue_ms":0.008,"handler_ms":348.408,"total_ms":348.486,"timeout_ms":500,"fallback":false}
+{"event":"move_request","status":200,"queue_ms":0.008,"handler_ms":348.408,"total_ms":348.486,"timeout_ms":500,"fallback":false,"weight_set":"duel-default","weight_version":"1","weight_sha256":"a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629"}
 ```
 
 `queue_ms` starts at the accept timestamp. `handler_ms` starts after socket input
@@ -113,6 +158,7 @@ python3 -m benchmarks.bench_issue_45_server_concurrency \
   --deadline-ms 500 \
   --search-budget-ms 300 \
   --safety-margin-ms 200 \
+  --duel-weight-set duel-default@1 \
   --output /tmp/issue45-server-concurrency.json
 ```
 
@@ -120,6 +166,9 @@ The benchmark defaults for search budget and safety margin are the current
 production values (`300` and `200` ms); both are written explicitly above so a
 copied gate command remains an auditable snapshot of the tested service profile.
 The runner always binds its temporary server to `127.0.0.1`.
+For candidate verification, rerun the identical gate with
+`--duel-weight-set tuned-opponent-pressure@1`; the result fails if startup or
+per-move telemetry does not report that exact generated profile identity.
 
 The gate releases each request pair together, applies a 500 ms external socket
 deadline, and fails on a timeout/error/503 or when external/server-total p99
@@ -313,6 +362,7 @@ fi
 env -i \
   BATTLESNAKE_ARENA_BYTES=262144 \
   BATTLESNAKE_BIND_ADDRESS=127.0.0.1 \
+  BATTLESNAKE_DUEL_WEIGHT_SET=duel-default@1 \
   BATTLESNAKE_IO_TIMEOUT_MS=2000 \
   BATTLESNAKE_MAX_REQUEST_BYTES=196608 \
   BATTLESNAKE_MIN_SEARCH_BUDGET_MS=50 \
@@ -393,6 +443,7 @@ Environment=BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200
 Environment=BATTLESNAKE_MIN_SEARCH_BUDGET_MS=50
 Environment=BATTLESNAKE_WORKERS=2
 Environment=BATTLESNAKE_QUEUE_CAPACITY=8
+Environment=BATTLESNAKE_DUEL_WEIGHT_SET=duel-default@1
 ```
 
 Then restart and inspect the actual service:

@@ -411,6 +411,7 @@ def test_runbook_candidate_verification_handles_occupied_success_and_failure(
     expected_environment = {
         "BATTLESNAKE_ARENA_BYTES": "262144",
         "BATTLESNAKE_BIND_ADDRESS": "127.0.0.1",
+        "BATTLESNAKE_DUEL_WEIGHT_SET": "duel-default@1",
         "BATTLESNAKE_IO_TIMEOUT_MS": "2000",
         "BATTLESNAKE_MAX_REQUEST_BYTES": "196608",
         "BATTLESNAKE_MIN_SEARCH_BUDGET_MS": "50",

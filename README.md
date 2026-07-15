@@ -14,6 +14,32 @@ bash tools/build_native_server.sh
 BATTLESNAKE_PORT=8000 BATTLESNAKE_SEARCH_BUDGET_MS=400 build/battlesnake-server
 ```
 
+## Duel evaluation profiles
+
+The reviewable profile sources are
+`configs/evaluation_weights/default.json` and
+`configs/evaluation_weights/tuned-opponent-pressure.json`. After changing a
+source envelope, regenerate the checked-in C registry and integrity manifest
+explicitly, then verify that they are current:
+
+```bash
+python3 tools/tuning/generate_duel_weight_profiles.py
+python3 tools/tuning/generate_duel_weight_profiles.py --check
+```
+
+The native build does not run Python or parse the JSON envelopes. Its portable
+`sha256sum` preflight verifies the manifest over both source envelopes and the
+checked-in generated C/H files before compiling the generated registry. The
+extension build and acceptance checks run strict generator `--check`, which
+rejects malformed source envelopes, stale generated output, and manifest drift.
+
+Select a compiled profile with
+`BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>`. When the variable is unset, the
+intentional production default is `duel-default@1`. A present empty, malformed,
+or unknown selector is startup-fatal before the listener is created and never
+falls back to the default. The server does not load arbitrary runtime files.
+See `docs/runbooks/battlesnake-deploy.md` for telemetry and deployment checks.
+
 ## Tests
 
 ```bash

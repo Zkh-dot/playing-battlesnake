@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../datatypes/board.h"
+#include "../core/duel_weight_profiles_generated.h"
 
 #include <stdbool.h>
 
@@ -9,6 +10,7 @@ typedef struct {
     int game_timeout_ms;
     int safety_margin_ms;
     int min_time_budget_ms;
+    const CoreDuelWeightProfile* weight_profile;
 } BsStrategyConfig;
 
 typedef enum {
@@ -18,6 +20,10 @@ typedef enum {
 } BsStrategyStatus;
 
 BsStrategyConfig BsStrategyConfigDefault(void);
+bool BsStrategyDuelSearchConfig(
+    const BsStrategyConfig* config,
+    CoreSearchConfig* out_config
+);
 int BsStrategyEffectiveBudgetMs(const BsStrategyConfig* config);
 bool BsStrategyHasSearchWindow(const BsStrategyConfig* config, int elapsed_ms);
 BsStrategyStatus BsChooseFallbackMove(

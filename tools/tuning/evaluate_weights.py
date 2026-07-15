@@ -8,6 +8,7 @@ from typing import Callable, Iterable, Protocol
 
 from battlesnake.battlesnake_native import minimax_diagnostics
 from tools.tuning.replay_dataset import ReplaySample, export_paths, iter_replay_samples
+from tools.tuning.duel_weight_profiles import load_profile
 
 
 class SampleLike(Protocol):
@@ -109,8 +110,7 @@ def evaluate_samples(
 
 
 def load_weights(path: Path) -> dict[str, float]:
-    data = json.loads(path.read_text())
-    return {str(key): float(value) for key, value in data.items()}
+    return dict(load_profile(path).weights)
 
 
 def load_samples(exports_root: Path, split: str, limit: int | None) -> list[ReplaySample]:

@@ -61,6 +61,68 @@ static Snake make_snake(const char* id, Coord* body, int body_len, int health) {
     return snake;
 }
 
+static void test_strategy_uses_selected_duel_weight_profile(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord me_body[] = {{6, 3}, {5, 3}, {4, 3}, {3, 3}, {3, 2}};
+    Coord you_body[] = {{6, 6}, {5, 6}, {5, 5}, {4, 5}};
+    Coord food[] = {{1, 4}, {6, 1}};
+    Snake me = make_snake("me", me_body, 5, 40);
+    Snake you = make_snake("you", you_body, 4, 45);
+    BsStrategyConfig default_config = BsStrategyConfigDefault();
+    BsStrategyConfig tuned_config = BsStrategyConfigDefault();
+    CoreSearchConfig default_search;
+    CoreSearchConfig tuned_search;
+    CoreSearchConfig null_search;
+    CoreSearchStats stats;
+    MoveDirection default_move = MOVE_INVALID;
+    MoveDirection tuned_move = MOVE_INVALID;
+
+    tuned_config.weight_profile = CoreDuelWeightProfileFind(
+        "tuned-opponent-pressure", "1"
+    );
+    assert(default_config.weight_profile == CoreDuelWeightProfileDefault());
+    assert(tuned_config.weight_profile != NULL);
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(BoardAddFood(board, food[0]));
+    assert(BoardAddFood(board, food[1]));
+
+    assert(BsStrategyDuelSearchConfig(&default_config, &default_search));
+    assert(BsStrategyDuelSearchConfig(&tuned_config, &tuned_search));
+    assert(BsStrategyDuelSearchConfig(NULL, &null_search));
+    assert(memcmp(
+        &default_search.weights,
+        &default_config.weight_profile->weights,
+        sizeof(default_search.weights)
+    ) == 0);
+    assert(memcmp(
+        &tuned_search.weights,
+        &tuned_config.weight_profile->weights,
+        sizeof(tuned_search.weights)
+    ) == 0);
+    assert(memcmp(
+        &null_search.weights,
+        &default_config.weight_profile->weights,
+        sizeof(null_search.weights)
+    ) == 0);
+    assert(!BsStrategyDuelSearchConfig(&default_config, NULL));
+
+    default_search.fixed_depth = 3;
+    tuned_search.fixed_depth = 3;
+    assert(CoreMinimaxMoveWithStats(
+        board, "me", default_search, &default_move, &stats
+    ) == CORE_OK);
+    assert(CoreMinimaxMoveWithStats(
+        board, "me", tuned_search, &tuned_move, &stats
+    ) == CORE_OK);
+    assert(default_move == MOVE_DOWN);
+    assert(tuned_move == MOVE_UP);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
 static CoreSearchValue root_test_value(
     CoreOutcome outcome,
     CoreValueBound bound,
@@ -2262,6 +2324,7 @@ int main(void) {
     test_root_comparison_rejects_invalid_inputs();
     test_root_comparison_is_a_consistent_partial_order();
     test_single_snake_uses_safe_fallback();
+    test_strategy_uses_selected_duel_weight_profile();
     test_missing_snake_is_error();
     test_solo_two_snakes_uses_minimax();
     test_solo_two_snakes_uses_minimax_with_null_config();

@@ -1,0 +1,2379 @@
+{
+  "profiles": [
+    {
+      "identifier": "duel-default@1",
+      "sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629"
+    },
+    {
+      "identifier": "tuned-opponent-pressure@1",
+      "sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d"
+    }
+  ],
+  "records": [
+    {
+      "depth": 9,
+      "elapsed_ms": 299.156615,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "up",
+      "repeat": 0,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.134864,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "up",
+      "repeat": 1,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.150754,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "up",
+      "repeat": 2,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.114515,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "up",
+      "repeat": 3,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.16100800000004,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "up",
+      "repeat": 4,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1648.55,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 299.140603,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "up",
+      "repeat": 0,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1531.5091795667904,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1530.7969605007813,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 299.090183,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "up",
+      "repeat": 1,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1531.5091795667904,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1530.7969605007813,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 299.12376600000005,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "up",
+      "repeat": 2,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1531.5091795667904,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1530.7969605007813,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 299.16347,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "up",
+      "repeat": 3,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1531.5091795667904,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1530.7969605007813,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 299.140016,
+      "error": null,
+      "game_id": "1197cf21-29c9-43f8-a364-18d9e226fb8c",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "up",
+      "repeat": 4,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1531.5091795667904,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 81,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 24,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1530.7969605007813,
+          "post_move_length": 24,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 10,
+          "structural_proof": "unknown"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_TtDHCYTSRBxD3vrSBQ96tPJM",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 197
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 297.693594,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 0,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 297.761986,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 1,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 297.718858,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 2,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 297.682141,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 3,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 297.78906700000005,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 4,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1802.2,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 297.773893,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 0,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 297.794772,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 1,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 297.784683,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 2,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 297.735635,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 3,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 297.731378,
+      "error": null,
+      "game_id": "8fd97d0d-6f20-436a-833c-062027a12617",
+      "move": "right",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 4,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 1,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1656.050846233457,
+          "post_move_length": 32,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 87,
+          "structural_proof": "safe"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 32,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_vPM7Htbfq8Dh9CCpXdRGFYWS",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 357
+    },
+    {
+      "depth": 10,
+      "elapsed_ms": 299.318745,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "right",
+      "repeat": 0,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1947.175,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1963.1,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 10,
+      "elapsed_ms": 299.317863,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "right",
+      "repeat": 1,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1947.175,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1963.1,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 10,
+      "elapsed_ms": 299.33988,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "right",
+      "repeat": 2,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1947.175,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1963.1,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 10,
+      "elapsed_ms": 299.194092,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "right",
+      "repeat": 3,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1947.175,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1963.1,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 10,
+      "elapsed_ms": 299.14849200000003,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "right",
+      "repeat": 4,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1947.175,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1963.1,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.170945,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "right",
+      "repeat": 0,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1838.2799235688026,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1827.9775979601982,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.073445,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "right",
+      "repeat": 1,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1838.2799235688026,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1827.9775979601982,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.167635,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "right",
+      "repeat": 2,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1838.2799235688026,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1827.9775979601982,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 8,
+      "elapsed_ms": 299.015442,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "right",
+      "repeat": 3,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1844.9977807116597,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1832.0271600285132,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.069898,
+      "error": null,
+      "game_id": "ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a",
+      "move": "left",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "right",
+      "repeat": 4,
+      "root_comparison": {
+        "down": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "left": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1838.2799235688026,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 60,
+          "structural_proof": "safe"
+        },
+        "right": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1827.9775979601982,
+          "post_move_length": 36,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 17,
+          "structural_proof": "unknown"
+        },
+        "up": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 36,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_jfbhJx6P7JfB6qSgYMXqfc4f",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 326
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.224254,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 0,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1956.6,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1954.05,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.24403299999994,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 1,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1956.6,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1954.05,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.243253,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 2,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1956.6,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1954.05,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.059901,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 3,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1956.6,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1954.05,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.094641,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "duel-default@1",
+      "profile_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+      "recorded_move": "down",
+      "repeat": 4,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1956.6,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1954.05,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.174006,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 0,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1818.7784738235691,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1876.832140096029,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.199556,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 1,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1818.7784738235691,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1876.832140096029,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.242115,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 2,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1818.7784738235691,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1876.832140096029,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.194513,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 3,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1818.7784738235691,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1876.832140096029,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    },
+    {
+      "depth": 9,
+      "elapsed_ms": 299.222682,
+      "error": null,
+      "game_id": "be95288a-97e1-401b-a41a-cb79a5afd7b8",
+      "move": "up",
+      "policy_violation": false,
+      "profile": "tuned-opponent-pressure@1",
+      "profile_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+      "recorded_move": "down",
+      "repeat": 4,
+      "root_comparison": {
+        "down": {
+          "allowed": true,
+          "minimax_bound": "upper",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1818.7784738235691,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 16,
+          "structural_proof": "unknown"
+        },
+        "left": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "right": {
+          "allowed": false,
+          "minimax_bound": null,
+          "minimax_outcome": null,
+          "minimax_score": null,
+          "post_move_length": 38,
+          "rejection_reason": "no_surviving_reply",
+          "relaxed_static_capacity": 0,
+          "structural_proof": "unsafe"
+        },
+        "up": {
+          "allowed": true,
+          "minimax_bound": "exact",
+          "minimax_outcome": "unresolved",
+          "minimax_score": 1876.832140096029,
+          "post_move_length": 38,
+          "rejection_reason": "none",
+          "relaxed_static_capacity": 56,
+          "structural_proof": "safe"
+        }
+      },
+      "selected_structural_proof": "safe",
+      "snake_id": "gs_QqTpyMdwSvPStXytkWxfbbPQ",
+      "structural_risk": false,
+      "timed_out": true,
+      "turn": 308
+    }
+  ],
+  "schema_version": 1,
+  "settings": {
+    "budget_ms": 300,
+    "repeats": 5
+  }
+}

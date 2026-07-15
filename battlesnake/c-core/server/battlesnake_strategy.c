@@ -11,6 +11,7 @@ BsStrategyConfig BsStrategyConfigDefault(void) {
     config.game_timeout_ms = 0;
     config.safety_margin_ms = 150;
     config.min_time_budget_ms = 50;
+    config.weight_profile = CoreDuelWeightProfileDefault();
     return config;
 }
 
@@ -95,6 +96,28 @@ int BsStrategyEffectiveBudgetMs(const BsStrategyConfig* config) {
     return budget > 0 ? budget : 1;
 }
 
+bool BsStrategyDuelSearchConfig(
+    const BsStrategyConfig* config,
+    CoreSearchConfig* out_config
+) {
+    if (out_config == NULL) {
+        return false;
+    }
+    const CoreDuelWeightProfile* weight_profile = config != NULL
+        ? config->weight_profile
+        : NULL;
+    if (weight_profile == NULL) {
+        weight_profile = CoreDuelWeightProfileDefault();
+    }
+    if (weight_profile == NULL) {
+        return false;
+    }
+
+    *out_config = CoreSearchConfigDefault(BsStrategyEffectiveBudgetMs(config));
+    out_config->weights = weight_profile->weights;
+    return true;
+}
+
 BsStrategyStatus BsChooseMove(
     const Board* board,
     const char* snake_id,
@@ -111,7 +134,10 @@ BsStrategyStatus BsChooseMove(
         return BS_STRATEGY_ERROR;
     }
 
-    int budget = BsStrategyEffectiveBudgetMs(config);
+    CoreSearchConfig search_config;
+    if (!BsStrategyDuelSearchConfig(config, &search_config)) {
+        return BS_STRATEGY_ERROR;
+    }
 
     /* Minimax search is applied to 1v1 duels. Battlesnake ladder duels are
      * delivered as standard ruleset games with two snakes, while local duel
@@ -119,7 +145,14 @@ BsStrategyStatus BsChooseMove(
     if (board->ruleset_name != 0 &&
         (strcmp(board->ruleset_name, "solo") == 0 || strcmp(board->ruleset_name, "standard") == 0) &&
         board->snake_count == 2) {
-        CoreStatus status = CoreMinimaxMove(board, snake_id, budget, out_move);
+        CoreSearchStats search_stats;
+        CoreStatus status = CoreMinimaxMoveWithStats(
+            board,
+            snake_id,
+            search_config,
+            out_move,
+            &search_stats
+        );
         if (status == CORE_ERROR) {
             return BS_STRATEGY_ERROR;
         }

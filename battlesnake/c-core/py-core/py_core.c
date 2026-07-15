@@ -1,6 +1,7 @@
 #include "py_core.h"
 
 #include "../core/core_algorithms.h"
+#include "../core/duel_weight_profiles_generated.h"
 #include "../core/standard_ffa.h"
 #include "../core/zobrist.h"
 #include "../py-datatypes/py_datatypes.h"
@@ -1232,6 +1233,71 @@ static PyObject* py_board_hash(PyObject* self, PyObject* args) {
     return PyLong_FromUnsignedLongLong((unsigned long long)CoreZobristHashBoard(board));
 }
 
+static PyObject* duel_profile_weights_dict(const CoreEvaluationWeights* weights) {
+    PyObject* result = PyDict_New();
+    if (result == NULL) {
+        return NULL;
+    }
+#define SET_WEIGHT(field) do { \
+    if (dict_set_double(result, #field, weights->field) < 0) { \
+        Py_DECREF(result); \
+        return NULL; \
+    } \
+} while (0)
+    SET_WEIGHT(terminal_win);
+    SET_WEIGHT(terminal_loss);
+    SET_WEIGHT(base);
+    SET_WEIGHT(health);
+    SET_WEIGHT(length);
+    SET_WEIGHT(reachable_space);
+    SET_WEIGHT(safe_moves);
+    SET_WEIGHT(center);
+    SET_WEIGHT(food);
+    SET_WEIGHT(low_health_food);
+    SET_WEIGHT(low_health_threshold);
+    SET_WEIGHT(hazard_damage);
+    SET_WEIGHT(hazard);
+    SET_WEIGHT(length_advantage);
+    SET_WEIGHT(adjacent_equal_or_longer_penalty);
+    SET_WEIGHT(adjacent_shorter_bonus);
+    SET_WEIGHT(opponent_reachable_space);
+    SET_WEIGHT(territory_delta);
+    SET_WEIGHT(opponent_safe_moves);
+    SET_WEIGHT(opponent_low_health_food_denial);
+#undef SET_WEIGHT
+    return result;
+}
+
+static PyObject* py_duel_weight_profiles(PyObject* self, PyObject* args) {
+    (void)self;
+    (void)args;
+    size_t count = CoreDuelWeightProfileCount();
+    PyObject* result = PyList_New((Py_ssize_t)count);
+    if (result == NULL) {
+        return NULL;
+    }
+    for (size_t index = 0; index < count; ++index) {
+        const CoreDuelWeightProfile* profile = CoreDuelWeightProfileAt(index);
+        PyObject* record = PyDict_New();
+        PyObject* weights = duel_profile_weights_dict(&profile->weights);
+        if (record == NULL || weights == NULL ||
+            dict_set_int(record, "schema_version", profile->schema_version) < 0 ||
+            dict_set_string(record, "name", profile->name) < 0 ||
+            dict_set_string(record, "version", profile->version) < 0 ||
+            dict_set_string(record, "status", profile->status) < 0 ||
+            dict_set_string(record, "sha256", profile->sha256) < 0 ||
+            PyDict_SetItemString(record, "weights", weights) < 0) {
+            Py_XDECREF(record);
+            Py_XDECREF(weights);
+            Py_DECREF(result);
+            return NULL;
+        }
+        Py_DECREF(weights);
+        PyList_SET_ITEM(result, (Py_ssize_t)index, record);
+    }
+    return result;
+}
+
 PyMethodDef PyCoreMethods[] = {
     {"reachable_space", py_reachable_space, METH_VARARGS, "Compute BFS flood-fill reachable space."},
     {"shortest_path", py_shortest_path, METH_VARARGS, "Compute an A* shortest path."},
@@ -1245,6 +1311,7 @@ PyMethodDef PyCoreMethods[] = {
     {"edge_trap_move", py_edge_trap_move, METH_VARARGS, "Choose an optional edge-trapping move."},
     {"predict_hazards", (PyCFunction)py_predict_hazards, METH_VARARGS | METH_KEYWORDS, "Predict Royale hazard cells."},
     {"evaluate", (PyCFunction)py_evaluate, METH_VARARGS | METH_KEYWORDS, "Evaluate board utility for one snake."},
+    {"duel_weight_profiles", py_duel_weight_profiles, METH_NOARGS, "Return immutable compiled duel weight profile audit data."},
     {"board_hash", py_board_hash, METH_VARARGS, "Return deterministic 64-bit Zobrist hash for a board."},
     {NULL, NULL, 0, NULL}
 };
