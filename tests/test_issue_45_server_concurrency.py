@@ -400,7 +400,7 @@ def test_full_connection_queue_rejects_complete_request_promptly_and_stays_healt
         assert all(event["status"] == 503 for event in overload_events)
 
 
-def test_rejection_pool_saturation_still_returns_prompt_explicit_503() -> None:
+def test_saturated_move_capacity_still_returns_prompt_explicit_503() -> None:
     if not os.path.isdir("/proc/self/fd"):
         pytest.skip("Linux /proc socket state is required")
     subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
@@ -417,7 +417,6 @@ def test_rejection_pool_saturation_still_returns_prompt_explicit_503() -> None:
         active: socket.socket | None = None
         queued: socket.socket | None = None
         held_rejections: list[socket.socket] = []
-        queued_rejection: socket.socket | None = None
         try:
             _wait_for_server_ready(process, server_log)
             _wait_for_server_socket_count(process.pid, 1, exact=True)
@@ -433,26 +432,19 @@ def test_rejection_pool_saturation_still_returns_prompt_explicit_503() -> None:
 
             scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
             complete_request = _move_request(move_payload(scenario, timeout=500))
-            for _ in range(2):
+            time.sleep(0.55)
+            _wait_for_server_socket_count(process.pid, 3, exact=True, stable_for=0.05)
+            for _ in range(12):
                 held = socket.create_connection(("127.0.0.1", port), timeout=0.5)
                 held.settimeout(0.5)
+                started = time.monotonic()
                 held.sendall(complete_request)
                 held_status, held_body = _parse_http_response(_receive_until_close(held))
+                elapsed_ms = (time.monotonic() - started) * 1000.0
                 assert held_status == 503
                 assert held_body == {}
+                assert elapsed_ms < 300.0
                 held_rejections.append(held)
-
-            queued_rejection = socket.create_connection(("127.0.0.1", port), timeout=0.5)
-            queued_rejection.settimeout(0.75)
-            queued_rejection.sendall(complete_request)
-            _wait_for_server_socket_count(process.pid, 6, exact=True, stable_for=0.05)
-
-            time.sleep(0.55)
-            _wait_for_server_socket_count(process.pid, 6, exact=True, stable_for=0.05)
-            status, body, elapsed_ms = _send_request(port, complete_request, timeout=0.5)
-            assert status == 503
-            assert body == {}
-            assert elapsed_ms < 300.0
 
             for held in held_rejections:
                 held.close()
@@ -461,6 +453,14 @@ def test_rejection_pool_saturation_still_returns_prompt_explicit_503() -> None:
             active = None
             queued.close()
             queued = None
+
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
+            health_status, _, _ = _send_request(
+                port,
+                b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                timeout=0.5,
+            )
+            assert health_status == 200
         finally:
             if active is not None:
                 active.close()
@@ -468,14 +468,12 @@ def test_rejection_pool_saturation_still_returns_prompt_explicit_503() -> None:
                 queued.close()
             for held in held_rejections:
                 held.close()
-            if queued_rejection is not None:
-                queued_rejection.close()
             _stop_server(process)
 
         overload_events = [
             event for event in _server_events(server_log) if event.get("event") == "server_overload"
         ]
-        assert len(overload_events) == 4
+        assert len(overload_events) == 12
         assert all(event["status"] == 503 for event in overload_events)
 
 
@@ -529,7 +527,7 @@ def test_worker_threads_block_termination_signals() -> None:
             task_ids = sorted(int(entry) for entry in os.listdir(f"/proc/{process.pid}/task"))
             assert process.pid in task_ids
             worker_ids = [tid for tid in task_ids if tid != process.pid]
-            assert len(worker_ids) == 5
+            assert len(worker_ids) == 2
 
             termination_mask = (1 << (signal.SIGINT - 1)) | (1 << (signal.SIGTERM - 1))
             assert _blocked_signals(process.pid, process.pid) & termination_mask == 0
