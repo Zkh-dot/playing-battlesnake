@@ -18,13 +18,19 @@ BATTLESNAKE_PORT=8000 BATTLESNAKE_SEARCH_BUDGET_MS=400 build/battlesnake-server
 
 The reviewable profile sources are
 `configs/evaluation_weights/default.json` and
-`configs/evaluation_weights/tuned-opponent-pressure.json`. The native registry
-is generated deterministically from those complete envelopes at build time;
-validate both the sources and generated files with:
+`configs/evaluation_weights/tuned-opponent-pressure.json`. After changing a
+source envelope, regenerate the checked-in C registry explicitly, then verify
+that it is current:
 
 ```bash
+python3 tools/tuning/generate_duel_weight_profiles.py
 python3 tools/tuning/generate_duel_weight_profiles.py --check
 ```
+
+The native build does not run the generator or read the JSON envelopes; it
+compiles the checked-in generated registry. CI and acceptance checks run
+`--check`, which rejects malformed source envelopes and stale generated output,
+before the native build.
 
 Select a compiled profile with
 `BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>`. When the variable is unset, the

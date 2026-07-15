@@ -353,18 +353,18 @@ def test_run_benchmark_passes_exact_strategy_environment_to_server(
     assert result["configuration"]["duel_weight_set"] == "tuned-opponent-pressure@1"
 
 
-def test_result_gate_audits_selected_profile_identity() -> None:
+def test_result_gate_audits_exact_selected_profile_identity() -> None:
     startup = {
         "event": "server_startup",
         "weight_set": "tuned-opponent-pressure",
         "weight_version": "1",
         "weight_status": "candidate",
-        "weight_sha256": "b" * 64,
+        "weight_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
     }
     move = {
         **_move_event(),
         "weight_set": "tuned-opponent-pressure",
-        "weight_sha256": "b" * 64,
+        "weight_sha256": startup["weight_sha256"],
     }
 
     result = assemble_result(
@@ -375,6 +375,7 @@ def test_result_gate_audits_selected_profile_identity() -> None:
         lifecycle=_healthy_lifecycle(),
         startup_events=[startup],
         expected_duel_weight_set="tuned-opponent-pressure@1",
+        profile_audit_events=[move],
     )
 
     assert result["passed"] is True
@@ -382,15 +383,56 @@ def test_result_gate_audits_selected_profile_identity() -> None:
         "name": "tuned-opponent-pressure",
         "version": "1",
         "status": "candidate",
-        "sha256": "b" * 64,
+        "sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
     }
 
 
-def test_result_gate_fails_profile_identity_mismatch() -> None:
+@pytest.mark.parametrize(
+    ("field", "wrong_value"),
+    [
+        ("weight_set", "duel-default"),
+        ("weight_version", "2"),
+        ("weight_status", "production-default"),
+        ("weight_sha256", "b" * 64),
+    ],
+)
+def test_result_gate_fails_any_exact_profile_identity_mismatch(
+    field: str, wrong_value: str
+) -> None:
+    startup = {
+        "event": "server_startup",
+        "weight_set": "tuned-opponent-pressure",
+        "weight_version": "1",
+        "weight_status": "candidate",
+        "weight_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+    }
+    startup[field] = wrong_value
+    exact_move = {
+        **_move_event(),
+        "weight_set": "tuned-opponent-pressure",
+        "weight_sha256": "6996443271beb18e835355a72ad02e2ee9d47148a33e14370ce096fc766f1c5d",
+    }
     result = assemble_result(
         configuration={"deadline_ms": 500, "duel_weight_set": "tuned-opponent-pressure@1"},
         samples=[_sample(10.0)],
-        move_events=[_move_event()],
+        move_events=[exact_move],
+        overload_events=[],
+        lifecycle=_healthy_lifecycle(),
+        startup_events=[startup],
+        expected_duel_weight_set="tuned-opponent-pressure@1",
+    )
+
+    assert result["passed"] is False
+    assert "duel_weight_profile_exact_mismatch" in result["failure_reasons"]
+
+
+def test_result_gate_audits_warmup_profile_identity_without_counting_its_latency() -> None:
+    exact = _move_event()
+    wrong_warmup = {**exact, "weight_sha256": "b" * 64}
+    result = assemble_result(
+        configuration={"deadline_ms": 500, "duel_weight_set": "duel-default@1"},
+        samples=[_sample(10.0)],
+        move_events=[exact],
         overload_events=[],
         lifecycle=_healthy_lifecycle(),
         startup_events=[{
@@ -398,13 +440,16 @@ def test_result_gate_fails_profile_identity_mismatch() -> None:
             "weight_set": "duel-default",
             "weight_version": "1",
             "weight_status": "production-default",
-            "weight_sha256": "a" * 64,
+            "weight_sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
         }],
-        expected_duel_weight_set="tuned-opponent-pressure@1",
+        expected_duel_weight_set="duel-default@1",
+        profile_audit_events=[wrong_warmup, exact],
     )
 
+    assert result["external"]["request_count"] == 1
+    assert result["server"]["request_count"] == 1
     assert result["passed"] is False
-    assert "duel_weight_profile_mismatch" in result["failure_reasons"]
+    assert "duel_weight_profile_exact_mismatch" in result["failure_reasons"]
 
 
 def test_cli_accepts_server_maximum_search_budget(
@@ -437,8 +482,17 @@ def test_cli_defaults_match_production_strategy_configuration(
     assert benchmark.main([]) == 0
     assert captured["search_budget_ms"] == 300
     assert captured["safety_margin_ms"] == 200
-    assert captured["duel_weight_set"] == "duel-default@1"
+    assert captured["duel_weight_set"] is None
     assert json.loads(capsys.readouterr().out) == {"passed": True}
+
+
+def test_unset_selector_resolves_the_sole_production_default() -> None:
+    assert benchmark._expected_duel_weight_profile(None) == {
+        "name": "duel-default",
+        "version": "1",
+        "status": "production-default",
+        "sha256": "a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629",
+    }
 
 
 def test_cli_accepts_explicit_candidate_weight_set(
@@ -455,6 +509,22 @@ def test_cli_accepts_explicit_candidate_weight_set(
     assert benchmark.main(["--duel-weight-set", "tuned-opponent-pressure@1"]) == 0
     assert captured["duel_weight_set"] == "tuned-opponent-pressure@1"
     assert json.loads(capsys.readouterr().out) == {"passed": True}
+
+
+def test_direct_benchmark_script_can_load_profile_contract() -> None:
+    result = benchmark.subprocess.run(
+        [
+            benchmark.sys.executable,
+            str(benchmark.PROJECT_ROOT / "benchmarks/bench_issue_45_server_concurrency.py"),
+            "--help",
+        ],
+        cwd=benchmark.PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--duel-weight-set" in result.stdout
 
 
 def test_cli_passes_explicit_strategy_configuration(

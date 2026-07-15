@@ -86,14 +86,24 @@ The two reviewable source envelopes are
 `configs/evaluation_weights/default.json` (`duel-default@1`, status
 `production-default`) and
 `configs/evaluation_weights/tuned-opponent-pressure.json`
-(`tuned-opponent-pressure@1`, status `candidate`). The build consumes these
-complete, strictly validated envelopes and deterministically generates the C
-registry and Python metadata. Before building or deploying, require a clean
-build-time source/code-generation check:
+(`tuned-opponent-pressure@1`, status `candidate`). A profile-source change must
+explicitly regenerate the checked-in C registry and Python metadata:
+
+```bash
+python3 tools/tuning/generate_duel_weight_profiles.py
+```
+
+Then require a clean source/code-generation check before building or deploying:
 
 ```bash
 python3 tools/tuning/generate_duel_weight_profiles.py --check
 ```
+
+The native build does not run the generator or read the JSON envelopes; it
+compiles the checked-in generated registry. CI and acceptance checks run
+`--check`, so malformed source envelopes and stale generated output are caught
+before the native build. Runtime selector validation is separate and remains
+startup-fatal as described below.
 
 The server accepts only the exact selector
 `BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>` from that compiled registry; it

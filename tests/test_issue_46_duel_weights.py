@@ -248,6 +248,11 @@ def test_operator_docs_define_the_duel_profile_runtime_contract() -> None:
     assert "configs/evaluation_weights/default.json" in docs
     assert "configs/evaluation_weights/tuned-opponent-pressure.json" in docs
     assert "python3 tools/tuning/generate_duel_weight_profiles.py --check" in docs
+    assert "python3 tools/tuning/generate_duel_weight_profiles.py\n" in docs
+    assert "native build does not run the generator" in docs.lower()
+    assert "compiles the checked-in generated registry" in docs.lower()
+    assert "ci and acceptance checks run" in docs.lower()
+    assert "build consumes these" not in docs.lower()
     assert "BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>" in docs
     assert "duel-default@1" in docs
     assert "unset" in docs.lower()
@@ -262,7 +267,7 @@ def test_operator_docs_define_the_duel_profile_runtime_contract() -> None:
     assert "weight_version" in docs
     assert "weight_sha256" in docs
     assert "weight_status" in docs
-    assert "build time" in docs.lower()
+    assert "before the native build" in docs.lower()
     assert "arbitrary runtime files" in docs.lower()
 
 
