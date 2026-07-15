@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import random
+import json
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +17,8 @@ from tools.tuning.compare_weights_matches import (
     play_match,
     summarize,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _scenario(name: str = "fixture") -> Scenario:
@@ -146,6 +150,31 @@ class CompareWeightsMatchesTests(unittest.TestCase):
         self.assertEqual(move.move, "left")
         self.assertIsNone(move.error)
         self.assertEqual(move.audit_error, "ValueError: bad audit")
+
+    def test_committed_ab_evidence_summary_recomputes_from_raw_rows(self) -> None:
+        payload = json.loads((ROOT / "docs/evidence/issue-46-duel-weight-ab.json").read_text())
+        results = [
+            MatchResult(
+                match=row["match"], pair=row["pair"], scenario=row["scenario"],
+                after_side=row["after_side"], winner=row["winner"], turns=row["turns"],
+                before_alive=row["before_alive"], after_alive=row["after_alive"],
+                before_length=row["before_length"], after_length=row["after_length"],
+                before_health=row["before_health"], after_health=row["after_health"],
+                moves=tuple(MoveResult(**move) for move in row["moves"]),
+            )
+            for row in payload["results"]
+        ]
+        self.assertEqual(payload["settings"], {
+            "seed": 46001, "scenario_count": 100, "paired_games_per_scenario": 2,
+            "fixed_depth": 3, "time_budget_ms": 300, "max_turns": 200,
+        })
+        self.assertEqual(len(results), 200)
+        self.assertEqual(summarize(results), payload["summary"])
+        for profile in ("before", "after"):
+            metrics = payload["summary"]["profiles"][profile]
+            self.assertEqual(metrics["physical_side_games"], {"0": 100, "1": 100})
+            self.assertEqual(metrics["search_errors"], 0)
+            self.assertEqual(metrics["audit_errors"], 0)
 
 
 if __name__ == "__main__":

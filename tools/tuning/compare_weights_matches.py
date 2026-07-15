@@ -339,7 +339,10 @@ def main() -> int:
     args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     write_markdown(args.markdown_output, summary)
     print(json.dumps(summary, sort_keys=True))
-    return 1 if any(profile["search_errors"] for profile in summary["profiles"].values()) else 0
+    return 1 if any(
+        profile["search_errors"] or profile["audit_errors"]
+        for profile in summary["profiles"].values()
+    ) else 0
 
 
 if __name__ == "__main__":
