@@ -47,6 +47,21 @@ def render_report(ab_path: Path, replay_path: Path) -> str:
     uncertainty = summary["paired_uncertainty"]
     settings = ab["settings"]
     environment = ab["environment"]
+    provenance = ab["execution_provenance"]
+    expected_provenance_keys = {
+        "preferred_compute_host", "attempted_before_local_run", "ssh_failure",
+        "proceeded_locally", "scenario_count", "match_count", "sample_reduced",
+    }
+    if set(provenance) != expected_provenance_keys:
+        raise ValueError("A/B execution provenance has unexpected fields")
+    if (
+        provenance["attempted_before_local_run"] is not True
+        or provenance["proceeded_locally"] is not True
+        or provenance["sample_reduced"] is not False
+        or provenance["scenario_count"] != settings["scenario_count"]
+        or provenance["match_count"] != summary["matches"]
+    ):
+        raise ValueError("A/B execution provenance contradicts frozen settings or results")
     profiles = {profile.status: profile for profile in map(load_profile, PROFILE_PATHS)}
     default = profiles["production-default"]
     candidate = profiles["candidate"]
@@ -105,6 +120,7 @@ def render_report(ab_path: Path, replay_path: Path) -> str:
         f"- CPU: {environment['cpu']} ({environment['logical_cpus']} logical CPUs)",
         f"- Python: {environment['python']}", f"- Compiler: {environment['compiler']}",
         f"- Tool-recorded wall time: {_fmt(environment['wall_seconds'], 2)} s; max RSS: {environment['max_rss_kb']:,} KiB", "",
+        f"Preferred compute node `{provenance['preferred_compute_host']}` was attempted before the local run; SSH failed with `{provenance['ssh_failure']}`. The experiment therefore proceeded locally with all {provenance['scenario_count']} scenarios / {provenance['match_count']} matches and no sample reduction.", "",
         "| Role | Profile | Canonical weights SHA-256 | Source-file SHA-256 |", "| --- | --- | --- | --- |",
         f"| default | `{default.name}@{default.version}` | `{default.sha256}` | `{_sha256(PROFILE_PATHS[0])}` |",
         f"| candidate | `{candidate.name}@{candidate.version}` | `{candidate.sha256}` | `{_sha256(PROFILE_PATHS[1])}` |", "",

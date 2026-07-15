@@ -15,6 +15,8 @@ The candidate won 109 games to the default's 89, with 2 draws. At the paired-boa
 - Compiler: x86_64-linux-gnu-gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0
 - Tool-recorded wall time: 260.20 s; max RSS: 32,816 KiB
 
+Preferred compute node `scv@192.168.1.6` was attempted before the local run; SSH failed with `No route to host`. The experiment therefore proceeded locally with all 100 scenarios / 200 matches and no sample reduction.
+
 | Role | Profile | Canonical weights SHA-256 | Source-file SHA-256 |
 | --- | --- | --- | --- |
 | default | `duel-default@1` | `a51a2213f403f1e21ccb4eb928927bfac72a11acd7e1d52de2f88ef2277f9629` | `25a9ce68854166337407a3fe62772866f92d790f4d797b28f615b469b640e66a` |
@@ -87,5 +89,5 @@ Overall evidence decision: **inconclusive — do not promote**.
 
 Raw evidence:
 
-- `docs/evidence/issue-46-duel-weight-ab.json` — SHA-256 `ae9eb0c69d4b123aacf07ef4c4302717ea4448ab818b0ed169da599447876b3d`
+- `docs/evidence/issue-46-duel-weight-ab.json` — SHA-256 `149522ef1509808c985189d564918f414a5b812a8fcf0ea3889a01e7b0b2bc57`
 - `docs/evidence/issue-46-duel-weight-replays.json` — SHA-256 `e2b888b2959f800dfd8915acc0e4fa9610ef0ecb63a6f3ecf78350d3aacb6205`

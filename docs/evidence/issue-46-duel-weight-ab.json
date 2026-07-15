@@ -11,6 +11,15 @@
     "python": "3.10.12",
     "wall_seconds": 260.2010341419955
   },
+  "execution_provenance": {
+    "attempted_before_local_run": true,
+    "match_count": 200,
+    "preferred_compute_host": "scv@192.168.1.6",
+    "proceeded_locally": true,
+    "sample_reduced": false,
+    "scenario_count": 100,
+    "ssh_failure": "No route to host"
+  },
   "profiles": {
     "after": {
       "identifier": "tuned-opponent-pressure@1",

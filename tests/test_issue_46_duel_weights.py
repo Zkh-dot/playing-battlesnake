@@ -223,6 +223,21 @@ def test_committed_markdown_is_rendered_from_current_evidence_and_registry() -> 
     assert (ROOT / "docs/duel-weight-ab-report.md").read_text() == expected
     assert "do not promote" in expected.lower()
     assert "generated production default remains `duel-default@1`" in expected
+    evidence = json.loads((ROOT / "docs/evidence/issue-46-duel-weight-ab.json").read_text())
+    assert evidence["execution_provenance"] == {
+        "preferred_compute_host": "scv@192.168.1.6",
+        "attempted_before_local_run": True,
+        "ssh_failure": "No route to host",
+        "proceeded_locally": True,
+        "scenario_count": 100,
+        "match_count": 200,
+        "sample_reduced": False,
+    }
+    assert (
+        "Preferred compute node `scv@192.168.1.6` was attempted before the local run; "
+        "SSH failed with `No route to host`. The experiment therefore proceeded locally "
+        "with all 100 scenarios / 200 matches and no sample reduction."
+    ) in expected
 
 
 @pytest.fixture(scope="module")
