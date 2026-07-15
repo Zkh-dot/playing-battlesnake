@@ -1,16 +1,20 @@
 # Battlesnake Deploy Runbook
 
-Two snakes are served from `ya.sergeiscv.ru`:
+Current and historical endpoints:
 
-| Snake | Public URL | Runtime | Purpose |
-|---|---|---|---|
-| Production | `https://ya.sergeiscv.ru/snake/` | Native C server | Ladder play |
-| Dev | `https://ya.sergeiscv.ru/test-snake/` | Python FastAPI | Standard FFA strategy experiments |
+| Endpoint | URL | Current status |
+|---|---|---|
+| Native production | `http://45.10.166.244:8121/` | Current `playing-battlesnake.service`; use for deployment verification |
+| Public production route | `https://ya.sergeiscv.ru/snake/` | Stale/broken: observed HTTP 502 on 2026-07-15 |
+| Historical dev route | `https://ya.sergeiscv.ru/test-snake/` | Reference only; verify independently before use |
+
+DNS for `ya.sergeiscv.ru` points to a different host from `45.10.166.244`.
+The public route is therefore not an alias for the native service host and is
+not a success gate for the issue #45 native deployment.
 
 ## Current Deployment
 
-- Server: `45.10.166.244` (`ya.sergeiscv.ru`)
-- Public URL: `https://ya.sergeiscv.ru/snake/`
+- Native service host: `45.10.166.244`
 - Direct native endpoint: `http://45.10.166.244:8121/`
 - Runtime: systemd unit `playing-battlesnake.service`
 - Native service port: `8121`
@@ -152,18 +156,24 @@ sudo systemctl status playing-battlesnake.service
 sudo journalctl -u playing-battlesnake.service -n 100 --no-pager
 ```
 
-Check both the native port and the nginx route. The first URL talks directly to
-the systemd service; the second goes through the public `/snake/` upstream.
+Check the native port. This is the required deployment status check:
 
 ```bash
 curl -fsS http://45.10.166.244:8121/
-curl -fsS https://ya.sergeiscv.ru/snake/
 ```
 
 Expected response:
 
 ```json
 {"apiversion":"1","author":"codex","color":"#2563eb","head":"default","tail":"default","version":"0.1.0-native"}
+```
+
+The public route is a separate repair concern. As of 2026-07-15 it resolves to
+a different host and returns 502; record its status without treating failure as
+a failed native deployment:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' https://ya.sergeiscv.ru/snake/
 ```
 
 ## Update the Native systemd Service
@@ -218,12 +228,12 @@ sudo systemctl show playing-battlesnake.service \
 curl -fsS http://127.0.0.1:8121/
 ```
 
-## API Smoke Test
+## Production API Smoke Test (direct native endpoint)
 
 ```bash
 curl -fsS -H "Content-Type: application/json" \
   -d '{"game":{"id":"smoke","ruleset":{"name":"standard","settings":{}}},"turn":1,"board":{"height":7,"width":7,"food":[{"x":3,"y":3}],"hazards":[],"snakes":[{"id":"me","name":"me","health":100,"body":[{"x":1,"y":1},{"x":1,"y":0}]}]},"you":{"id":"me","name":"me","health":100,"body":[{"x":1,"y":1},{"x":1,"y":0}]}}' \
-  https://ya.sergeiscv.ru/snake/move
+  http://45.10.166.244:8121/move
 ```
 
 Expected response is a legal move:
@@ -241,7 +251,7 @@ Standard multi-snake smoke:
 ```bash
 curl -fsS -H "Content-Type: application/json" \
   -d '{"game":{"id":"standard-ffa-smoke","ruleset":{"name":"standard","settings":{}}},"turn":1,"board":{"height":7,"width":7,"food":[{"x":3,"y":3}],"hazards":[],"snakes":[{"id":"me","name":"me","health":100,"body":[{"x":2,"y":2},{"x":2,"y":1},{"x":2,"y":0}]},{"id":"north","name":"north","health":100,"body":[{"x":6,"y":6},{"x":6,"y":5},{"x":6,"y":4}]},{"id":"east","name":"east","health":100,"body":[{"x":6,"y":0},{"x":5,"y":0},{"x":4,"y":0}]}]},"you":{"id":"me","name":"me","health":100,"body":[{"x":2,"y":2},{"x":2,"y":1},{"x":2,"y":0}]}}' \
-  https://ya.sergeiscv.ru/snake/move
+  http://45.10.166.244:8121/move
 ```
 
 Expected response is any legal move. This specifically exercises the production
@@ -253,6 +263,8 @@ Standard FFA parity work is still gated.
 After deploying a native release, watch at least the first ladder observation
 window before considering the rollout healthy:
 
+- the direct `http://45.10.166.244:8121/` health and `/move` smoke tests remain
+  successful; do not substitute the currently broken public route for this check;
 - no `/move` timeout or error spikes in
   `journalctl -u playing-battlesnake.service`;
 - no unexpected first-safe fallback surge;
@@ -262,20 +274,26 @@ window before considering the rollout healthy:
   `docs/standard-ffa-depth-search-ab.md` and
   `docs/standard-ffa-native-port-report.md`.
 
-## Nginx Route
+## Public-route repair reference
 
-Config file:
+The `/snake/` nginx route is not on the native service host: it belongs to the
+separate host serving DNS for `ya.sergeiscv.ru`, and it was returning 502 on
+2026-07-15. The following is repair/reference configuration, not a description
+of verified current state. On that public-route host, first discover the active
+nginx configuration (a historical candidate path is shown below):
 
 ```bash
-/etc/nginx/sites-enabled/ya.sergeiscv.ru
+sudo nginx -T
+# Historical candidate: /etc/nginx/sites-enabled/ya.sergeiscv.ru
 ```
 
-Route:
+The production upstream must target the native service host, not loopback on
+the separate public-route host:
 
 ```nginx
 location = /snake { return 301 /snake/; }
 location /snake/ {
-    proxy_pass http://127.0.0.1:8121/;
+    proxy_pass http://45.10.166.244:8121/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -287,20 +305,21 @@ location /snake/ {
 }
 ```
 
-After editing nginx:
+After repairing the configuration on the public-route host:
 
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx
+curl -fsS https://ya.sergeiscv.ru/snake/
 ```
 
 ## Dev Snake (Python)
 
-The dev snake is the FastAPI app `battlesnake.main:app`, registered on
-play.battlesnake.com as a separate snake pointing to
-`https://ya.sergeiscv.ru/test-snake/`. It exists to iterate on Standard FFA
-strategies in Python before porting them to the native C server (see
-`docs/standard-ffa-strategy-spec.md`, Delivery Model).
+Historically, the dev snake used the FastAPI app `battlesnake.main:app` and the
+route `https://ya.sergeiscv.ru/test-snake/` for Standard FFA experiments before
+porting strategies to the native C server (see
+`docs/standard-ffa-strategy-spec.md`, Delivery Model). This section preserves
+that development recipe; it does not assert that the route or process is live.
 
 Environment:
 
@@ -311,11 +330,11 @@ SNAKE_COLOR=#f59e0b             # dev identity; production snake is #2563eb
 MOVE_SAFETY_MARGIN_MS=150       # decide deadline = game timeout - margin
 ```
 
-Run on the server (pick a free local port, e.g. `8122`; `8120` is the MTG
-backend, `8121` is the production snake):
+On a chosen dev host, use its actual checkout path and a free local port. The
+placeholder below is intentional; do not infer the native production checkout:
 
 ```bash
-cd ~/deploy/playing-battlesnake
+cd <dev-checkout>
 git pull
 
 python3 -m venv .venv-dev
@@ -327,18 +346,18 @@ GIT_REVISION=$(git rev-parse --short HEAD) \
 .venv-dev/bin/uvicorn battlesnake.main:app --host 127.0.0.1 --port 8122
 ```
 
-The nginx route for `/test-snake/` mirrors the `/snake/` route with
-`proxy_pass http://127.0.0.1:8122/;`.
+Any `/test-snake/` proxy host and upstream must be rediscovered before restoring
+the historical route; do not assume it shares loopback with this dev process.
 
-Smoke test:
+After explicitly restoring that separate route, its diagnostic smoke test is:
 
 ```bash
 curl -fsS https://ya.sergeiscv.ru/test-snake/
 ```
 
-Expected: `"version":"0.1.0-dev+<variant>.<git rev>"` and the dev color. The
-`/move` smoke test payload from the production section works unchanged against
-`https://ya.sergeiscv.ru/test-snake/move`.
+A healthy restored route reports `"version":"0.1.0-dev+<variant>.<git rev>"`
+and the dev color. Until the route has been restored and verified, this command
+is diagnostic rather than a production deployment gate.
 
 Behavior notes:
 
@@ -373,5 +392,7 @@ sudo journalctl -u playing-battlesnake.service -n 100 --no-pager
 
 If the rollback also requires earlier environment values, edit the existing
 drop-in with `sudo systemctl edit playing-battlesnake.service`, run
-`sudo systemctl daemon-reload`, and restart again. Then rerun the direct-port
-and public status checks plus both smoke tests.
+`sudo systemctl daemon-reload`, and restart again. Then rerun the direct native-
+port status check and both direct native-port smoke tests. Public-route recovery
+remains a separate operation and is not required to validate the issue #45
+systemd deployment.
