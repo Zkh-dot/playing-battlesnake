@@ -712,13 +712,16 @@ def test_slow_reader_cannot_extend_absolute_request_read_deadline() -> None:
         stop_dribbling: threading.Event | None = None
         dribbler: threading.Thread | None = None
         try:
-            _wait_for_port(port)
+            _wait_for_server_ready(process, server_log)
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
             slow = socket.create_connection(("127.0.0.1", port), timeout=0.5)
             slow.settimeout(1.0)
             stop_dribbling, dribbler = _start_partial_request_dribbler(
                 slow,
                 interval_seconds=0.05,
             )
+            _wait_for_server_socket_count(process.pid, 2, exact=True)
+            _wait_for_worker_socket_wait(process.pid)
             started = time.monotonic()
             response = _receive_until_close(slow)
             elapsed_ms = (time.monotonic() - started) * 1000.0
@@ -757,14 +760,24 @@ def test_shutdown_interrupts_active_and_queued_continuous_slow_readers() -> None
         sockets: list[socket.socket] = []
         dribblers: list[tuple[threading.Event, threading.Thread]] = []
         try:
-            _wait_for_port(port)
-            for _ in range(2):
-                sock = socket.create_connection(("127.0.0.1", port), timeout=0.5)
-                sock.settimeout(1.0)
-                sockets.append(sock)
-                dribblers.append(
-                    _start_partial_request_dribbler(sock, interval_seconds=0.05)
-                )
+            _wait_for_server_ready(process, server_log)
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
+
+            active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            active.settimeout(1.0)
+            sockets.append(active)
+            dribblers.append(
+                _start_partial_request_dribbler(active, interval_seconds=0.05)
+            )
+            _wait_for_server_socket_count(process.pid, 2, exact=True)
+            _wait_for_worker_socket_wait(process.pid)
+
+            queued = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            queued.settimeout(1.0)
+            sockets.append(queued)
+            dribblers.append(
+                _start_partial_request_dribbler(queued, interval_seconds=0.05)
+            )
             _wait_for_server_socket_count(process.pid, 3, exact=True, stable_for=0.05)
 
             started = time.monotonic()
