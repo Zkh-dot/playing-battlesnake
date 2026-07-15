@@ -22,6 +22,7 @@ fi
   battlesnake/c-core/core/standard_ffa.c \
   battlesnake/c-core/core/position_eval.c \
   battlesnake/c-core/core/search_stats.c \
+  battlesnake/c-core/core/duel_weight_profiles_generated.c \
   battlesnake/c-core/core/search_workspace.c \
   battlesnake/c-core/core/search_state.c \
   battlesnake/c-core/core/zobrist.c \

@@ -39,6 +39,13 @@ build/tests/test_overload_response
 build/tests/test_arena
 
 "${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
+  tests/c/test_duel_weight_profiles.c \
+  battlesnake/c-core/core/duel_weight_profiles_generated.c \
+  -o build/tests/test_duel_weight_profiles
+
+build/tests/test_duel_weight_profiles
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
   tests/c/test_battlesnake_json.c \
   battlesnake/c-core/server/arena.c \
   battlesnake/c-core/server/battlesnake_json.c \

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.tuning.evaluate_weights import EvaluationMetrics, evaluate_samples
+from tools.tuning.evaluate_weights import EvaluationMetrics, evaluate_samples, load_weights
 from tools.tuning.search_weights import (
     DEFAULT_SEARCH_SPACE,
     main as search_weights_main,
@@ -48,8 +48,14 @@ EXPECTED_KEYS = {
 
 class WeightConfigTests(unittest.TestCase):
     def test_default_weights_file_contains_all_native_keys(self) -> None:
-        weights = json.loads(DEFAULT_WEIGHTS_PATH.read_text())
+        profile = json.loads(DEFAULT_WEIGHTS_PATH.read_text())
+        weights = profile["weights"]
 
+        self.assertEqual(set(profile), {"schema_version", "name", "version", "status", "weights"})
+        self.assertEqual(profile["schema_version"], 1)
+        self.assertEqual(profile["name"], "duel-default")
+        self.assertEqual(profile["version"], "1")
+        self.assertEqual(profile["status"], "production-default")
         self.assertEqual(set(weights), EXPECTED_KEYS)
         self.assertEqual(weights["terminal_win"], 1000000.0)
         self.assertEqual(weights["terminal_loss"], -1000000.0)
@@ -59,10 +65,18 @@ class WeightConfigTests(unittest.TestCase):
         self.assertEqual(weights["opponent_low_health_food_denial"], 0.0)
 
     def test_tuned_weights_file_starts_with_same_keys(self) -> None:
-        default_weights = json.loads(DEFAULT_WEIGHTS_PATH.read_text())
-        tuned_weights = json.loads(TUNED_WEIGHTS_PATH.read_text())
+        default_weights = json.loads(DEFAULT_WEIGHTS_PATH.read_text())["weights"]
+        tuned_profile = json.loads(TUNED_WEIGHTS_PATH.read_text())
+        tuned_weights = tuned_profile["weights"]
 
         self.assertEqual(set(tuned_weights), set(default_weights))
+        self.assertEqual(tuned_profile["status"], "candidate")
+
+    def test_load_weights_strictly_validates_and_returns_inner_mapping(self) -> None:
+        weights = load_weights(DEFAULT_WEIGHTS_PATH)
+
+        self.assertEqual(set(weights), EXPECTED_KEYS)
+        self.assertEqual(weights["base"], 500.0)
 
 
 @dataclass(frozen=True)
@@ -150,15 +164,34 @@ class SearchWeightsTests(unittest.TestCase):
                 patch.object(sys, "stderr", io.StringIO()),
                 patch.object(sys, "stdout", io.StringIO()),
                 patch("builtins.__import__", side_effect=blocked_import),
-                patch("tools.tuning.search_weights.load_weights", return_value={"base": 1.0}),
+                patch("tools.tuning.search_weights.load_profile") as load_profile,
                 patch("tools.tuning.search_weights.load_samples", return_value=[object()]),
                 patch(
                     "tools.tuning.search_weights._run_random_search",
-                    return_value={"base": 1.0, "opponent_reachable_space": 2.0},
+                    return_value={
+                        **{key: 1.0 for key in EXPECTED_KEYS},
+                        "opponent_reachable_space": 2.0,
+                    },
                 ) as random_search,
                 patch("tools.tuning.search_weights._run_optuna_search") as optuna_search,
             ):
+                from tools.tuning.duel_weight_profiles import DuelWeightProfile
+
+                load_profile.return_value = DuelWeightProfile(
+                    schema_version=1,
+                    name="duel-default",
+                    version="1",
+                    status="production-default",
+                    weights={key: 1.0 for key in EXPECTED_KEYS},
+                )
                 self.assertEqual(search_weights_main(), 0)
+
+            written = json.loads(output.read_text())
+            self.assertEqual(written["schema_version"], 1)
+            self.assertEqual(written["status"], "candidate")
+            self.assertEqual(written["name"], "duel-default-search-candidate")
+            self.assertEqual(written["version"], "1")
+            self.assertEqual(set(written["weights"]), EXPECTED_KEYS)
 
         random_search.assert_called_once()
         self.assertEqual(random_search.call_args.kwargs["output"].name, "best_weights-trials.jsonl")

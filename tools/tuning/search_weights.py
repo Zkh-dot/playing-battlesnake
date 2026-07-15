@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tools.tuning.evaluate_weights import evaluate_samples, load_samples, load_weights
+from tools.tuning.duel_weight_profiles import DuelWeightProfile, load_profile, validate_profile
+from tools.tuning.evaluate_weights import evaluate_samples, load_samples
 
 
 DEFAULT_SEARCH_SPACE: dict[str, tuple[float, float]] = {
@@ -181,7 +182,8 @@ def main() -> int:
     parser.add_argument("--random-fallback", action="store_true")
     args = parser.parse_args()
 
-    default_weights = load_weights(args.default_weights)
+    base_profile = load_profile(args.default_weights)
+    default_weights = dict(base_profile.weights)
     samples = load_samples(args.exports, args.split, args.limit)
     use_random_search = args.random_fallback
     if not use_random_search:
@@ -216,7 +218,14 @@ def main() -> int:
             plateau_min_delta=args.plateau_min_delta,
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(best_weights, indent=2, sort_keys=True) + "\n")
+    candidate_profile = validate_profile(DuelWeightProfile(
+        schema_version=base_profile.schema_version,
+        name=f"{base_profile.name}-search-candidate",
+        version=base_profile.version,
+        status="candidate",
+        weights=best_weights,
+    ))
+    args.output.write_text(json.dumps(candidate_profile.to_dict(), indent=2) + "\n")
     print(json.dumps({"output": str(args.output)}, sort_keys=True))
     return 0
 
