@@ -34,6 +34,7 @@ from tools.tuning.duel_weight_profiles import (
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = ROOT / "configs" / "evaluation_weights"
 PROFILE_PATHS = [CONFIG_DIR / "default.json", CONFIG_DIR / "tuned-opponent-pressure.json"]
+REPLAY_FIXTURE = ROOT / "tests" / "fixtures" / "issue_46_duel_weight_replays.json"
 ENVELOPE_KEYS = {"schema_version", "name", "version", "status", "weights"}
 
 
@@ -162,6 +163,39 @@ def test_generated_profile_has_native_evaluation_parity() -> None:
         profile = load_profile(path)
         native_weights = native_by_id[profile.identifier]["weights"]
         assert evaluate(board, "us", native_weights) == evaluate(board, "us", dict(profile.weights))
+
+
+def test_replay_fixture_and_report_schema_are_complete() -> None:
+    fixtures = json.loads(REPLAY_FIXTURE.read_text())
+    assert fixtures["schema_version"] == 1
+    assert len(fixtures["positions"]) == 4
+    assert {(row["game_id"], row["turn"]) for row in fixtures["positions"]} == {
+        ("1197cf21-29c9-43f8-a364-18d9e226fb8c", 197),
+        ("8fd97d0d-6f20-436a-833c-062027a12617", 357),
+        ("ab3c8a6f-2a94-46f2-a33f-4af6d5b5725a", 326),
+        ("be95288a-97e1-401b-a41a-cb79a5afd7b8", 308),
+    }
+    for row in fixtures["positions"]:
+        assert set(row) == {"game_id", "turn", "recorded_move", "snake_id", "board"}
+        assert set(row["board"]) == {"width", "height", "ruleset_name", "hazard_damage", "snakes", "food", "hazards"}
+
+
+def test_replay_report_tool_records_both_profiles_and_repeats(tmp_path: Path) -> None:
+    output = tmp_path / "report.json"
+    result = subprocess.run(
+        [sys.executable, "tools/tuning/report_duel_weight_replays.py", "--fixtures", str(REPLAY_FIXTURE),
+         "--budget-ms", "300", "--repeats", "2", "--output", str(output)],
+        cwd=ROOT, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text())
+    assert payload["settings"] == {"budget_ms": 300, "repeats": 2}
+    assert len(payload["records"]) == 16
+    assert {row["profile"] for row in payload["records"]} == {"duel-default@1", "tuned-opponent-pressure@1"}
+    for row in payload["records"]:
+        assert {"game_id", "turn", "repeat", "profile", "move", "depth", "timed_out",
+                "elapsed_ms", "selected_structural_proof", "root_comparison",
+                "structural_risk", "policy_violation", "error"} <= set(row)
 
 
 @pytest.fixture(scope="module")
