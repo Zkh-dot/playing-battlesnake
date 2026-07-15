@@ -14,6 +14,25 @@ bash tools/build_native_server.sh
 BATTLESNAKE_PORT=8000 BATTLESNAKE_SEARCH_BUDGET_MS=400 build/battlesnake-server
 ```
 
+## Duel evaluation profiles
+
+The reviewable profile sources are
+`configs/evaluation_weights/default.json` and
+`configs/evaluation_weights/tuned-opponent-pressure.json`. The native registry
+is generated deterministically from those complete envelopes at build time;
+validate both the sources and generated files with:
+
+```bash
+python3 tools/tuning/generate_duel_weight_profiles.py --check
+```
+
+Select a compiled profile with
+`BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>`. When the variable is unset, the
+intentional production default is `duel-default@1`. A present empty, malformed,
+or unknown selector is startup-fatal before the listener is created and never
+falls back to the default. The server does not load arbitrary runtime files.
+See `docs/runbooks/battlesnake-deploy.md` for telemetry and deployment checks.
+
 ## Tests
 
 ```bash

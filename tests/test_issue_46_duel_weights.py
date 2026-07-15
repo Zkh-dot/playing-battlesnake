@@ -240,6 +240,51 @@ def test_committed_markdown_is_rendered_from_current_evidence_and_registry() -> 
     ) in expected
 
 
+def test_operator_docs_define_the_duel_profile_runtime_contract() -> None:
+    readme = (ROOT / "README.md").read_text()
+    runbook = (ROOT / "docs/runbooks/battlesnake-deploy.md").read_text()
+    docs = readme + "\n" + runbook
+
+    assert "configs/evaluation_weights/default.json" in docs
+    assert "configs/evaluation_weights/tuned-opponent-pressure.json" in docs
+    assert "python3 tools/tuning/generate_duel_weight_profiles.py --check" in docs
+    assert "BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>" in docs
+    assert "duel-default@1" in docs
+    assert "unset" in docs.lower()
+    assert "empty" in docs.lower()
+    assert "malformed" in docs.lower()
+    assert "unknown" in docs.lower()
+    assert "before the listener" in docs.lower()
+    assert "never falls back" in docs.lower()
+    assert "server_startup" in docs
+    assert "move_request" in docs
+    assert "weight_set" in docs
+    assert "weight_version" in docs
+    assert "weight_sha256" in docs
+    assert "weight_status" in docs
+    assert "build time" in docs.lower()
+    assert "arbitrary runtime files" in docs.lower()
+
+
+def test_tuning_docs_preserve_evidence_and_separate_promotion() -> None:
+    report = (ROOT / "docs/weight-tuning-report.md").read_text()
+
+    assert "20-match result is directional, not conclusive" in report
+    assert "docs/duel-weight-ab-report.md" in report
+    assert "docs/evidence/issue-46-duel-weight-ab.json" in report
+    assert "docs/evidence/issue-46-duel-weight-replays.json" in report
+    assert "candidate" in report.lower()
+    assert "not the production default" in report.lower()
+    assert "separate promotion" in report.lower()
+    assert "do not promote" in report.lower()
+    assert "--seed 46001 --scenario-count 100 --fixed-depth 3" in report
+    assert "--time-budget-ms 300 --max-turns 200" in report
+    assert "--budget-ms 300 --repeats 5" in report
+    assert "200 paired games" in report.lower()
+    assert "40 records" in report.lower()
+    assert "latency gate" in report.lower()
+
+
 @pytest.fixture(scope="module")
 def native_server() -> Path:
     subprocess.run(["bash", "tools/build_native_server.sh"], cwd=ROOT, check=True)

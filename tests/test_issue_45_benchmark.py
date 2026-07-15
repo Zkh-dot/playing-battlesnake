@@ -28,6 +28,9 @@ def _move_event() -> dict[str, object]:
         "handler_ms": 2.0,
         "total_ms": 3.0,
         "fallback": False,
+        "weight_set": "duel-default",
+        "weight_version": "1",
+        "weight_sha256": "a" * 64,
     }
 
 
@@ -328,6 +331,7 @@ def test_run_benchmark_passes_exact_strategy_environment_to_server(
         deadline_ms=500,
         search_budget_ms=301,
         safety_margin_ms=201,
+        duel_weight_set="tuned-opponent-pressure@1",
     )
 
     assert captured_environment == {
@@ -342,9 +346,65 @@ def test_run_benchmark_passes_exact_strategy_environment_to_server(
         "BATTLESNAKE_RESPONSE_BYTES": "4096",
         "BATTLESNAKE_SEARCH_BUDGET_MS": "301",
         "BATTLESNAKE_WORKERS": "2",
+        "BATTLESNAKE_DUEL_WEIGHT_SET": "tuned-opponent-pressure@1",
     }
     assert result["configuration"]["search_budget_ms"] == 301
     assert result["configuration"]["safety_margin_ms"] == 201
+    assert result["configuration"]["duel_weight_set"] == "tuned-opponent-pressure@1"
+
+
+def test_result_gate_audits_selected_profile_identity() -> None:
+    startup = {
+        "event": "server_startup",
+        "weight_set": "tuned-opponent-pressure",
+        "weight_version": "1",
+        "weight_status": "candidate",
+        "weight_sha256": "b" * 64,
+    }
+    move = {
+        **_move_event(),
+        "weight_set": "tuned-opponent-pressure",
+        "weight_sha256": "b" * 64,
+    }
+
+    result = assemble_result(
+        configuration={"deadline_ms": 500, "duel_weight_set": "tuned-opponent-pressure@1"},
+        samples=[_sample(10.0)],
+        move_events=[move],
+        overload_events=[],
+        lifecycle=_healthy_lifecycle(),
+        startup_events=[startup],
+        expected_duel_weight_set="tuned-opponent-pressure@1",
+    )
+
+    assert result["passed"] is True
+    assert result["duel_weight_profile"] == {
+        "name": "tuned-opponent-pressure",
+        "version": "1",
+        "status": "candidate",
+        "sha256": "b" * 64,
+    }
+
+
+def test_result_gate_fails_profile_identity_mismatch() -> None:
+    result = assemble_result(
+        configuration={"deadline_ms": 500, "duel_weight_set": "tuned-opponent-pressure@1"},
+        samples=[_sample(10.0)],
+        move_events=[_move_event()],
+        overload_events=[],
+        lifecycle=_healthy_lifecycle(),
+        startup_events=[{
+            "event": "server_startup",
+            "weight_set": "duel-default",
+            "weight_version": "1",
+            "weight_status": "production-default",
+            "weight_sha256": "a" * 64,
+        }],
+        expected_duel_weight_set="tuned-opponent-pressure@1",
+    )
+
+    assert result["passed"] is False
+    assert "duel_weight_profile_mismatch" in result["failure_reasons"]
 
 
 def test_cli_accepts_server_maximum_search_budget(
@@ -377,6 +437,23 @@ def test_cli_defaults_match_production_strategy_configuration(
     assert benchmark.main([]) == 0
     assert captured["search_budget_ms"] == 300
     assert captured["safety_margin_ms"] == 200
+    assert captured["duel_weight_set"] == "duel-default@1"
+    assert json.loads(capsys.readouterr().out) == {"passed": True}
+
+
+def test_cli_accepts_explicit_candidate_weight_set(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_benchmark(**arguments: object) -> dict[str, object]:
+        captured.update(arguments)
+        return {"passed": True}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", fake_run_benchmark)
+
+    assert benchmark.main(["--duel-weight-set", "tuned-opponent-pressure@1"]) == 0
+    assert captured["duel_weight_set"] == "tuned-opponent-pressure@1"
     assert json.loads(capsys.readouterr().out) == {"passed": True}
 
 

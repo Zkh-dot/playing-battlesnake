@@ -303,13 +303,15 @@ def _valid_move_event(event: dict[str, object]) -> bool:
 
 def assemble_result(
     *,
-    configuration: dict[str, int],
+    configuration: dict[str, int | str],
     samples: list[dict[str, object]],
     move_events: list[dict[str, object]],
     overload_events: list[dict[str, object]],
     lifecycle: dict[str, object],
+    startup_events: list[dict[str, object]] | None = None,
+    expected_duel_weight_set: str | None = None,
 ) -> dict[str, object]:
-    deadline_ms = configuration["deadline_ms"]
+    deadline_ms = int(configuration["deadline_ms"])
     external = summarize(samples, deadline_ms)
     valid_move_events = [event for event in move_events if _valid_move_event(event)]
     server_total_p99 = _percentile(
@@ -332,6 +334,39 @@ def assemble_result(
     if lifecycle["forced_kill"]:
         failure_reasons.append("server_forced_kill")
 
+    profile: dict[str, object] | None = None
+    if expected_duel_weight_set is not None:
+        expected_name, separator, expected_version = expected_duel_weight_set.rpartition("@")
+        events = startup_events or []
+        if len(events) == 1:
+            startup = events[0]
+            profile = {
+                "name": startup.get("weight_set"),
+                "version": startup.get("weight_version"),
+                "status": startup.get("weight_status"),
+                "sha256": startup.get("weight_sha256"),
+            }
+        valid_profile = (
+            separator == "@"
+            and bool(expected_name)
+            and bool(expected_version)
+            and profile is not None
+            and profile["name"] == expected_name
+            and profile["version"] == expected_version
+            and profile["status"] in {"production-default", "candidate"}
+            and isinstance(profile["sha256"], str)
+            and len(profile["sha256"]) == 64
+            and all(character in "0123456789abcdef" for character in profile["sha256"])
+            and all(
+                event.get("weight_set") == profile["name"]
+                and event.get("weight_version") == profile["version"]
+                and event.get("weight_sha256") == profile["sha256"]
+                for event in move_events
+            )
+        )
+        if not valid_profile:
+            failure_reasons.append("duel_weight_profile_mismatch")
+
     return {
         "configuration": configuration,
         "external": external,
@@ -347,6 +382,7 @@ def assemble_result(
         "timeout_count": sum(sample.get("error") == "timeout" for sample in samples),
         "error_count": sum(sample.get("error") not in {None, "timeout"} for sample in samples),
         "server_lifecycle": lifecycle,
+        "duel_weight_profile": profile,
         "passed": not failure_reasons,
         "failure_reasons": failure_reasons,
     }
@@ -376,6 +412,7 @@ def shutdown_server(process: Any, timeout_seconds: float = 5.0) -> dict[str, obj
 def run_benchmark(
     *, workers: int, queue_capacity: int, concurrency: int, batches: int,
     deadline_ms: int, search_budget_ms: int, safety_margin_ms: int,
+    duel_weight_set: str = "duel-default@1",
 ) -> dict[str, object]:
     subprocess.run(
         ["bash", "tools/build_native_server.sh"],
@@ -401,6 +438,7 @@ def run_benchmark(
                 "BATTLESNAKE_RESPONSE_BYTES": "4096",
                 "BATTLESNAKE_SEARCH_BUDGET_MS": str(search_budget_ms),
                 "BATTLESNAKE_WORKERS": str(workers),
+                "BATTLESNAKE_DUEL_WEIGHT_SET": duel_weight_set,
             },
             stdout=server_log,
             stderr=subprocess.STDOUT,
@@ -445,6 +483,7 @@ def run_benchmark(
 
     all_move_events = [event for event in events if event.get("event") == "move_request"]
     move_events = all_move_events[warmup_move_event_count:]
+    startup_events = [event for event in events if event.get("event") == "server_startup"]
     overload_events = [event for event in events if event.get("event") == "server_overload"]
     return assemble_result(
         configuration={
@@ -455,11 +494,14 @@ def run_benchmark(
             "deadline_ms": deadline_ms,
             "search_budget_ms": search_budget_ms,
             "safety_margin_ms": safety_margin_ms,
+            "duel_weight_set": duel_weight_set,
         },
         samples=samples,
         move_events=move_events,
         overload_events=overload_events,
         lifecycle=lifecycle,
+        startup_events=startup_events,
+        expected_duel_weight_set=duel_weight_set,
     )
 
 
@@ -478,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--deadline-ms", type=int, default=500)
     parser.add_argument("--search-budget-ms", type=int, default=300)
     parser.add_argument("--safety-margin-ms", type=int, default=200)
+    parser.add_argument("--duel-weight-set", default="duel-default@1")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     for option in (
@@ -501,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
         deadline_ms=args.deadline_ms,
         search_budget_ms=args.search_budget_ms,
         safety_margin_ms=args.safety_margin_ms,
+        duel_weight_set=args.duel_weight_set,
     )
     document = json.dumps(result, sort_keys=True, allow_nan=False)
     print(document)
