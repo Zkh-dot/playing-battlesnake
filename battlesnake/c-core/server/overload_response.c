@@ -15,7 +15,9 @@ bool BsWriteOverloadResponseWith(int client_fd, BsOverloadSendFunction send_func
         "{}";
 
     size_t written = 0;
-    while (written < sizeof(response) - 1) {
+    size_t attempts_remaining = sizeof(response) - 1;
+    while (written < sizeof(response) - 1 && attempts_remaining > 0) {
+        attempts_remaining--;
         ssize_t result = send_function(
             client_fd,
             response + written,

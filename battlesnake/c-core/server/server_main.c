@@ -41,6 +41,8 @@ typedef struct {
 static volatile sig_atomic_t g_should_stop = 0;
 static volatile sig_atomic_t g_signal_write_fd = -1;
 
+_Static_assert(256 <= PIPE_BUF, "telemetry lines must fit one atomic pipe write");
+
 static void handle_signal(int signal_number) {
     (void)signal_number;
     int saved_errno = errno;
@@ -165,6 +167,11 @@ static bool set_nonblocking_cloexec(int fd) {
     return true;
 }
 
+static bool set_nonblocking(int fd) {
+    int status_flags = fcntl(fd, F_GETFL);
+    return status_flags >= 0 && fcntl(fd, F_SETFL, status_flags | O_NONBLOCK) == 0;
+}
+
 static bool create_wakeup_pipe(int wakeup_pipe[2]) {
     wakeup_pipe[0] = -1;
     wakeup_pipe[1] = -1;
@@ -225,9 +232,10 @@ static void log_move_request(
     double handler_ms,
     double total_ms
 ) {
-    flockfile(stderr);
-    fprintf(
-        stderr,
+    char line[256];
+    int length = snprintf(
+        line,
+        sizeof(line),
         "{\"event\":\"move_request\",\"status\":%d,\"queue_ms\":%.3f,"
         "\"handler_ms\":%.3f,\"total_ms\":%.3f,\"timeout_ms\":%d,"
         "\"fallback\":%s}\n",
@@ -238,13 +246,16 @@ static void log_move_request(
         result->game_timeout_ms,
         result->fallback_used ? "true" : "false"
     );
-    funlockfile(stderr);
+    if (length > 0 && (size_t)length < sizeof(line)) {
+        ssize_t status = write(STDERR_FILENO, line, (size_t)length);
+        (void)status;
+    }
 }
 
 static void log_server_overload(void) {
-    flockfile(stderr);
-    fputs("{\"event\":\"server_overload\",\"status\":503}\n", stderr);
-    funlockfile(stderr);
+    static const char line[] = "{\"event\":\"server_overload\",\"status\":503}\n";
+    ssize_t status = write(STDERR_FILENO, line, sizeof(line) - 1);
+    (void)status;
 }
 
 static BsHttpResult handle_connection(
@@ -417,6 +428,10 @@ static int create_listen_socket(int port) {
 
 int main(void) {
     BsServerConfig config = config_from_env();
+
+    if (!set_nonblocking(STDERR_FILENO)) {
+        return 1;
+    }
 
     sigset_t termination_signals;
     sigset_t previous_signal_mask;

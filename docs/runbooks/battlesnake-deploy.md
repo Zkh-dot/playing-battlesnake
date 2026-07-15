@@ -68,6 +68,13 @@ accepted overload emits
 `{"event":"server_overload","status":503}`. Alert on timeouts/5xx, increasing
 fallback rate, or total p99 approaching the game deadline.
 
+Telemetry is best-effort under sink backpressure. Stderr is configured
+nonblocking at startup, and every JSON event is emitted with one bounded raw
+write so a full pipe cannot stall request acceptance or workers. A line may be
+dropped on `EAGAIN`, a partial write, or another sink error; production logging
+must monitor collector health in addition to event-derived alerts. The server
+fails startup if stderr cannot be configured nonblocking.
+
 ### Concurrent capacity gate
 
 Run the production-path gate before deployment or any capacity change:
