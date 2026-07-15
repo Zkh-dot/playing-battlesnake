@@ -330,9 +330,19 @@ def test_run_benchmark_passes_exact_strategy_environment_to_server(
         safety_margin_ms=201,
     )
 
-    assert captured_environment["BATTLESNAKE_SEARCH_BUDGET_MS"] == "301"
-    assert captured_environment["BATTLESNAKE_MOVE_SAFETY_MARGIN_MS"] == "201"
-    assert captured_environment["BATTLESNAKE_BIND_ADDRESS"] == "127.0.0.1"
+    assert captured_environment == {
+        "BATTLESNAKE_ARENA_BYTES": "262144",
+        "BATTLESNAKE_BIND_ADDRESS": "127.0.0.1",
+        "BATTLESNAKE_IO_TIMEOUT_MS": "2000",
+        "BATTLESNAKE_MAX_REQUEST_BYTES": "196608",
+        "BATTLESNAKE_MIN_SEARCH_BUDGET_MS": "50",
+        "BATTLESNAKE_MOVE_SAFETY_MARGIN_MS": "201",
+        "BATTLESNAKE_PORT": "8121",
+        "BATTLESNAKE_QUEUE_CAPACITY": "8",
+        "BATTLESNAKE_RESPONSE_BYTES": "4096",
+        "BATTLESNAKE_SEARCH_BUDGET_MS": "301",
+        "BATTLESNAKE_WORKERS": "2",
+    }
     assert result["configuration"]["search_budget_ms"] == 301
     assert result["configuration"]["safety_margin_ms"] == 201
 

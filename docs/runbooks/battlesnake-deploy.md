@@ -36,8 +36,13 @@ Required environment:
 ```text
 BATTLESNAKE_PORT=8121
 BATTLESNAKE_BIND_ADDRESS=0.0.0.0
+BATTLESNAKE_ARENA_BYTES=262144
+BATTLESNAKE_MAX_REQUEST_BYTES=196608
+BATTLESNAKE_RESPONSE_BYTES=4096
+BATTLESNAKE_IO_TIMEOUT_MS=2000
 BATTLESNAKE_SEARCH_BUDGET_MS=300
 BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200
+BATTLESNAKE_MIN_SEARCH_BUDGET_MS=50
 BATTLESNAKE_WORKERS=2
 BATTLESNAKE_QUEUE_CAPACITY=8
 ```
@@ -216,16 +221,25 @@ The following procedure binds only loopback port `8129`, applies the exact
 production strategy/capacity values, waits for the native readiness record,
 checks the kernel listener address, retains logs, and bounds graceful shutdown.
 Any failure exits nonzero and the EXIT trap stops the candidate. It never sends
-traffic to the ladder listener on port `8121`.
+traffic to the ladder listener on port `8121`. `mktemp` creates the retained log
+atomically with restrictive permissions. `env -i` removes operator-shell state;
+the launch enumerates every `BATTLESNAKE_*` setting supported by the native
+server, using production values or the documented server defaults.
+
+Port `8129` is intentionally fixed, so a `mkdir` lock serializes verification
+across processes. If a crash leaves `/tmp/battlesnake-candidate-8129.lock`, first
+confirm that no candidate process or `8129` listener remains, then remove only
+that stale directory before retrying.
 
 ```bash
 set -euo pipefail
 : "${CANDIDATE_BINARY:?select the exact candidate or installed binary first}"
 test -x "$CANDIDATE_BINARY"
 CANDIDATE_BINARY=$(readlink -f -- "$CANDIDATE_BINARY")
-CANDIDATE_LOG="/tmp/battlesnake-candidate-8129.$$.log"
-: >"$CANDIDATE_LOG"
+CANDIDATE_LOG=$(mktemp "/tmp/battlesnake-candidate-8129.XXXXXX.log")
 CANDIDATE_PID=""
+CANDIDATE_LOCK="/tmp/battlesnake-candidate-8129.lock"
+CANDIDATE_LOCK_HELD=false
 
 stop_candidate() {
   if [[ -z "$CANDIDATE_PID" ]]; then
@@ -259,10 +273,22 @@ stop_candidate() {
   fi
 }
 
+release_candidate_lock() {
+  if [[ "$CANDIDATE_LOCK_HELD" != true ]]; then
+    return 0
+  fi
+  if ! rmdir -- "$CANDIDATE_LOCK"; then
+    echo "failed to release candidate verification lock $CANDIDATE_LOCK" >&2
+    return 1
+  fi
+  CANDIDATE_LOCK_HELD=false
+}
+
 cleanup_candidate() {
   original_status=$?
   trap - EXIT
   stop_candidate || original_status=1
+  release_candidate_lock || original_status=1
   if [[ "$original_status" -ne 0 ]]; then
     tail -n 100 "$CANDIDATE_LOG" >&2 || true
   fi
@@ -273,18 +299,29 @@ trap cleanup_candidate EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if ! mkdir -- "$CANDIDATE_LOCK"; then
+  echo "another candidate verification holds $CANDIDATE_LOCK" >&2
+  exit 1
+fi
+CANDIDATE_LOCK_HELD=true
+
 if ss -H -ltn 'sport = :8129' | grep -q .; then
   echo "port 8129 is already occupied" >&2
   exit 1
 fi
 
-env \
+env -i \
+  BATTLESNAKE_ARENA_BYTES=262144 \
   BATTLESNAKE_BIND_ADDRESS=127.0.0.1 \
-  BATTLESNAKE_PORT=8129 \
-  BATTLESNAKE_SEARCH_BUDGET_MS=300 \
+  BATTLESNAKE_IO_TIMEOUT_MS=2000 \
+  BATTLESNAKE_MAX_REQUEST_BYTES=196608 \
+  BATTLESNAKE_MIN_SEARCH_BUDGET_MS=50 \
   BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200 \
-  BATTLESNAKE_WORKERS=2 \
+  BATTLESNAKE_PORT=8129 \
   BATTLESNAKE_QUEUE_CAPACITY=8 \
+  BATTLESNAKE_RESPONSE_BYTES=4096 \
+  BATTLESNAKE_SEARCH_BUDGET_MS=300 \
+  BATTLESNAKE_WORKERS=2 \
   "$CANDIDATE_BINARY" >"$CANDIDATE_LOG" 2>&1 &
 CANDIDATE_PID=$!
 
@@ -332,6 +369,7 @@ printf '%s' "$response" | python3 -c \
   'import json,sys; assert json.load(sys.stdin)["move"] in {"up","down","left","right"}'
 
 stop_candidate
+release_candidate_lock
 trap - EXIT INT TERM
 echo "candidate verification passed; log retained at $CANDIDATE_LOG"
 ```
@@ -346,8 +384,13 @@ sudo systemctl edit playing-battlesnake.service
 [Service]
 Environment=BATTLESNAKE_PORT=8121
 Environment=BATTLESNAKE_BIND_ADDRESS=0.0.0.0
+Environment=BATTLESNAKE_ARENA_BYTES=262144
+Environment=BATTLESNAKE_MAX_REQUEST_BYTES=196608
+Environment=BATTLESNAKE_RESPONSE_BYTES=4096
+Environment=BATTLESNAKE_IO_TIMEOUT_MS=2000
 Environment=BATTLESNAKE_SEARCH_BUDGET_MS=300
 Environment=BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200
+Environment=BATTLESNAKE_MIN_SEARCH_BUDGET_MS=50
 Environment=BATTLESNAKE_WORKERS=2
 Environment=BATTLESNAKE_QUEUE_CAPACITY=8
 ```

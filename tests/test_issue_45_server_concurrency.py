@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -281,6 +282,14 @@ def _reported_candidate_log(result: subprocess.CompletedProcess[str]) -> Path:
     return Path(match.group(1))
 
 
+def _assert_secure_candidate_log(path: Path) -> None:
+    assert re.fullmatch(
+        r"battlesnake-candidate-8129\.[A-Za-z0-9]{6}\.log",
+        path.name,
+    )
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
 def test_runbook_candidate_verification_handles_occupied_success_and_failure(
     tmp_path: Path,
 ) -> None:
@@ -289,6 +298,28 @@ def test_runbook_candidate_verification_handles_occupied_success_and_failure(
             pytest.skip(f"runbook dependency {command} is unavailable")
     subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
     candidate = Path("build/battlesnake-server").resolve()
+    candidate_script = _candidate_verification_script()
+    assert 'mktemp "/tmp/battlesnake-candidate-8129.XXXXXX.log"' in candidate_script
+    assert "battlesnake-candidate-8129.$$.log" not in candidate_script
+    lock_path = Path("/tmp/battlesnake-candidate-8129.lock")
+    assert not lock_path.exists()
+    retained_logs: list[Path] = []
+
+    lock_path.mkdir()
+    try:
+        locked_result = _run_candidate_verification(candidate)
+        assert locked_result.returncode != 0
+        assert "another candidate verification holds" in locked_result.stderr
+        assert lock_path.is_dir()
+        locked_log = _reported_candidate_log(locked_result)
+        assert locked_log.is_file()
+        _assert_secure_candidate_log(locked_log)
+        retained_logs.append(locked_log)
+        with pytest.raises(OSError):
+            socket.create_connection(("127.0.0.1", 8129), timeout=0.1)
+    finally:
+        lock_path.rmdir()
+    locked_log.unlink()
 
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as occupied:
         occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -300,6 +331,9 @@ def test_runbook_candidate_verification_handles_occupied_success_and_failure(
         assert "No such file or directory" not in occupied_result.stderr
         occupied_log = _reported_candidate_log(occupied_result)
         assert occupied_log.is_file()
+        _assert_secure_candidate_log(occupied_log)
+        retained_logs.append(occupied_log)
+        assert not lock_path.exists()
         occupied.settimeout(0.1)
         with pytest.raises(socket.timeout):
             occupied.accept()
@@ -309,17 +343,14 @@ def test_runbook_candidate_verification_handles_occupied_success_and_failure(
     failing_candidate = tmp_path / "failing-candidate"
     failing_candidate.write_text(
         "#!/bin/sh\n"
-        'printf "%s\\n" "$$" > "$CANDIDATE_PID_FILE"\n'
+        f'printf "%s\\n" "$$" > {shlex.quote(str(pid_file))}\n'
         "printf '%s\\n' "
         "'battlesnake native server listening on 127.0.0.1:8129'\n"
         "sleep 30\n",
         encoding="utf-8",
     )
     failing_candidate.chmod(0o755)
-    failure_result = _run_candidate_verification(
-        failing_candidate,
-        CANDIDATE_PID_FILE=str(pid_file),
-    )
+    failure_result = _run_candidate_verification(failing_candidate)
     assert failure_result.returncode != 0
     assert "did not create the expected loopback listener" in failure_result.stderr
     assert "No such file or directory" not in failure_result.stderr
@@ -327,18 +358,68 @@ def test_runbook_candidate_verification_handles_occupied_success_and_failure(
     assert not Path(f"/proc/{failed_pid}").exists()
     failure_log = _reported_candidate_log(failure_result)
     assert failure_log.is_file()
+    _assert_secure_candidate_log(failure_log)
+    retained_logs.append(failure_log)
+    assert not lock_path.exists()
     failure_log.unlink()
 
-    success_result = _run_candidate_verification(candidate)
+    environment_file = tmp_path / "candidate-environment"
+    environment_wrapper = tmp_path / "environment-capturing-candidate"
+    environment_wrapper.write_text(
+        "#!/bin/sh\n"
+        f"/usr/bin/env > {shlex.quote(str(environment_file))}\n"
+        f"exec {shlex.quote(str(candidate))}\n",
+        encoding="utf-8",
+    )
+    environment_wrapper.chmod(0o755)
+    expected_environment = {
+        "BATTLESNAKE_ARENA_BYTES": "262144",
+        "BATTLESNAKE_BIND_ADDRESS": "127.0.0.1",
+        "BATTLESNAKE_IO_TIMEOUT_MS": "2000",
+        "BATTLESNAKE_MAX_REQUEST_BYTES": "196608",
+        "BATTLESNAKE_MIN_SEARCH_BUDGET_MS": "50",
+        "BATTLESNAKE_MOVE_SAFETY_MARGIN_MS": "200",
+        "BATTLESNAKE_PORT": "8129",
+        "BATTLESNAKE_QUEUE_CAPACITY": "8",
+        "BATTLESNAKE_RESPONSE_BYTES": "4096",
+        "BATTLESNAKE_SEARCH_BUDGET_MS": "300",
+        "BATTLESNAKE_WORKERS": "2",
+    }
+    server_source = Path("battlesnake/c-core/server/server_main.c").read_text(
+        encoding="utf-8"
+    )
+    supported_environment = set(re.findall(r"BATTLESNAKE_[A-Z0-9_]+", server_source))
+    assert set(expected_environment) == supported_environment
+    hostile_environment = {key: "hostile" for key in expected_environment}
+    hostile_environment["UNRELATED_HOSTILE_VALUE"] = "must-not-reach-candidate"
+
+    success_result = _run_candidate_verification(
+        environment_wrapper,
+        **hostile_environment,
+    )
     assert success_result.returncode == 0, (
         success_result.stdout + success_result.stderr
     )
     assert "candidate verification passed" in success_result.stdout
     success_log = _reported_candidate_log(success_result)
     assert success_log.is_file()
+    _assert_secure_candidate_log(success_log)
+    retained_logs.append(success_log)
+    assert not lock_path.exists()
+    child_environment = dict(
+        line.split("=", 1)
+        for line in environment_file.read_text(encoding="utf-8").splitlines()
+    )
+    assert {
+        key: value
+        for key, value in child_environment.items()
+        if key.startswith("BATTLESNAKE_")
+    } == expected_environment
+    assert "UNRELATED_HOSTILE_VALUE" not in child_environment
     with pytest.raises(OSError):
         socket.create_connection(("127.0.0.1", 8129), timeout=0.1)
     success_log.unlink()
+    assert len(set(retained_logs)) == 4
 
 
 @pytest.mark.parametrize(
