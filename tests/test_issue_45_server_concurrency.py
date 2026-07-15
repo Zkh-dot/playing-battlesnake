@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import signal
@@ -49,6 +50,7 @@ def _wait_for_server_ready(process: subprocess.Popen[bytes], server_log: object)
 def _start_server(
     port: int,
     server_log: object,
+    stderr_log: object | int | None = None,
     **environment_overrides: str,
 ) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
@@ -62,7 +64,7 @@ def _start_server(
             **environment_overrides,
         },
         stdout=server_log,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.STDOUT if stderr_log is None else stderr_log,
     )
 
 
@@ -475,6 +477,63 @@ def test_saturated_move_capacity_still_returns_prompt_explicit_503() -> None:
         ]
         assert len(overload_events) == 12
         assert all(event["status"] == 503 for event in overload_events)
+
+
+def test_unread_overload_telemetry_pipe_never_blocks_prompt_503() -> None:
+    if not os.path.isdir("/proc/self/fd"):
+        pytest.skip("Linux /proc socket state is required")
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+    telemetry_read_fd, telemetry_write_fd = os.pipe()
+    fcntl.fcntl(telemetry_write_fd, fcntl.F_SETPIPE_SZ, 4096)
+
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(port, server_log, stderr_log=telemetry_write_fd)
+        os.close(telemetry_write_fd)
+        telemetry_write_fd = -1
+        active: socket.socket | None = None
+        queued: socket.socket | None = None
+        try:
+            _wait_for_server_ready(process, server_log)
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
+
+            active = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            active.sendall(b"POST /move HTTP/1.1\r\nHost: active\r\n")
+            _wait_for_server_socket_count(process.pid, 2, exact=True)
+            _wait_for_worker_socket_wait(process.pid)
+
+            queued = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            queued.sendall(b"POST /move HTTP/1.1\r\nHost: queued\r\n")
+            _wait_for_server_socket_count(process.pid, 3, exact=True, stable_for=0.05)
+
+            scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
+            complete_request = _move_request(move_payload(scenario, timeout=500))
+            for _ in range(160):
+                status, body, elapsed_ms = _send_request(port, complete_request, timeout=0.5)
+                assert status == 503
+                assert body == {}
+                assert elapsed_ms < 300.0
+
+            active.close()
+            active = None
+            queued.close()
+            queued = None
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
+            health_status, _, _ = _send_request(
+                port,
+                b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                timeout=0.5,
+            )
+            assert health_status == 200
+        finally:
+            if active is not None:
+                active.close()
+            if queued is not None:
+                queued.close()
+            _stop_server(process)
+            if telemetry_write_fd >= 0:
+                os.close(telemetry_write_fd)
+            os.close(telemetry_read_fd)
 
 
 def test_simultaneous_move_requests_complete_within_external_deadline() -> None:
