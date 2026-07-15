@@ -23,6 +23,33 @@
   - Thread-per-connection is small but unbounded, allowing a burst to allocate an unbounded number of request buffers and per-search transposition tables.
   - A fixed pthread pool plus bounded FIFO is the smallest repo-local design that provides explicit resource limits, measured queue age, and deterministic backpressure.
 
+## Review fix: absolute reads and bounded shutdown
+
+- A connection receives one absolute `CLOCK_MONOTONIC` read deadline when a
+  worker begins servicing it. Queue wait does not consume this I/O budget, so
+  a valid FIFO-queued request still receives the configured read window.
+  Accept time and queue age continue to feed the existing game/search deadline
+  accounting.
+- Recomputing the remaining `SO_RCVTIMEO` before every read preserves the
+  blocking parser path while preventing a client from extending worker
+  occupancy by sending one byte before each inactivity timeout. `EINTR` also
+  returns through the same remaining-time calculation.
+- A fixed active-connection registry, allocated for exactly the worker count,
+  coordinates shutdown under one mutex. Registration happens before a worker
+  reads; deregistration and final `close()` happen under the same mutex.
+  Shutdown marks the registry stopping and calls `shutdown(fd, SHUT_RD)` on
+  every registered socket while holding that mutex. It never closes a worker's
+  descriptor, so it cannot target a reused descriptor and the worker retains
+  the write half for a bounded graceful response.
+- Jobs popped from the draining FIFO after shutdown cannot begin an
+  uninterruptible read: registration observes the stopping state and applies
+  `SHUT_RD` immediately. Existing FIFO drain semantics remain unchanged.
+- Alternatives considered: nonblocking reads with short polling slices add an
+  arbitrary wake interval and repeated syscalls; a wake descriptor per worker
+  gives explicit wakeups but adds more descriptor and lifecycle state. The
+  fixed registry is the smallest general design that provides immediate
+  interruption without descriptor-reuse races or magic polling thresholds.
+
 ## File map
 
 - Create `battlesnake/c-core/server/connection_queue.h`: bounded FIFO job and lifecycle API; no HTTP/search knowledge.

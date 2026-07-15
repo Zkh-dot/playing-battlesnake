@@ -176,6 +176,26 @@ def _receive_until_close(sock: socket.socket) -> bytes:
         chunks.append(chunk)
 
 
+def _start_partial_request_dribbler(
+    sock: socket.socket,
+    *,
+    interval_seconds: float,
+) -> tuple[threading.Event, threading.Thread]:
+    stop = threading.Event()
+    sock.sendall(b"P")
+
+    def dribble() -> None:
+        while not stop.wait(interval_seconds):
+            try:
+                sock.sendall(b"x")
+            except OSError:
+                return
+
+    thread = threading.Thread(target=dribble)
+    thread.start()
+    return stop, thread
+
+
 def _parse_http_response(response: bytes) -> tuple[int, dict[str, str]]:
     header, response_body = response.split(b"\r\n\r\n", 1)
     status = int(header.split(b" ", 2)[1])
@@ -674,6 +694,100 @@ def test_recognized_malformed_move_emits_one_telemetry_line(raw_request: bytes) 
         assert len(move_events) == 1
         assert move_events[0]["status"] == 400
         assert move_events[0]["timeout_ms"] == 0
+
+
+def test_slow_reader_cannot_extend_absolute_request_read_deadline() -> None:
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+    io_timeout_ms = 200
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(
+            port,
+            server_log,
+            BATTLESNAKE_WORKERS="1",
+            BATTLESNAKE_QUEUE_CAPACITY="1",
+            BATTLESNAKE_IO_TIMEOUT_MS=str(io_timeout_ms),
+        )
+        slow: socket.socket | None = None
+        stop_dribbling: threading.Event | None = None
+        dribbler: threading.Thread | None = None
+        try:
+            _wait_for_port(port)
+            slow = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+            slow.settimeout(1.0)
+            stop_dribbling, dribbler = _start_partial_request_dribbler(
+                slow,
+                interval_seconds=0.05,
+            )
+            started = time.monotonic()
+            response = _receive_until_close(slow)
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+
+            assert response.startswith(b"HTTP/1.1 400 Bad Request\r\n")
+            assert elapsed_ms < io_timeout_ms + 500.0
+
+            health_status, _, _ = _send_request(
+                port,
+                b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                timeout=0.5,
+            )
+            assert health_status == 200
+        finally:
+            if stop_dribbling is not None:
+                stop_dribbling.set()
+            if slow is not None:
+                slow.close()
+            if dribbler is not None:
+                dribbler.join(timeout=1.0)
+                assert not dribbler.is_alive()
+            _stop_server(process)
+
+
+def test_shutdown_interrupts_active_and_queued_continuous_slow_readers() -> None:
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(
+            port,
+            server_log,
+            BATTLESNAKE_WORKERS="1",
+            BATTLESNAKE_QUEUE_CAPACITY="1",
+            BATTLESNAKE_IO_TIMEOUT_MS="60000",
+        )
+        sockets: list[socket.socket] = []
+        dribblers: list[tuple[threading.Event, threading.Thread]] = []
+        try:
+            _wait_for_port(port)
+            for _ in range(2):
+                sock = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+                sock.settimeout(1.0)
+                sockets.append(sock)
+                dribblers.append(
+                    _start_partial_request_dribbler(sock, interval_seconds=0.05)
+                )
+            _wait_for_server_socket_count(process.pid, 3, exact=True, stable_for=0.05)
+
+            started = time.monotonic()
+            process.terminate()
+            responses = [_receive_until_close(sock) for sock in sockets]
+            return_code = process.wait(timeout=1.0)
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+
+            assert all(
+                response.startswith(b"HTTP/1.1 400 Bad Request\r\n")
+                for response in responses
+            )
+            assert return_code == 0
+            assert elapsed_ms < 1000.0
+        finally:
+            for stop_dribbling, _ in dribblers:
+                stop_dribbling.set()
+            for sock in sockets:
+                sock.close()
+            for _, dribbler in dribblers:
+                dribbler.join(timeout=1.0)
+                assert not dribbler.is_alive()
+            _stop_server(process)
 
 
 def test_shutdown_drains_active_and_queued_connections() -> None:
