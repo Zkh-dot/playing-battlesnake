@@ -123,6 +123,20 @@ def _wait_for_server_socket_count(
     raise AssertionError(f"server did not reach {expected} open sockets")
 
 
+def _listening_ipv4_addresses(pid: int, port: int) -> set[str]:
+    addresses: set[str] = set()
+    expected_port = f"{port:04X}"
+    with open(f"/proc/{pid}/net/tcp", encoding="utf-8") as tcp_table:
+        next(tcp_table)
+        for line in tcp_table:
+            fields = line.split()
+            local_address, state = fields[1], fields[3]
+            address, local_port = local_address.split(":")
+            if local_port == expected_port and state == "0A":
+                addresses.add(address)
+    return addresses
+
+
 def _wait_for_worker_socket_wait(pid: int, *, stable_for: float = 0.05) -> None:
     deadline = time.monotonic() + 2.0
     stable_since: float | None = None
@@ -227,6 +241,64 @@ def _move_request(body: str) -> bytes:
         + f"Content-Length: {len(body_bytes)}\r\n\r\n".encode()
         + body_bytes
     )
+
+
+@pytest.mark.parametrize(
+    ("bind_address", "expected_kernel_address", "expected_readiness_address"),
+    [
+        (None, "00000000", "0.0.0.0"),
+        ("127.0.0.1", "0100007F", "127.0.0.1"),
+    ],
+    ids=["default-all-interfaces", "explicit-loopback"],
+)
+def test_server_binds_default_or_exact_configured_ipv4_address(
+    monkeypatch: pytest.MonkeyPatch,
+    bind_address: str | None,
+    expected_kernel_address: str,
+    expected_readiness_address: str,
+) -> None:
+    if not os.path.isfile("/proc/self/net/tcp"):
+        pytest.skip("Linux /proc TCP listener metadata is required")
+    if bind_address is None:
+        monkeypatch.delenv("BATTLESNAKE_BIND_ADDRESS", raising=False)
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+    overrides = {} if bind_address is None else {"BATTLESNAKE_BIND_ADDRESS": bind_address}
+
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(port, server_log, **overrides)
+        try:
+            _wait_for_server_ready(process, server_log)
+            assert _listening_ipv4_addresses(process.pid, port) == {
+                expected_kernel_address
+            }
+            server_log.seek(0)
+            assert (
+                f"battlesnake native server listening on "
+                f"{expected_readiness_address}:{port}"
+            ) in server_log.read()
+        finally:
+            _stop_server(process)
+
+
+def test_invalid_bind_address_fails_closed_before_listening() -> None:
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    port = _free_port()
+
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        process = _start_server(
+            port,
+            server_log,
+            BATTLESNAKE_BIND_ADDRESS="localhost",
+        )
+        try:
+            assert process.wait(timeout=2.0) != 0
+            server_log.seek(0)
+            assert "invalid BATTLESNAKE_BIND_ADDRESS" in server_log.read()
+            with pytest.raises(OSError):
+                socket.create_connection(("127.0.0.1", port), timeout=0.1)
+        finally:
+            _stop_server(process)
 
 
 def _simultaneous_post(port: int, request: bytes, barrier: threading.Barrier) -> tuple[int, dict[str, str], float]:

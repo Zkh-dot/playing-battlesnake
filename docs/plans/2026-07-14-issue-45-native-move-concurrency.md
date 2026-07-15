@@ -50,6 +50,36 @@
   fixed registry is the smallest general design that provides immediate
   interruption without descriptor-reuse races or magic polling thresholds.
 
+## Review fix: isolated candidate verification without ladder traffic
+
+- Live post-deploy checks on the ladder listener at port `8121` are limited to
+  systemd metadata, the running process, listener metadata, and journal output.
+  Health and synthetic `/move` requests must never be sent to that listener.
+- Two general isolation designs were compared:
+  - Add an immutable `BATTLESNAKE_BIND_ADDRESS` server setting. Preserve the
+    existing `0.0.0.0` default, accept only an exact IPv4 address, fail startup
+    on an invalid configured value, and run the candidate binary on
+    `127.0.0.1:8129`. This adds one explicit deployment control while retaining
+    the existing production behavior and ordinary socket lifecycle.
+  - Run the unchanged `INADDR_ANY` server in a private network namespace via a
+    transient systemd unit. True isolation would require namespace/interface
+    provisioning plus a command executed inside that namespace; a transient
+    unit alone still exposes the port on every host interface. This adds
+    privileged network setup, routing, cleanup, and more failure states to a
+    pre-deploy smoke check.
+- The explicit bind-address design is accepted as the smallest robust option.
+  The parser stores one validated IPv4 address in immutable startup config;
+  default startup still binds `0.0.0.0`, exact `127.0.0.1` startup binds only
+  loopback, and invalid nonempty configuration exits before listening. Python
+  startup tests inspect the actual Linux listening address as well as the
+  readiness message so the server cannot merely claim loopback while retaining
+  `INADDR_ANY`.
+- The runbook candidate procedure starts the exact installed/candidate binary
+  with production strategy and capacity values (`300/200/2/8`) on
+  `127.0.0.1:8129`, waits deterministically for readiness, installs a cleanup
+  trap, bounds graceful shutdown, retains candidate logs, and makes failures
+  explicit. It does not assume a checkout, installed path, or service user.
+
 ## File map
 
 - Create `battlesnake/c-core/server/connection_queue.h`: bounded FIFO job and lifecycle API; no HTTP/search knowledge.

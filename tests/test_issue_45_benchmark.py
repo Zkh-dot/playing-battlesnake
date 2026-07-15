@@ -332,6 +332,7 @@ def test_run_benchmark_passes_exact_strategy_environment_to_server(
 
     assert captured_environment["BATTLESNAKE_SEARCH_BUDGET_MS"] == "301"
     assert captured_environment["BATTLESNAKE_MOVE_SAFETY_MARGIN_MS"] == "201"
+    assert captured_environment["BATTLESNAKE_BIND_ADDRESS"] == "127.0.0.1"
     assert result["configuration"]["search_budget_ms"] == 301
     assert result["configuration"]["safety_margin_ms"] == 201
 

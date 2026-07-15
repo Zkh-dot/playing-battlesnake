@@ -25,6 +25,8 @@
 
 typedef struct {
     int port;
+    struct in_addr bind_address;
+    char bind_address_text[INET_ADDRSTRLEN];
     size_t arena_bytes;
     size_t request_bytes;
     size_t response_bytes;
@@ -112,20 +114,47 @@ static size_t parse_env_size(const char* name, size_t fallback, size_t minimum) 
     return (size_t)parsed;
 }
 
-static BsServerConfig config_from_env(void) {
-    BsServerConfig config;
-    config.port = parse_env_int("BATTLESNAKE_PORT", 8000, 1);
-    config.arena_bytes = parse_env_size("BATTLESNAKE_ARENA_BYTES", 262144u, 4096u);
-    config.request_bytes = parse_env_size("BATTLESNAKE_MAX_REQUEST_BYTES", 196608u, 4096u);
-    config.response_bytes = parse_env_size("BATTLESNAKE_RESPONSE_BYTES", 4096u, 512u);
-    config.io_timeout_ms = parse_env_int("BATTLESNAKE_IO_TIMEOUT_MS", 2000, 1);
-    config.worker_count = parse_env_int_range("BATTLESNAKE_WORKERS", 2, 1, 64);
-    config.queue_capacity = parse_env_size("BATTLESNAKE_QUEUE_CAPACITY", 8u, 1u);
-    config.strategy = BsStrategyConfigDefault();
-    config.strategy.default_time_budget_ms = parse_env_int("BATTLESNAKE_SEARCH_BUDGET_MS", 400, 1);
-    config.strategy.safety_margin_ms = parse_env_int("BATTLESNAKE_MOVE_SAFETY_MARGIN_MS", 150, 0);
-    config.strategy.min_time_budget_ms = parse_env_int("BATTLESNAKE_MIN_SEARCH_BUDGET_MS", 50, 1);
-    return config;
+static bool parse_bind_address(BsServerConfig* config) {
+    const char* value = getenv("BATTLESNAKE_BIND_ADDRESS");
+    if (value == NULL || value[0] == '\0') {
+        value = "0.0.0.0";
+    }
+    if (inet_pton(AF_INET, value, &config->bind_address) != 1) {
+        fputs(
+            "invalid BATTLESNAKE_BIND_ADDRESS: expected a numeric IPv4 address\n",
+            stderr
+        );
+        return false;
+    }
+    if (inet_ntop(
+            AF_INET,
+            &config->bind_address,
+            config->bind_address_text,
+            sizeof(config->bind_address_text)
+        ) == NULL) {
+        perror("failed to format BATTLESNAKE_BIND_ADDRESS");
+        return false;
+    }
+    return true;
+}
+
+static bool config_from_env(BsServerConfig* config) {
+    memset(config, 0, sizeof(*config));
+    if (!parse_bind_address(config)) {
+        return false;
+    }
+    config->port = parse_env_int("BATTLESNAKE_PORT", 8000, 1);
+    config->arena_bytes = parse_env_size("BATTLESNAKE_ARENA_BYTES", 262144u, 4096u);
+    config->request_bytes = parse_env_size("BATTLESNAKE_MAX_REQUEST_BYTES", 196608u, 4096u);
+    config->response_bytes = parse_env_size("BATTLESNAKE_RESPONSE_BYTES", 4096u, 512u);
+    config->io_timeout_ms = parse_env_int("BATTLESNAKE_IO_TIMEOUT_MS", 2000, 1);
+    config->worker_count = parse_env_int_range("BATTLESNAKE_WORKERS", 2, 1, 64);
+    config->queue_capacity = parse_env_size("BATTLESNAKE_QUEUE_CAPACITY", 8u, 1u);
+    config->strategy = BsStrategyConfigDefault();
+    config->strategy.default_time_budget_ms = parse_env_int("BATTLESNAKE_SEARCH_BUDGET_MS", 400, 1);
+    config->strategy.safety_margin_ms = parse_env_int("BATTLESNAKE_MOVE_SAFETY_MARGIN_MS", 150, 0);
+    config->strategy.min_time_budget_ms = parse_env_int("BATTLESNAKE_MIN_SEARCH_BUDGET_MS", 50, 1);
+    return true;
 }
 
 static bool write_all(int fd, const char* data, size_t len) {
@@ -458,7 +487,7 @@ static void reject_overloaded_connection(int client_fd) {
     log_server_overload();
     (void)BsRejectOverloadedConnection(client_fd);
 }
-static int create_listen_socket(int port) {
+static int create_listen_socket(const BsServerConfig* config) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         return -1;
@@ -473,8 +502,8 @@ static int create_listen_socket(int port) {
     struct sockaddr_in address;
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_ANY);
-    address.sin_port = htons((uint16_t)port);
+    address.sin_addr = config->bind_address;
+    address.sin_port = htons((uint16_t)config->port);
 
     if (bind(fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
         close(fd);
@@ -492,7 +521,10 @@ static int create_listen_socket(int port) {
 }
 
 int main(void) {
-    BsServerConfig config = config_from_env();
+    BsServerConfig config;
+    if (!config_from_env(&config)) {
+        return 1;
+    }
 
     if (!set_nonblocking(STDERR_FILENO)) {
         return 1;
@@ -580,7 +612,7 @@ int main(void) {
         }
     }
 
-    int listen_fd = create_listen_socket(config.port);
+    int listen_fd = create_listen_socket(&config);
     if (listen_fd < 0) {
         perror("failed to start battlesnake native server");
         BsActiveConnectionsStop(&active_connections);
@@ -636,7 +668,11 @@ int main(void) {
         return 1;
     }
 
-    printf("battlesnake native server listening on 0.0.0.0:%d\n", config.port);
+    printf(
+        "battlesnake native server listening on %s:%d\n",
+        config.bind_address_text,
+        config.port
+    );
     fflush(stdout);
 
     struct pollfd poll_fds[2] = {

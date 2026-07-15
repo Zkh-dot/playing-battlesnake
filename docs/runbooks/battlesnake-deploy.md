@@ -4,7 +4,7 @@ Current and historical endpoints:
 
 | Endpoint | URL | Current status |
 |---|---|---|
-| Native production | `http://45.10.166.244:8121/` | Current `playing-battlesnake.service`; use for deployment verification |
+| Native production | `http://45.10.166.244:8121/` | Current `playing-battlesnake.service`; do not probe during deploy verification |
 | Public production route | `https://ya.sergeiscv.ru/snake/` | Stale/broken: observed HTTP 502 on 2026-07-15 |
 | Historical dev route | `https://ya.sergeiscv.ru/test-snake/` | Reference only; verify independently before use |
 
@@ -35,11 +35,17 @@ Required environment:
 
 ```text
 BATTLESNAKE_PORT=8121
+BATTLESNAKE_BIND_ADDRESS=0.0.0.0
 BATTLESNAKE_SEARCH_BUDGET_MS=300
 BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200
 BATTLESNAKE_WORKERS=2
 BATTLESNAKE_QUEUE_CAPACITY=8
 ```
+
+`BATTLESNAKE_BIND_ADDRESS` defaults to `0.0.0.0`, preserving the production
+listener. It accepts a numeric IPv4 address only and fails startup on an invalid
+nonempty value. Candidate verification below uses `127.0.0.1`; setting only a
+different port is not isolation because the default listens on every interface.
 
 Native HTTP concurrency is bounded. `BATTLESNAKE_WORKERS` configures `1..64`
 move workers (default `2`) and `BATTLESNAKE_QUEUE_CAPACITY` configures the
@@ -108,6 +114,7 @@ python3 -m benchmarks.bench_issue_45_server_concurrency \
 The benchmark defaults for search budget and safety margin are the current
 production values (`300` and `200` ms); both are written explicitly above so a
 copied gate command remains an auditable snapshot of the tested service profile.
+The runner always binds its temporary server to `127.0.0.1`.
 
 The gate releases each request pair together, applies a 500 ms external socket
 deadline, and fails on a timeout/error/503 or when external/server-total p99
@@ -129,18 +136,6 @@ Routing behavior:
   while the experimental native Standard FFA scorer remains parity-gated;
 - timeout/error fallback remains first-safe.
 
-Service-local health check on the production host:
-
-```bash
-curl -fsS http://127.0.0.1:8121/
-```
-
-Expected response:
-
-```json
-{"apiversion":"1","author":"codex","color":"#2563eb","head":"default","tail":"default","version":"0.1.0-native"}
-```
-
 ## Status Checks
 
 SSH to the server:
@@ -161,27 +156,20 @@ sudo systemctl show playing-battlesnake.service \
   --property=Environment
 sudo systemctl status playing-battlesnake.service
 sudo journalctl -u playing-battlesnake.service -n 100 --no-pager
+MAINPID=$(sudo systemctl show playing-battlesnake.service \
+  --property=MainPID --value)
+test "$MAINPID" -gt 0
+sudo readlink -f "/proc/$MAINPID/exe"
+sudo tr '\0' ' ' < "/proc/$MAINPID/cmdline"
+sudo ss -H -ltnp 'sport = :8121'
 ```
 
-Check the native port. This is the required deployment status check:
-
-```bash
-curl -fsS http://45.10.166.244:8121/
-```
-
-Expected response:
-
-```json
-{"apiversion":"1","author":"codex","color":"#2563eb","head":"default","tail":"default","version":"0.1.0-native"}
-```
-
-The public route is a separate repair concern. As of 2026-07-15 it resolves to
-a different host and returns 502; record its status without treating failure as
-a failed native deployment:
-
-```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://ya.sergeiscv.ru/snake/
-```
+These checks inspect unit, process, listener, and journal metadata only. Do not
+send health, `/move`, or any other HTTP request to port `8121` during deployment
+verification: even a synthetic request consumes a live ladder worker and can
+cause a real request to miss its deadline. The separate public route remains
+known broken (observed 502 on 2026-07-15); repairing it is outside this native
+service verification.
 
 ## Update the Native systemd Service
 
@@ -208,6 +196,145 @@ Confirm that the resulting binary is the executable shown by `ExecStart`. If
 the unit points to a separately installed copy, use that host's established
 install step to update that exact path before restarting.
 
+## Isolated candidate functional verification
+
+Run functional checks before restarting the ladder service. Select the exact
+binary being considered for deployment; for the repository build above that is
+the resolved `build/battlesnake-server`. To recheck the currently installed
+binary instead, derive it from `/proc/$MAINPID/exe`. Do not guess an install
+path.
+
+```bash
+CANDIDATE_BINARY=$(readlink -f build/battlesnake-server)
+# Installed-binary alternative:
+# MAINPID=$(sudo systemctl show playing-battlesnake.service -p MainPID --value)
+# CANDIDATE_BINARY=$(sudo readlink -f "/proc/$MAINPID/exe")
+export CANDIDATE_BINARY
+```
+
+The following procedure binds only loopback port `8129`, applies the exact
+production strategy/capacity values, waits for the native readiness record,
+checks the kernel listener address, retains logs, and bounds graceful shutdown.
+Any failure exits nonzero and the EXIT trap stops the candidate. It never sends
+traffic to the ladder listener on port `8121`.
+
+```bash
+set -euo pipefail
+: "${CANDIDATE_BINARY:?select the exact candidate or installed binary first}"
+test -x "$CANDIDATE_BINARY"
+CANDIDATE_BINARY=$(readlink -f -- "$CANDIDATE_BINARY")
+CANDIDATE_LOG="/tmp/battlesnake-candidate-8129.$$.log"
+CANDIDATE_PID=""
+
+stop_candidate() {
+  if [[ -z "$CANDIDATE_PID" ]]; then
+    return 0
+  fi
+  if kill -0 "$CANDIDATE_PID" 2>/dev/null; then
+    kill -TERM "$CANDIDATE_PID"
+    stopped=false
+    for _ in $(seq 1 50); do
+      state=$(ps -o stat= -p "$CANDIDATE_PID" 2>/dev/null || true)
+      if [[ -z "$state" || "$state" == *Z* ]]; then
+        stopped=true
+        break
+      fi
+      sleep 0.1
+    done
+    if [[ "$stopped" != true ]]; then
+      echo "candidate did not stop within 5 seconds; killing it" >&2
+      kill -KILL "$CANDIDATE_PID" 2>/dev/null || true
+      wait "$CANDIDATE_PID" 2>/dev/null || true
+      CANDIDATE_PID=""
+      return 1
+    fi
+  fi
+  result=0
+  wait "$CANDIDATE_PID" || result=$?
+  CANDIDATE_PID=""
+  if [[ "$result" -ne 0 ]]; then
+    echo "candidate exited with status $result" >&2
+    return 1
+  fi
+}
+
+cleanup_candidate() {
+  original_status=$?
+  trap - EXIT
+  stop_candidate || original_status=1
+  if [[ "$original_status" -ne 0 ]]; then
+    tail -n 100 "$CANDIDATE_LOG" >&2 || true
+  fi
+  echo "candidate log retained at $CANDIDATE_LOG"
+  exit "$original_status"
+}
+trap cleanup_candidate EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if ss -H -ltn 'sport = :8129' | grep -q .; then
+  echo "port 8129 is already occupied" >&2
+  exit 1
+fi
+
+env \
+  BATTLESNAKE_BIND_ADDRESS=127.0.0.1 \
+  BATTLESNAKE_PORT=8129 \
+  BATTLESNAKE_SEARCH_BUDGET_MS=300 \
+  BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200 \
+  BATTLESNAKE_WORKERS=2 \
+  BATTLESNAKE_QUEUE_CAPACITY=8 \
+  "$CANDIDATE_BINARY" >"$CANDIDATE_LOG" 2>&1 &
+CANDIDATE_PID=$!
+
+ready=false
+for _ in $(seq 1 100); do
+  if grep -Fq \
+      'battlesnake native server listening on 127.0.0.1:8129' \
+      "$CANDIDATE_LOG"; then
+    ready=true
+    break
+  fi
+  if ! kill -0 "$CANDIDATE_PID" 2>/dev/null; then
+    echo "candidate exited before readiness" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ "$ready" != true ]]; then
+  echo "candidate did not become ready within 5 seconds" >&2
+  exit 1
+fi
+
+listener=$(ss -H -ltn 'sport = :8129')
+if ! grep -Fq '127.0.0.1:8129' <<<"$listener"; then
+  echo "candidate did not create the expected loopback listener" >&2
+  exit 1
+fi
+if grep -Fq '0.0.0.0:8129' <<<"$listener"; then
+  echo "candidate listener is externally exposed" >&2
+  exit 1
+fi
+
+curl -fsS --max-time 2 http://127.0.0.1:8129/
+
+response=$(curl -fsS --max-time 2 -H 'Content-Type: application/json' \
+  -d '{"game":{"id":"duel-smoke","timeout":500,"ruleset":{"name":"standard","settings":{}}},"turn":1,"board":{"height":7,"width":7,"food":[{"x":3,"y":3}],"hazards":[],"snakes":[{"id":"me","name":"me","health":100,"body":[{"x":1,"y":1},{"x":1,"y":0}]},{"id":"opponent","name":"opponent","health":100,"body":[{"x":5,"y":5},{"x":5,"y":4}]}]},"you":{"id":"me","name":"me","health":100,"body":[{"x":1,"y":1},{"x":1,"y":0}]}}' \
+  http://127.0.0.1:8129/move)
+printf '%s' "$response" | python3 -c \
+  'import json,sys; assert json.load(sys.stdin)["move"] in {"up","down","left","right"}'
+
+response=$(curl -fsS --max-time 2 -H 'Content-Type: application/json' \
+  -d '{"game":{"id":"standard-ffa-smoke","timeout":500,"ruleset":{"name":"standard","settings":{}}},"turn":1,"board":{"height":7,"width":7,"food":[{"x":3,"y":3}],"hazards":[],"snakes":[{"id":"me","name":"me","health":100,"body":[{"x":2,"y":2},{"x":2,"y":1},{"x":2,"y":0}]},{"id":"north","name":"north","health":100,"body":[{"x":6,"y":6},{"x":6,"y":5},{"x":6,"y":4}]},{"id":"east","name":"east","health":100,"body":[{"x":6,"y":0},{"x":5,"y":0},{"x":4,"y":0}]}]},"you":{"id":"me","name":"me","health":100,"body":[{"x":2,"y":2},{"x":2,"y":1},{"x":2,"y":0}]}}' \
+  http://127.0.0.1:8129/move)
+printf '%s' "$response" | python3 -c \
+  'import json,sys; assert json.load(sys.stdin)["move"] in {"up","down","left","right"}'
+
+stop_candidate
+trap - EXIT INT TERM
+echo "candidate verification passed; log retained at $CANDIDATE_LOG"
+```
+
 Set the live service values with a systemd drop-in:
 
 ```bash
@@ -217,6 +344,7 @@ sudo systemctl edit playing-battlesnake.service
 ```ini
 [Service]
 Environment=BATTLESNAKE_PORT=8121
+Environment=BATTLESNAKE_BIND_ADDRESS=0.0.0.0
 Environment=BATTLESNAKE_SEARCH_BUDGET_MS=300
 Environment=BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200
 Environment=BATTLESNAKE_WORKERS=2
@@ -231,47 +359,21 @@ sudo systemctl restart playing-battlesnake.service
 sudo systemctl status playing-battlesnake.service
 sudo journalctl -u playing-battlesnake.service -n 100 --no-pager
 sudo systemctl show playing-battlesnake.service \
-  --property=ExecStart --property=Environment
-curl -fsS http://127.0.0.1:8121/
+  --property=ExecStart --property=Environment --property=MainPID
+sudo ss -H -ltnp 'sport = :8121'
 ```
 
-## Production API Smoke Test (direct native endpoint)
-
-```bash
-curl -fsS -H "Content-Type: application/json" \
-  -d '{"game":{"id":"smoke","ruleset":{"name":"standard","settings":{}}},"turn":1,"board":{"height":7,"width":7,"food":[{"x":3,"y":3}],"hazards":[],"snakes":[{"id":"me","name":"me","health":100,"body":[{"x":1,"y":1},{"x":1,"y":0}]}]},"you":{"id":"me","name":"me","health":100,"body":[{"x":1,"y":1},{"x":1,"y":0}]}}' \
-  http://45.10.166.244:8121/move
-```
-
-Expected response is a legal move:
-
-```json
-{"move":"up"}
-```
-
-The exact move can change as strategy logic changes. The important check is a
-successful JSON response with a `move` field containing `up`, `down`, `left`,
-or `right`.
-
-Standard multi-snake smoke:
-
-```bash
-curl -fsS -H "Content-Type: application/json" \
-  -d '{"game":{"id":"standard-ffa-smoke","ruleset":{"name":"standard","settings":{}}},"turn":1,"board":{"height":7,"width":7,"food":[{"x":3,"y":3}],"hazards":[],"snakes":[{"id":"me","name":"me","health":100,"body":[{"x":2,"y":2},{"x":2,"y":1},{"x":2,"y":0}]},{"id":"north","name":"north","health":100,"body":[{"x":6,"y":6},{"x":6,"y":5},{"x":6,"y":4}]},{"id":"east","name":"east","health":100,"body":[{"x":6,"y":0},{"x":5,"y":0},{"x":4,"y":0}]}]},"you":{"id":"me","name":"me","health":100,"body":[{"x":2,"y":2},{"x":2,"y":1},{"x":2,"y":0}]}}' \
-  http://45.10.166.244:8121/move
-```
-
-Expected response is any legal move. This specifically exercises the production
-standard 3+ snake route and verifies it remains a 200 response while native
-Standard FFA parity work is still gated.
+Post-restart verification remains metadata-only. Do not send HTTP traffic to
+port `8121`; the isolated `8129` procedure is the functional gate for the exact
+binary and configuration.
 
 ## Ladder Observation
 
 After deploying a native release, watch at least the first ladder observation
 window before considering the rollout healthy:
 
-- the direct `http://45.10.166.244:8121/` health and `/move` smoke tests remain
-  successful; do not substitute the currently broken public route for this check;
+- `playing-battlesnake.service` remains active with the expected main process
+  and `8121` listener metadata;
 - no `/move` timeout or error spikes in
   `journalctl -u playing-battlesnake.service`;
 - no unexpected first-safe fallback surge;
@@ -317,8 +419,11 @@ After repairing the configuration on the public-route host:
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx
-curl -fsS https://ya.sergeiscv.ru/snake/
 ```
+
+Do not use the issue #45 deployment verification window to probe this route:
+once repaired, it forwards to live port `8121`. Validate public routing under a
+separately approved maintenance procedure.
 
 ## Dev Snake (Python)
 
@@ -389,17 +494,27 @@ test -n "$WORKDIR"
 cd "$WORKDIR"
 git checkout <known-good-commit>
 bash tools/build_native_server.sh
+```
 
-# If ExecStart names a separately installed copy, repeat the host's established
-# install step for that exact path before restarting.
+Run the complete isolated `127.0.0.1:8129` candidate procedure above against
+this exact rollback binary before replacing or restarting the live service. If
+`ExecStart` names a separately installed copy, then repeat the host's established
+install step for that exact path.
+
+If rollback also requires earlier environment values, edit the existing drop-in
+with `sudo systemctl edit playing-battlesnake.service` and reload systemd. Then
+restart and perform metadata-only verification:
+
+```bash
+sudo systemctl daemon-reload
 sudo systemctl restart playing-battlesnake.service
 sudo systemctl status playing-battlesnake.service
 sudo journalctl -u playing-battlesnake.service -n 100 --no-pager
+sudo systemctl show playing-battlesnake.service \
+  --property=ExecStart --property=Environment --property=MainPID
+sudo ss -H -ltnp 'sport = :8121'
 ```
 
-If the rollback also requires earlier environment values, edit the existing
-drop-in with `sudo systemctl edit playing-battlesnake.service`, run
-`sudo systemctl daemon-reload`, and restart again. Then rerun the direct native-
-port status check and both direct native-port smoke tests. Public-route recovery
-remains a separate operation and is not required to validate the issue #45
-systemd deployment.
+Do not probe live port `8121` after rollback. Public-route recovery remains a
+separate operation and is not required to validate the issue #45 systemd
+deployment.

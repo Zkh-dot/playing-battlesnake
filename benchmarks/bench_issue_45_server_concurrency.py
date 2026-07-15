@@ -392,6 +392,7 @@ def run_benchmark(
             env={
                 **os.environ,
                 "BATTLESNAKE_PORT": str(port),
+                "BATTLESNAKE_BIND_ADDRESS": "127.0.0.1",
                 "BATTLESNAKE_WORKERS": str(workers),
                 "BATTLESNAKE_QUEUE_CAPACITY": str(queue_capacity),
                 "BATTLESNAKE_SEARCH_BUDGET_MS": str(search_budget_ms),
