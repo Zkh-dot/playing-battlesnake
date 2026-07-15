@@ -193,6 +193,27 @@ def _receive_until_close(sock: socket.socket) -> bytes:
         chunks.append(chunk)
 
 
+def _receive_continuous_writer_rejection(sock: socket.socket) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        try:
+            chunk = sock.recv(4096)
+        except ConnectionResetError:
+            # Closing with unread bytes from a client that keeps writing may
+            # produce a TCP reset instead of delivering the bounded 400.
+            return b"".join(chunks)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _assert_continuous_writer_rejected(response: bytes) -> None:
+    if not response:
+        return
+    status, _ = _parse_http_response(response)
+    assert status == 400
+
+
 def _start_partial_request_dribbler(
     sock: socket.socket,
     *,
@@ -974,12 +995,13 @@ def test_slow_reader_cannot_extend_absolute_request_read_deadline() -> None:
             _wait_for_server_socket_count(process.pid, 2, exact=True)
             _wait_for_worker_socket_wait(process.pid)
             started = time.monotonic()
-            response = _receive_until_close(slow)
+            response = _receive_continuous_writer_rejection(slow)
             elapsed_ms = (time.monotonic() - started) * 1000.0
 
-            assert response.startswith(b"HTTP/1.1 400 Bad Request\r\n")
+            _assert_continuous_writer_rejected(response)
             assert elapsed_ms < io_timeout_ms + 500.0
 
+            _wait_for_server_socket_count(process.pid, 1, exact=True)
             health_status, _, _ = _send_request(
                 port,
                 b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -1033,16 +1055,15 @@ def test_shutdown_interrupts_active_and_queued_continuous_slow_readers() -> None
 
             started = time.monotonic()
             process.terminate()
-            responses = [_receive_until_close(sock) for sock in sockets]
+            responses = [_receive_continuous_writer_rejection(sock) for sock in sockets]
             return_code = process.wait(timeout=1.0)
             elapsed_ms = (time.monotonic() - started) * 1000.0
 
-            assert all(
-                response.startswith(b"HTTP/1.1 400 Bad Request\r\n")
-                for response in responses
-            )
+            for response in responses:
+                _assert_continuous_writer_rejected(response)
             assert return_code == 0
             assert elapsed_ms < 1000.0
+            assert not os.path.exists(f"/proc/{process.pid}")
         finally:
             for stop_dribbling, _ in dribblers:
                 stop_dribbling.set()
