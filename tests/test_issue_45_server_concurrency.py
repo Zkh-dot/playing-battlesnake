@@ -488,7 +488,16 @@ def test_unread_overload_telemetry_pipe_never_blocks_prompt_503() -> None:
     fcntl.fcntl(telemetry_write_fd, fcntl.F_SETPIPE_SZ, 4096)
 
     with tempfile.TemporaryFile(mode="w+") as server_log:
-        process = _start_server(port, server_log, stderr_log=telemetry_write_fd)
+        process = _start_server(
+            port,
+            server_log,
+            stderr_log=telemetry_write_fd,
+            # Keep the active and queued incomplete requests saturated for the
+            # entire sequential pipe-fill stress window.
+            BATTLESNAKE_IO_TIMEOUT_MS="60000",
+            BATTLESNAKE_WORKERS="1",
+            BATTLESNAKE_QUEUE_CAPACITY="1",
+        )
         os.close(telemetry_write_fd)
         telemetry_write_fd = -1
         active: socket.socket | None = None
@@ -508,11 +517,22 @@ def test_unread_overload_telemetry_pipe_never_blocks_prompt_503() -> None:
 
             scenario = next(item for item in SCENARIOS if item.name == "duel_center_pressure_11x11")
             complete_request = _move_request(move_payload(scenario, timeout=500))
-            for _ in range(160):
-                status, body, elapsed_ms = _send_request(port, complete_request, timeout=0.5)
-                assert status == 503
-                assert body == {}
-                assert elapsed_ms < 300.0
+            for request_index in range(160):
+                try:
+                    status, body, elapsed_ms = _send_request(
+                        port,
+                        complete_request,
+                        timeout=0.5,
+                    )
+                except Exception as error:
+                    raise AssertionError(
+                        f"overload request {request_index} did not complete"
+                    ) from error
+                assert status == 503, f"overload request {request_index} returned {status}"
+                assert body == {}, f"overload request {request_index} returned {body}"
+                assert elapsed_ms < 300.0, (
+                    f"overload request {request_index} took {elapsed_ms:.1f}ms"
+                )
 
             active.close()
             active = None
