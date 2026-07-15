@@ -20,6 +20,7 @@ from battlesnake.battlesnake_native import (
     Snake,
     duel_weight_profiles,
     evaluate,
+    minimax_diagnostics,
 )
 from tools.tuning.duel_weight_profiles import (
     WEIGHT_KEYS,
@@ -191,13 +192,15 @@ def _start_server(
     binary: Path,
     output: object,
     selector: str | None,
+    *,
+    search_budget_ms: int = 1,
 ) -> tuple[subprocess.Popen[bytes], int, dict[str, object]]:
     port = _free_port()
     env = {
         **os.environ,
         "BATTLESNAKE_BIND_ADDRESS": "127.0.0.1",
         "BATTLESNAKE_PORT": str(port),
-        "BATTLESNAKE_SEARCH_BUDGET_MS": "1",
+        "BATTLESNAKE_SEARCH_BUDGET_MS": str(search_budget_ms),
     }
     if selector is None:
         env.pop("BATTLESNAKE_DUEL_WEIGHT_SET", None)
@@ -232,9 +235,10 @@ def _post(port: int, body: bytes) -> tuple[int, dict[str, object]]:
     return int(header.split(b" ", 2)[1]), json.loads(response_body)
 
 
-def _profile_sensitive_payload() -> dict[str, object]:
-    me_body = [(6, 4), (6, 5), (5, 5), (4, 5), (3, 5)]
-    you_body = [(0, 6), (0, 5), (1, 5)]
+def _profile_sensitive_fixture() -> tuple[Board, dict[str, object]]:
+    me_body = [(3, 3), (4, 3), (4, 4), (5, 4), (5, 3)]
+    you_body = [(5, 1), (5, 0), (4, 0), (3, 0)]
+
     def snake(identifier: str, health: int, body: list[tuple[int, int]]) -> dict[str, object]:
         return {
             "id": identifier,
@@ -243,15 +247,30 @@ def _profile_sensitive_payload() -> dict[str, object]:
             "body": [{"x": x, "y": y} for x, y in body],
         }
 
-    me = snake("me", 34, me_body)
-    you = snake("you", 36, you_body)
+    me = snake("me", 74, me_body)
+    you = snake("you", 48, you_body)
+    board = Board(
+        6,
+        6,
+        [
+            Snake("me", "me", 74, [Coord(*point) for point in me_body]),
+            Snake("you", "you", 48, [Coord(*point) for point in you_body]),
+        ],
+        food=[Coord(0, 3), Coord(0, 4)],
+    )
     payload = {
         "game": {"id": "profile-wiring", "timeout": 500, "ruleset": {"name": "standard", "settings": {}}},
         "turn": 1,
-        "board": {"height": 7, "width": 7, "food": [{"x": 4, "y": 0}], "hazards": [], "snakes": [me, you]},
+        "board": {
+            "height": 6,
+            "width": 6,
+            "food": [{"x": 0, "y": 3}, {"x": 0, "y": 4}],
+            "hazards": [],
+            "snakes": [me, you],
+        },
         "you": me,
     }
-    return payload
+    return board, payload
 
 
 @pytest.mark.parametrize(
@@ -290,14 +309,14 @@ def test_invalid_explicit_selector_fails_before_listening(native_server: Path, s
 
 
 def test_selected_profile_is_attached_to_all_move_telemetry(native_server: Path) -> None:
-    payload = _profile_sensitive_payload()
+    _board, payload = _profile_sensitive_fixture()
     fallback_payload = json.loads(json.dumps(payload))
     fallback_payload["board"]["snakes"].append(
         {
             "id": "third",
             "name": "third",
             "health": 90,
-            "body": [{"x": 2, "y": 6}, {"x": 2, "y": 5}],
+            "body": [{"x": 1, "y": 5}, {"x": 1, "y": 4}],
         }
     )
     for selector in ("duel-default@1", "tuned-opponent-pressure@1"):
@@ -325,3 +344,47 @@ def test_selected_profile_is_attached_to_all_move_telemetry(native_server: Path)
                 assert event["weight_set"] == startup["weight_set"]
                 assert event["weight_version"] == startup["weight_version"]
                 assert event["weight_sha256"] == startup["weight_sha256"]
+
+
+def test_selected_profile_drives_production_http_move(native_server: Path) -> None:
+    board, payload = _profile_sensitive_fixture()
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    profiles = {
+        f"{profile.name}@{profile.version}": profile
+        for profile in map(load_profile, PROFILE_PATHS)
+    }
+    expected_moves = {
+        "duel-default@1": "left",
+        "tuned-opponent-pressure@1": "down",
+    }
+    observed_moves: dict[str, set[str]] = {}
+
+    for selector, expected_move in expected_moves.items():
+        fixed_depth_moves = {
+            minimax_diagnostics(
+                board,
+                "me",
+                time_budget_ms=5000,
+                fixed_depth=depth,
+                weights=dict(profiles[selector].weights),
+            )["move"]
+            for depth in range(1, 7)
+        }
+        assert fixed_depth_moves == {expected_move}
+
+        with tempfile.TemporaryFile() as output:
+            process, port, startup = _start_server(
+                native_server,
+                output,
+                selector,
+                search_budget_ms=25,
+            )
+            try:
+                observed = [_post(port, body)[1]["move"] for _ in range(10)]
+            finally:
+                _stop_server(process)
+            assert startup["weight_set"] == profiles[selector].name
+            observed_moves[selector] = set(observed)
+            assert observed_moves[selector] == {expected_move}
+
+    assert len({next(iter(moves)) for moves in observed_moves.values()}) == 2
