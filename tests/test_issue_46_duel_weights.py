@@ -65,6 +65,30 @@ def test_profile_validation_rejects_invalid_data(tmp_path: Path, mutate, match: 
         load_profile(path)
 
 
+@pytest.mark.parametrize(
+    ("duplicate", "match"),
+    [
+        ('"name": "shadowed",', "duplicate JSON field: name"),
+        ('"weights": {"base": 999.0,', "duplicate JSON field: base"),
+    ],
+)
+def test_profile_loader_rejects_duplicate_json_fields(
+    tmp_path: Path,
+    duplicate: str,
+    match: str,
+) -> None:
+    raw = PROFILE_PATHS[0].read_text()
+    if duplicate.startswith('"weights"'):
+        raw = raw.replace('"weights": {', duplicate, 1)
+    else:
+        raw = raw.replace("{", "{" + duplicate, 1)
+    path = tmp_path / "duplicate.json"
+    path.write_text(raw)
+
+    with pytest.raises(ValueError, match=match):
+        load_profile(path)
+
+
 def test_programmatic_nonfinite_and_registry_invariants_are_rejected() -> None:
     valid = load_profile(PROFILE_PATHS[0])
     invalid = DuelWeightProfile(

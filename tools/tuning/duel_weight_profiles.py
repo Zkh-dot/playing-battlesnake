@@ -97,10 +97,19 @@ def validate_profile(profile: DuelWeightProfile, source: str = "profile") -> Due
     return _validated_profile(profile.to_dict(), source)
 
 
+def _object_without_duplicate_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON field: {key}")
+        result[key] = value
+    return result
+
+
 def load_profile(path: Path) -> DuelWeightProfile:
     try:
-        data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
+        data = json.loads(path.read_text(), object_pairs_hook=_object_without_duplicate_fields)
+    except (OSError, ValueError) as error:
         raise ValueError(f"{path}: invalid profile: {error}") from error
     return _validated_profile(data, str(path))
 
