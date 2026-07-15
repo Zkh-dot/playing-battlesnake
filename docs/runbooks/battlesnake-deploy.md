@@ -55,6 +55,13 @@ delay and JSON parsing time are deducted from the request's game timeout before
 search. If too little search window remains, the request takes the cheap legal
 fallback path rather than starting work that cannot finish in time.
 
+`BATTLESNAKE_IO_TIMEOUT_MS` is an absolute socket-input budget beginning when a
+worker starts servicing a connection, not an inactivity timeout reset by every
+received byte. Queue wait does not consume that input budget; it remains part
+of the separate accept-to-search game deadline above. During shutdown, active
+reads and later FIFO-drained reads are interrupted immediately while their
+write halves remain available for a bounded graceful response.
+
 Move request state is not shared between workers: the request and response
 buffers, JSON parser, board, arena, search timer, search statistics,
 transposition table, and search workspace are constructed for the request. The

@@ -1,3 +1,4 @@
+#include "active_connections.h"
 #include "arena.h"
 #include "battlesnake_http.h"
 #include "battlesnake_strategy.h"
@@ -35,6 +36,7 @@ typedef struct {
 
 typedef struct {
     BsConnectionQueue* queue;
+    BsActiveConnections* active_connections;
     const BsServerConfig* config;
 } BsWorkerContext;
 
@@ -144,15 +146,50 @@ static bool write_all(int fd, const char* data, size_t len) {
     return true;
 }
 
-static void apply_socket_timeout(int fd, int timeout_ms) {
+static void apply_socket_send_timeout(int fd, int timeout_ms) {
     if (timeout_ms <= 0) {
         return;
     }
     struct timeval timeout;
     timeout.tv_sec = timeout_ms / 1000;
     timeout.tv_usec = (timeout_ms % 1000) * 1000;
-    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+}
+
+static struct timespec deadline_after_ms(struct timespec start, int timeout_ms) {
+    struct timespec deadline = start;
+    deadline.tv_sec += timeout_ms / 1000;
+    deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    return deadline;
+}
+
+static bool apply_receive_timeout_until(int fd, struct timespec deadline) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return false;
+    }
+    time_t seconds = deadline.tv_sec - now.tv_sec;
+    long nanoseconds = deadline.tv_nsec - now.tv_nsec;
+    if (nanoseconds < 0) {
+        seconds--;
+        nanoseconds += 1000000000L;
+    }
+    if (seconds < 0 || (seconds == 0 && nanoseconds == 0)) {
+        return false;
+    }
+    struct timeval timeout = {
+        .tv_sec = seconds,
+        .tv_usec = (nanoseconds + 999L) / 1000L,
+    };
+    if (timeout.tv_usec >= 1000000L) {
+        timeout.tv_sec++;
+        timeout.tv_usec -= 1000000L;
+    }
+    return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0;
 }
 
 static bool set_nonblocking_cloexec(int fd) {
@@ -263,11 +300,21 @@ static BsHttpResult handle_connection(
     const BsServerConfig* config,
     struct timespec request_started_at,
     bool request_started_at_valid,
+    struct timespec read_started_at,
+    bool read_started_at_valid,
     double* out_handler_ms
 ) {
     BsHttpResult result = {0};
     *out_handler_ms = 0.0;
-    apply_socket_timeout(client_fd, config->io_timeout_ms);
+    apply_socket_send_timeout(client_fd, config->io_timeout_ms);
+    if (!read_started_at_valid
+        && clock_gettime(CLOCK_MONOTONIC, &read_started_at) != 0) {
+        return result;
+    }
+    struct timespec read_deadline = deadline_after_ms(
+        read_started_at,
+        config->io_timeout_ms
+    );
 
     char* request = (char*)malloc(config->request_bytes);
     char* response = (char*)malloc(config->response_bytes);
@@ -282,6 +329,9 @@ static BsHttpResult handle_connection(
     size_t target_len = 0;
     bool have_target = false;
     while (used < config->request_bytes) {
+        if (!apply_receive_timeout_until(client_fd, read_deadline)) {
+            break;
+        }
         ssize_t received = read(client_fd, request + used, config->request_bytes - used);
         if (received < 0) {
             if (errno == EINTR) {
@@ -359,17 +409,32 @@ static void* worker_main(void* argument) {
             request_started_at = worker_started_at;
             request_started_at_valid = true;
         }
+        size_t active_slot = 0;
+        if (!BsActiveConnectionsRegister(
+                context->active_connections,
+                job.client_fd,
+                &active_slot
+            )) {
+            close(job.client_fd);
+            continue;
+        }
         double handler_ms = 0.0;
         BsHttpResult result = handle_connection(
             job.client_fd,
             context->config,
             request_started_at,
             request_started_at_valid,
+            worker_started_at,
+            worker_started_at_valid,
             &handler_ms
         );
         struct timespec completed_at = {0};
         bool completed_at_valid = clock_gettime(CLOCK_MONOTONIC, &completed_at) == 0;
-        close(job.client_fd);
+        BsActiveConnectionsClose(
+            context->active_connections,
+            active_slot,
+            job.client_fd
+        );
 
         if (result.is_move) {
             double queue_ms = job.accepted_at_valid && worker_started_at_valid
@@ -467,8 +532,20 @@ int main(void) {
         return 1;
     }
 
+    BsActiveConnections active_connections;
+    if (!BsActiveConnectionsInit(
+            &active_connections,
+            (size_t)config.worker_count
+        )) {
+        BsConnectionQueueDestroy(&queue);
+        fputs("failed to initialize active connection registry\n", stderr);
+        set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
+        return 1;
+    }
+
     pthread_t* workers = (pthread_t*)calloc((size_t)config.worker_count, sizeof(*workers));
     if (workers == 0) {
+        BsActiveConnectionsDestroy(&active_connections);
         BsConnectionQueueDestroy(&queue);
         fputs("failed to allocate server workers\n", stderr);
         set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
@@ -476,6 +553,7 @@ int main(void) {
     }
     BsWorkerContext worker_context = {
         .queue = &queue,
+        .active_connections = &active_connections,
         .config = &config,
     };
     int created_workers = 0;
@@ -489,11 +567,13 @@ int main(void) {
         if (create_status != 0) {
             errno = create_status;
             perror("failed to create server worker");
+            BsActiveConnectionsStop(&active_connections);
             BsConnectionQueueStop(&queue);
             for (int i = 0; i < created_workers; i++) {
                 pthread_join(workers[i], 0);
             }
             free(workers);
+            BsActiveConnectionsDestroy(&active_connections);
             BsConnectionQueueDestroy(&queue);
             set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
             return 1;
@@ -503,11 +583,13 @@ int main(void) {
     int listen_fd = create_listen_socket(config.port);
     if (listen_fd < 0) {
         perror("failed to start battlesnake native server");
+        BsActiveConnectionsStop(&active_connections);
         BsConnectionQueueStop(&queue);
         for (int i = 0; i < created_workers; i++) {
             pthread_join(workers[i], 0);
         }
         free(workers);
+        BsActiveConnectionsDestroy(&active_connections);
         BsConnectionQueueDestroy(&queue);
         set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
@@ -517,11 +599,13 @@ int main(void) {
     if (!create_wakeup_pipe(wakeup_pipe)) {
         perror("failed to create signal wakeup pipe");
         close(listen_fd);
+        BsActiveConnectionsStop(&active_connections);
         BsConnectionQueueStop(&queue);
         for (int i = 0; i < created_workers; i++) {
             pthread_join(workers[i], 0);
         }
         free(workers);
+        BsActiveConnectionsDestroy(&active_connections);
         BsConnectionQueueDestroy(&queue);
         set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
@@ -540,11 +624,13 @@ int main(void) {
         close(wakeup_pipe[0]);
         close(wakeup_pipe[1]);
         close(listen_fd);
+        BsActiveConnectionsStop(&active_connections);
         BsConnectionQueueStop(&queue);
         for (int i = 0; i < created_workers; i++) {
             pthread_join(workers[i], 0);
         }
         free(workers);
+        BsActiveConnectionsDestroy(&active_connections);
         BsConnectionQueueDestroy(&queue);
         set_signal_mask(SIG_SETMASK, &previous_signal_mask, "failed to restore signal mask");
         return 1;
@@ -622,11 +708,13 @@ int main(void) {
         close(wakeup_pipe[1]);
     }
     close(listen_fd);
+    BsActiveConnectionsStop(&active_connections);
     BsConnectionQueueStop(&queue);
     for (int i = 0; i < created_workers; i++) {
         pthread_join(workers[i], 0);
     }
     free(workers);
+    BsActiveConnectionsDestroy(&active_connections);
     BsConnectionQueueDestroy(&queue);
     bool restored_signal_mask = set_signal_mask(
         SIG_SETMASK,

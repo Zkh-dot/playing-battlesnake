@@ -27,6 +27,7 @@ fi
   battlesnake/c-core/core/zobrist.c \
   battlesnake/c-core/core/transposition_table.c \
   battlesnake/c-core/server/arena.c \
+  battlesnake/c-core/server/active_connections.c \
   battlesnake/c-core/server/battlesnake_json.c \
   battlesnake/c-core/server/battlesnake_strategy.c \
   battlesnake/c-core/server/battlesnake_http.c \

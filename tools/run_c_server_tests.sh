@@ -9,6 +9,14 @@ if [[ -n ${CFLAGS:-} ]]; then
 fi
 
 "${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
+  tests/c/test_active_connections.c \
+  battlesnake/c-core/server/active_connections.c \
+  -pthread \
+  -o build/tests/test_active_connections
+
+build/tests/test_active_connections
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
   tests/c/test_connection_queue.c \
   battlesnake/c-core/server/connection_queue.c \
   -pthread \
