@@ -45,7 +45,7 @@ typedef struct {
 static volatile sig_atomic_t g_should_stop = 0;
 static volatile sig_atomic_t g_signal_write_fd = -1;
 
-_Static_assert(256 <= PIPE_BUF, "telemetry lines must fit one atomic pipe write");
+_Static_assert(512 <= PIPE_BUF, "telemetry lines must fit one atomic pipe write");
 
 static void handle_signal(int signal_number) {
     (void)signal_number;
@@ -138,6 +138,53 @@ static bool parse_bind_address(BsServerConfig* config) {
     return true;
 }
 
+static bool parse_duel_weight_set(BsServerConfig* config) {
+    const char* selector = getenv("BATTLESNAKE_DUEL_WEIGHT_SET");
+    if (selector == NULL) {
+        config->strategy.weight_profile = CoreDuelWeightProfileDefault();
+        if (config->strategy.weight_profile == NULL) {
+            fputs("internal error: generated duel weight registry has no production default\n", stderr);
+            return false;
+        }
+        return true;
+    }
+
+    const char* separator = strchr(selector, '@');
+    if (selector[0] == '\0' || separator == NULL || separator == selector ||
+        separator[1] == '\0' || strchr(separator + 1, '@') != NULL) {
+        fputs(
+            "invalid BATTLESNAKE_DUEL_WEIGHT_SET: expected exactly <name>@<version>\n",
+            stderr
+        );
+        return false;
+    }
+
+    size_t name_length = (size_t)(separator - selector);
+    size_t version_length = strlen(separator + 1);
+    char name[64];
+    char version[64];
+    if (name_length >= sizeof(name) || version_length >= sizeof(version)) {
+        fputs(
+            "invalid BATTLESNAKE_DUEL_WEIGHT_SET: name or version is too long\n",
+            stderr
+        );
+        return false;
+    }
+    memcpy(name, selector, name_length);
+    name[name_length] = '\0';
+    memcpy(version, separator + 1, version_length + 1);
+
+    config->strategy.weight_profile = CoreDuelWeightProfileFind(name, version);
+    if (config->strategy.weight_profile == NULL) {
+        fputs(
+            "invalid BATTLESNAKE_DUEL_WEIGHT_SET: unknown immutable profile\n",
+            stderr
+        );
+        return false;
+    }
+    return true;
+}
+
 static bool config_from_env(BsServerConfig* config) {
     memset(config, 0, sizeof(*config));
     if (!parse_bind_address(config)) {
@@ -151,6 +198,9 @@ static bool config_from_env(BsServerConfig* config) {
     config->worker_count = parse_env_int_range("BATTLESNAKE_WORKERS", 2, 1, 64);
     config->queue_capacity = parse_env_size("BATTLESNAKE_QUEUE_CAPACITY", 8u, 1u);
     config->strategy = BsStrategyConfigDefault();
+    if (!parse_duel_weight_set(config)) {
+        return false;
+    }
     config->strategy.default_time_budget_ms = parse_env_int("BATTLESNAKE_SEARCH_BUDGET_MS", 400, 1);
     config->strategy.safety_margin_ms = parse_env_int("BATTLESNAKE_MOVE_SAFETY_MARGIN_MS", 150, 0);
     config->strategy.min_time_budget_ms = parse_env_int("BATTLESNAKE_MIN_SEARCH_BUDGET_MS", 50, 1);
@@ -294,23 +344,28 @@ static int elapsed_ms_ceil_saturated(struct timespec start, struct timespec end)
 
 static void log_move_request(
     const BsHttpResult* result,
+    const CoreDuelWeightProfile* weight_profile,
     double queue_ms,
     double handler_ms,
     double total_ms
 ) {
-    char line[256];
+    char line[512];
     int length = snprintf(
         line,
         sizeof(line),
         "{\"event\":\"move_request\",\"status\":%d,\"queue_ms\":%.3f,"
         "\"handler_ms\":%.3f,\"total_ms\":%.3f,\"timeout_ms\":%d,"
-        "\"fallback\":%s}\n",
+        "\"fallback\":%s,\"weight_set\":\"%s\",\"weight_version\":\"%s\","
+        "\"weight_sha256\":\"%s\"}\n",
         result->status_code,
         queue_ms,
         handler_ms,
         total_ms,
         result->game_timeout_ms,
-        result->fallback_used ? "true" : "false"
+        result->fallback_used ? "true" : "false",
+        weight_profile->name,
+        weight_profile->version,
+        weight_profile->sha256
     );
     if (length > 0 && (size_t)length < sizeof(line)) {
         ssize_t status = write(STDERR_FILENO, line, (size_t)length);
@@ -474,6 +529,7 @@ static void* worker_main(void* argument) {
                 : 0.0;
             log_move_request(
                 &result,
+                context->config->strategy.weight_profile,
                 queue_ms,
                 handler_ms,
                 total_ms
@@ -672,6 +728,15 @@ int main(void) {
         "battlesnake native server listening on %s:%d\n",
         config.bind_address_text,
         config.port
+    );
+    printf(
+        "{\"event\":\"server_startup\",\"weight_set\":\"%s\","
+        "\"weight_version\":\"%s\",\"weight_status\":\"%s\","
+        "\"weight_sha256\":\"%s\"}\n",
+        config.strategy.weight_profile->name,
+        config.strategy.weight_profile->version,
+        config.strategy.weight_profile->status,
+        config.strategy.weight_profile->sha256
     );
     fflush(stdout);
 

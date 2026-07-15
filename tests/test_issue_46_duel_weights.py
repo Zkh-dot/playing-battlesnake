@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import re
+import socket
 import subprocess
 import sys
+import tempfile
+import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
-from battlesnake.battlesnake_native import Board, Coord, Snake, duel_weight_profiles, evaluate
+from battlesnake.battlesnake_native import (
+    Board,
+    Coord,
+    Snake,
+    duel_weight_profiles,
+    evaluate,
+)
 from tools.tuning.duel_weight_profiles import (
     WEIGHT_KEYS,
     DuelWeightProfile,
@@ -149,3 +161,167 @@ def test_generated_profile_has_native_evaluation_parity() -> None:
         profile = load_profile(path)
         native_weights = native_by_id[profile.identifier]["weights"]
         assert evaluate(board, "us", native_weights) == evaluate(board, "us", dict(profile.weights))
+
+
+@pytest.fixture(scope="module")
+def native_server() -> Path:
+    subprocess.run(["bash", "tools/build_native_server.sh"], cwd=ROOT, check=True)
+    return ROOT / "build" / "battlesnake-server"
+
+
+def _free_port() -> int:
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_startup(process: subprocess.Popen[bytes], output: object) -> list[str]:
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        text = os.pread(output.fileno(), 8192, 0).decode()
+        if "battlesnake native server listening on" in text:
+            return text.splitlines()
+        if process.poll() is not None:
+            raise AssertionError(f"server exited during startup: {text}")
+        time.sleep(0.02)
+    raise AssertionError("server did not report startup")
+
+
+def _start_server(
+    binary: Path,
+    output: object,
+    selector: str | None,
+) -> tuple[subprocess.Popen[bytes], int, dict[str, object]]:
+    port = _free_port()
+    env = {
+        **os.environ,
+        "BATTLESNAKE_BIND_ADDRESS": "127.0.0.1",
+        "BATTLESNAKE_PORT": str(port),
+        "BATTLESNAKE_SEARCH_BUDGET_MS": "1",
+    }
+    if selector is None:
+        env.pop("BATTLESNAKE_DUEL_WEIGHT_SET", None)
+    else:
+        env["BATTLESNAKE_DUEL_WEIGHT_SET"] = selector
+    process = subprocess.Popen([binary], env=env, stdout=output, stderr=subprocess.STDOUT)
+    lines = _wait_for_startup(process, output)
+    startup = next(json.loads(line) for line in lines if line.startswith("{") and "server_startup" in line)
+    return process, port, startup
+
+
+def _stop_server(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is None:
+        process.terminate()
+        process.wait(timeout=5.0)
+
+
+def _post(port: int, body: bytes) -> tuple[int, dict[str, object]]:
+    request = (
+        b"POST /move HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        b"Content-Type: application/json\r\nContent-Length: "
+        + str(len(body)).encode()
+        + b"\r\n\r\n"
+        + body
+    )
+    with socket.create_connection(("127.0.0.1", port), timeout=2.0) as sock:
+        sock.sendall(request)
+        response = b""
+        while chunk := sock.recv(4096):
+            response += chunk
+    header, response_body = response.split(b"\r\n\r\n", 1)
+    return int(header.split(b" ", 2)[1]), json.loads(response_body)
+
+
+def _profile_sensitive_payload() -> dict[str, object]:
+    me_body = [(6, 4), (6, 5), (5, 5), (4, 5), (3, 5)]
+    you_body = [(0, 6), (0, 5), (1, 5)]
+    def snake(identifier: str, health: int, body: list[tuple[int, int]]) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "name": identifier,
+            "health": health,
+            "body": [{"x": x, "y": y} for x, y in body],
+        }
+
+    me = snake("me", 34, me_body)
+    you = snake("you", 36, you_body)
+    payload = {
+        "game": {"id": "profile-wiring", "timeout": 500, "ruleset": {"name": "standard", "settings": {}}},
+        "turn": 1,
+        "board": {"height": 7, "width": 7, "food": [{"x": 4, "y": 0}], "hazards": [], "snakes": [me, you]},
+        "you": me,
+    }
+    return payload
+
+
+@pytest.mark.parametrize(
+    ("selector", "expected_name", "expected_status"),
+    [(None, "duel-default", "production-default"), ("tuned-opponent-pressure@1", "tuned-opponent-pressure", "candidate")],
+)
+def test_server_selects_and_reports_immutable_profile(
+    native_server: Path,
+    selector: str | None,
+    expected_name: str,
+    expected_status: str,
+) -> None:
+    with tempfile.TemporaryFile() as output:
+        process, _port, startup = _start_server(native_server, output, selector)
+        try:
+            assert startup["weight_set"] == expected_name
+            assert startup["weight_version"] == "1"
+            assert startup["weight_status"] == expected_status
+            assert re.fullmatch(r"[0-9a-f]{64}", str(startup["weight_sha256"]))
+        finally:
+            _stop_server(process)
+
+
+@pytest.mark.parametrize("selector", ["", "missing-at", "@1", "duel-default@", "duel-default@1@extra", "unknown@1"])
+def test_invalid_explicit_selector_fails_before_listening(native_server: Path, selector: str) -> None:
+    result = subprocess.run(
+        [native_server],
+        env={**os.environ, "BATTLESNAKE_PORT": str(_free_port()), "BATTLESNAKE_DUEL_WEIGHT_SET": selector},
+        text=True,
+        capture_output=True,
+        timeout=2.0,
+    )
+    assert result.returncode != 0
+    assert "invalid BATTLESNAKE_DUEL_WEIGHT_SET" in result.stderr
+    assert "battlesnake native server listening on" not in result.stdout + result.stderr
+
+
+def test_selected_profile_is_attached_to_all_move_telemetry(native_server: Path) -> None:
+    payload = _profile_sensitive_payload()
+    fallback_payload = json.loads(json.dumps(payload))
+    fallback_payload["board"]["snakes"].append(
+        {
+            "id": "third",
+            "name": "third",
+            "health": 90,
+            "body": [{"x": 2, "y": 6}, {"x": 2, "y": 5}],
+        }
+    )
+    for selector in ("duel-default@1", "tuned-opponent-pressure@1"):
+        with tempfile.TemporaryFile() as output:
+            process, port, startup = _start_server(native_server, output, selector)
+            try:
+                status, response = _post(port, json.dumps(payload, separators=(",", ":")).encode())
+                assert status == 200
+                assert response["move"] in {"up", "down", "left", "right"}
+                fallback_status, fallback_response = _post(
+                    port,
+                    json.dumps(fallback_payload, separators=(",", ":")).encode(),
+                )
+                assert fallback_status == 200
+                assert fallback_response["move"] in {"up", "down", "left", "right"}
+                malformed_status, _ = _post(port, b"{")
+                assert malformed_status == 400
+            finally:
+                _stop_server(process)
+            lines = os.pread(output.fileno(), 16384, 0).decode().splitlines()
+            move_events = [json.loads(line) for line in lines if line.startswith("{") and "move_request" in line]
+            assert [event["status"] for event in move_events] == [200, 200, 400]
+            assert [event["fallback"] for event in move_events] == [False, True, False]
+            for event in move_events:
+                assert event["weight_set"] == startup["weight_set"]
+                assert event["weight_version"] == startup["weight_version"]
+                assert event["weight_sha256"] == startup["weight_sha256"]
