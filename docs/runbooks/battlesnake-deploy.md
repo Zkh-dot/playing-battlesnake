@@ -87,7 +87,7 @@ The two reviewable source envelopes are
 `production-default`) and
 `configs/evaluation_weights/tuned-opponent-pressure.json`
 (`tuned-opponent-pressure@1`, status `candidate`). A profile-source change must
-explicitly regenerate the checked-in C registry and Python metadata:
+explicitly regenerate the checked-in C registry and integrity manifest:
 
 ```bash
 python3 tools/tuning/generate_duel_weight_profiles.py
@@ -99,11 +99,13 @@ Then require a clean source/code-generation check before building or deploying:
 python3 tools/tuning/generate_duel_weight_profiles.py --check
 ```
 
-The native build does not run the generator or read the JSON envelopes; it
-compiles the checked-in generated registry. CI and acceptance checks run
-`--check`, so malformed source envelopes and stale generated output are caught
-before the native build. Runtime selector validation is separate and remains
-startup-fatal as described below.
+The native build does not run Python or parse the JSON envelopes. Before
+compilation it uses portable `sha256sum` verification of the manifest covering
+both source envelopes and the checked-in generated C/H files. This works in the
+`gcc:14-bookworm` builder. The Python extension build and acceptance checks run
+strict generator `--check`, so malformed source envelopes, stale generated
+output, and manifest drift are caught before compilation. Runtime selector
+validation is separate and remains startup-fatal as described below.
 
 The server accepts only the exact selector
 `BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>` from that compiled registry; it

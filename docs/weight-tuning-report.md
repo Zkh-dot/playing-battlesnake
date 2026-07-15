@@ -14,7 +14,7 @@ Search configuration:
 - best trial: 73
 - best replay score: 0.5841788478073947
 
-Promoted opponent-pressure weights:
+Tuning-selected candidate opponent-pressure weights:
 
 ```json
 {
@@ -24,6 +24,8 @@ Promoted opponent-pressure weights:
   "territory_delta": 1.8353673505986556
 }
 ```
+
+## Historical directional 20-match comparison
 
 Compute-node match comparison:
 

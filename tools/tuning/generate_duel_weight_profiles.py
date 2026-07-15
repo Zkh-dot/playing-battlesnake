@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ SOURCE_PATHS = (
 )
 HEADER_PATH = Path("battlesnake/c-core/core/duel_weight_profiles_generated.h")
 SOURCE_PATH = Path("battlesnake/c-core/core/duel_weight_profiles_generated.c")
+MANIFEST_PATH = Path("configs/evaluation_weights/duel_weight_profiles.sha256")
 
 
 def _c_string(value: str) -> str:
@@ -117,9 +119,21 @@ const CoreDuelWeightProfile* CoreDuelWeightProfileDefault(void) {{
 """
 
 
+def render_manifest(outputs: dict[Path, str]) -> str:
+    entries: list[tuple[Path, bytes]] = [
+        (path, (ROOT / path).read_bytes()) for path in SOURCE_PATHS
+    ]
+    entries.extend((path, outputs[path].encode("utf-8")) for path in (HEADER_PATH, SOURCE_PATH))
+    return "".join(
+        f"{hashlib.sha256(content).hexdigest()}  {path}\n" for path, content in entries
+    )
+
+
 def generated_outputs() -> dict[Path, str]:
     profiles = validate_profiles(load_profile(ROOT / path) for path in SOURCE_PATHS)
-    return {HEADER_PATH: render_header(), SOURCE_PATH: render_source(profiles)}
+    outputs = {HEADER_PATH: render_header(), SOURCE_PATH: render_source(profiles)}
+    outputs[MANIFEST_PATH] = render_manifest(outputs)
+    return outputs
 
 
 def main() -> int:

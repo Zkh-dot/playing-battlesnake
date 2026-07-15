@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+bash tools/verify_duel_weight_profiles.sh
+
 mkdir -p build
 
 extra_cflags=()

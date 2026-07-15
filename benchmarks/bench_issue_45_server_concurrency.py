@@ -439,6 +439,7 @@ def run_benchmark(
     deadline_ms: int, search_budget_ms: int, safety_margin_ms: int,
     duel_weight_set: str | None = None,
 ) -> dict[str, object]:
+    expected_profile = _expected_duel_weight_profile(duel_weight_set)
     subprocess.run(
         ["bash", "tools/build_native_server.sh"],
         cwd=PROJECT_ROOT,
@@ -463,7 +464,6 @@ def run_benchmark(
         }
         if duel_weight_set is not None:
             server_environment["BATTLESNAKE_DUEL_WEIGHT_SET"] = duel_weight_set
-        expected_profile = _expected_duel_weight_profile(duel_weight_set)
         process = subprocess.Popen(
             [str(SERVER_BINARY)],
             cwd=PROJECT_ROOT,
@@ -552,6 +552,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--duel-weight-set")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    try:
+        _expected_duel_weight_profile(args.duel_weight_set)
+    except ValueError as error:
+        parser.error(str(error))
     for option in (
         "workers", "queue_capacity", "concurrency", "batches", "deadline_ms", "search_budget_ms"
     ):

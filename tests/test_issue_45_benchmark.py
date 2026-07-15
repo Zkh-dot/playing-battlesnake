@@ -511,6 +511,26 @@ def test_cli_accepts_explicit_candidate_weight_set(
     assert json.loads(capsys.readouterr().out) == {"passed": True}
 
 
+def test_cli_rejects_unknown_profile_before_building_server(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    called = False
+
+    def unexpected_run_benchmark(**_arguments: object) -> dict[str, object]:
+        nonlocal called
+        called = True
+        return {"passed": True}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", unexpected_run_benchmark)
+
+    with pytest.raises(SystemExit) as error:
+        benchmark.main(["--duel-weight-set", "unknown@1"])
+
+    assert error.value.code == 2
+    assert called is False
+    assert "error: unknown duel weight profile selector: unknown@1" in capsys.readouterr().err
+
+
 def test_direct_benchmark_script_can_load_profile_contract() -> None:
     result = benchmark.subprocess.run(
         [

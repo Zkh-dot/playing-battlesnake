@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -37,6 +38,7 @@ CONFIG_DIR = ROOT / "configs" / "evaluation_weights"
 PROFILE_PATHS = [CONFIG_DIR / "default.json", CONFIG_DIR / "tuned-opponent-pressure.json"]
 REPLAY_FIXTURE = ROOT / "tests" / "fixtures" / "issue_46_duel_weight_replays.json"
 ENVELOPE_KEYS = {"schema_version", "name", "version", "status", "weights"}
+INTEGRITY_MANIFEST = ROOT / "configs/evaluation_weights/duel_weight_profiles.sha256"
 
 
 def raw_default() -> dict[str, object]:
@@ -129,6 +131,113 @@ def test_generator_is_current() -> None:
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def _copy_profile_integrity_tree(tmp_path: Path) -> Path:
+    for relative in (
+        "configs/evaluation_weights/default.json",
+        "configs/evaluation_weights/tuned-opponent-pressure.json",
+        "configs/evaluation_weights/duel_weight_profiles.sha256",
+        "battlesnake/c-core/core/duel_weight_profiles_generated.c",
+        "battlesnake/c-core/core/duel_weight_profiles_generated.h",
+        "tools/verify_duel_weight_profiles.sh",
+        "tools/build_native_server.sh",
+        "tools/tuning/generate_duel_weight_profiles.py",
+        "tools/tuning/duel_weight_profiles.py",
+        "setup.py",
+    ):
+        source = ROOT / relative
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    return tmp_path
+
+
+def test_profile_integrity_manifest_and_portable_preflight_are_current() -> None:
+    lines = INTEGRITY_MANIFEST.read_text().splitlines()
+    assert [line.split("  ", 1)[1] for line in lines] == [
+        "configs/evaluation_weights/default.json",
+        "configs/evaluation_weights/tuned-opponent-pressure.json",
+        "battlesnake/c-core/core/duel_weight_profiles_generated.h",
+        "battlesnake/c-core/core/duel_weight_profiles_generated.c",
+    ]
+    result = subprocess.run(
+        ["bash", "tools/verify_duel_weight_profiles.sh"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_generator_check_rejects_manifest_drift_in_isolated_tree(tmp_path: Path) -> None:
+    tree = _copy_profile_integrity_tree(tmp_path)
+    manifest = tree / "configs/evaluation_weights/duel_weight_profiles.sha256"
+    manifest.write_text(manifest.read_text() + "# stale\n")
+
+    result = subprocess.run(
+        [sys.executable, "tools/tuning/generate_duel_weight_profiles.py", "--check"],
+        cwd=tree,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "duel_weight_profiles.sha256" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("relative", "mutate"),
+    [
+        (
+            "configs/evaluation_weights/default.json",
+            lambda path: path.write_text(path.read_text().replace('"schema_version": 1,', '"schema_version": 1,\n  "extra": true,')),
+        ),
+        (
+            "battlesnake/c-core/core/duel_weight_profiles_generated.c",
+            lambda path: path.write_text(path.read_text() + "\n/* tampered */\n"),
+        ),
+    ],
+    ids=["malformed-source", "tampered-generated-c"],
+)
+def test_native_build_preflight_stops_before_compilation_on_integrity_drift(
+    tmp_path: Path, relative: str, mutate
+) -> None:
+    tree = _copy_profile_integrity_tree(tmp_path)
+    mutate(tree / relative)
+    compiler_marker = tree / "compiler-was-called"
+    fake_compiler = tree / "fake-gcc"
+    fake_compiler.write_text(f"#!/bin/sh\ntouch '{compiler_marker}'\nexit 99\n")
+    fake_compiler.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", "tools/build_native_server.sh"],
+        cwd=tree,
+        env={**os.environ, "CC": str(fake_compiler)},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "FAILED" in result.stdout + result.stderr
+    assert not compiler_marker.exists()
+
+
+def test_extension_build_runs_strict_generator_check_before_compilation(tmp_path: Path) -> None:
+    tree = _copy_profile_integrity_tree(tmp_path)
+    source = tree / "configs/evaluation_weights/default.json"
+    source.write_text(source.read_text().replace('"schema_version": 1,', '"schema_version": 1,\n  "extra": true,'))
+
+    result = subprocess.run(
+        [sys.executable, "setup.py", "build_ext", "--inplace", "--force"],
+        cwd=tree,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "envelope keys must be exactly" in result.stdout + result.stderr
+    assert "duel_weight_profiles_generated.c" not in result.stderr
 
 
 def test_native_registry_matches_validated_sources_field_for_field() -> None:
@@ -249,9 +358,13 @@ def test_operator_docs_define_the_duel_profile_runtime_contract() -> None:
     assert "configs/evaluation_weights/tuned-opponent-pressure.json" in docs
     assert "python3 tools/tuning/generate_duel_weight_profiles.py --check" in docs
     assert "python3 tools/tuning/generate_duel_weight_profiles.py\n" in docs
-    assert "native build does not run the generator" in docs.lower()
-    assert "compiles the checked-in generated registry" in docs.lower()
-    assert "ci and acceptance checks run" in docs.lower()
+    assert "integrity manifest" in docs.lower()
+    assert "native build does not run python" in docs.lower()
+    assert "sha256sum" in docs
+    assert "both source envelopes" in docs.lower()
+    assert "checked-in generated c/h files" in docs.lower()
+    assert "extension build and acceptance checks run" in docs.lower()
+    assert "ci and acceptance checks run" not in docs.lower()
     assert "build consumes these" not in docs.lower()
     assert "BATTLESNAKE_DUEL_WEIGHT_SET=<name>@<version>" in docs
     assert "duel-default@1" in docs
@@ -267,7 +380,7 @@ def test_operator_docs_define_the_duel_profile_runtime_contract() -> None:
     assert "weight_version" in docs
     assert "weight_sha256" in docs
     assert "weight_status" in docs
-    assert "before the native build" in docs.lower()
+    assert "before compilation" in docs.lower()
     assert "arbitrary runtime files" in docs.lower()
 
 
