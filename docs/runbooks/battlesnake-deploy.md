@@ -36,14 +36,12 @@ BATTLESNAKE_QUEUE_CAPACITY=8
 
 Native HTTP concurrency is bounded. `BATTLESNAKE_WORKERS` configures `1..64`
 move workers (default `2`) and `BATTLESNAKE_QUEUE_CAPACITY` configures the
-bounded move FIFO (default `8`). The rejection pool has
-`min(move workers + 1, 64)` workers and a rejection FIFO with the same capacity
-as the move FIFO. If both user-space FIFOs are full, the listener pauses
-`accept()` until its capacity pipe wakes it. Completed handshakes wait in the
-kernel listen backlog, which is explicitly `128` in the server; it is another
-bounded layer, not an unlimited queue. A connection accepted after the move
-FIFO fills receives an explicit `503 Service Unavailable` through the rejection
-pool instead of being silently reset.
+bounded move FIFO (default `8`). A connection accepted after that FIFO fills
+receives a fixed `503 Service Unavailable` through a nonblocking send followed
+by a write half-close and immediate close. Rejection retains no per-request
+thread, buffer, queue slot, or file descriptor. If the small nonblocking send
+cannot complete because the socket already has an error or no send capacity,
+the connection is closed and the overload telemetry event is still emitted.
 
 The listener records a monotonic timestamp immediately after `accept()`. Queue
 delay and JSON parsing time are deducted from the request's game timeout before
@@ -62,9 +60,11 @@ Each recognized `/move` request emits one atomic JSON telemetry line on stderr:
 {"event":"move_request","status":200,"queue_ms":0.008,"handler_ms":348.408,"total_ms":348.486,"timeout_ms":500,"fallback":false}
 ```
 
-`queue_ms` starts at the accept timestamp, `handler_ms` covers request handling,
-and `total_ms` spans accept through response completion. `fallback` is true when
-the cheap legal fallback was selected. An accepted overload emits
+`queue_ms` starts at the accept timestamp. `handler_ms` starts after socket input
+finishes and covers parsing, search, and response construction; it excludes
+socket reads and writes. `total_ms` spans accept through response write
+completion. `fallback` is true when the cheap legal fallback was selected. An
+accepted overload emits
 `{"event":"server_overload","status":503}`. Alert on timeouts/5xx, increasing
 fallback rate, or total p99 approaching the game deadline.
 

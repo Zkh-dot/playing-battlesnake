@@ -25,8 +25,6 @@ typedef struct {
 
 bool BsConnectionQueueInit(BsConnectionQueue* queue, size_t capacity);
 void BsConnectionQueueStop(BsConnectionQueue* queue);
-void BsConnectionQueueStopAndClose(BsConnectionQueue* queue);
 void BsConnectionQueueDestroy(BsConnectionQueue* queue);
 bool BsConnectionQueueTryPush(BsConnectionQueue* queue, BsConnectionJob job);
 bool BsConnectionQueuePop(BsConnectionQueue* queue, BsConnectionJob* out_job);
-bool BsConnectionQueueHasCapacity(BsConnectionQueue* queue);

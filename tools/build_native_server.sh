@@ -31,6 +31,7 @@ fi
   battlesnake/c-core/server/battlesnake_strategy.c \
   battlesnake/c-core/server/battlesnake_http.c \
   battlesnake/c-core/server/connection_queue.c \
+  battlesnake/c-core/server/overload_response.c \
   battlesnake/c-core/server/server_main.c \
   -lm \
   -pthread \

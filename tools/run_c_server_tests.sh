@@ -17,6 +17,13 @@ fi
 build/tests/test_connection_queue
 
 "${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
+  tests/c/test_overload_response.c \
+  battlesnake/c-core/server/overload_response.c \
+  -o build/tests/test_overload_response
+
+build/tests/test_overload_response
+
+"${CC:-cc}" -std=c2x -D_POSIX_C_SOURCE=200809L "${extra_cflags[@]}" -Ibattlesnake/c-core \
   tests/c/test_arena.c \
   battlesnake/c-core/server/arena.c \
   -o build/tests/test_arena
