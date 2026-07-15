@@ -1,6 +1,7 @@
 #include "../../battlesnake/c-core/server/battlesnake_http.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,14 @@ static const char* MOVE_BODY =
     "\"turn\":1,"
     "\"board\":{\"height\":5,\"width\":5,\"snakes\":[{\"id\":\"me\",\"health\":90,\"body\":[{\"x\":2,\"y\":2},{\"x\":2,\"y\":1},{\"x\":2,\"y\":0}],\"length\":3}]},"
     "\"you\":{\"id\":\"me\",\"health\":90,\"body\":[{\"x\":2,\"y\":2},{\"x\":2,\"y\":1},{\"x\":2,\"y\":0}],\"length\":3}}";
+
+static const char* DUEL_MOVE_BODY =
+    "{\"game\":{\"id\":\"g\",\"ruleset\":{\"name\":\"standard\",\"settings\":{\"hazardDamagePerTurn\":0}},\"timeout\":500},"
+    "\"turn\":1,"
+    "\"board\":{\"height\":7,\"width\":7,\"snakes\":["
+    "{\"id\":\"me\",\"health\":90,\"body\":[{\"x\":1,\"y\":3},{\"x\":1,\"y\":2},{\"x\":1,\"y\":1}],\"length\":3},"
+    "{\"id\":\"you\",\"health\":90,\"body\":[{\"x\":5,\"y\":3},{\"x\":5,\"y\":2},{\"x\":5,\"y\":1}],\"length\":3}]},"
+    "\"you\":{\"id\":\"me\",\"health\":90,\"body\":[{\"x\":1,\"y\":3},{\"x\":1,\"y\":2},{\"x\":1,\"y\":1}],\"length\":3}}";
 
 static const char* MISSING_CONTROLLED_SNAKE_BODY =
     "{\"game\":{\"id\":\"g\",\"ruleset\":{\"name\":\"standard\",\"settings\":{\"hazardDamagePerTurn\":0}},\"timeout\":500},"
@@ -80,6 +89,10 @@ static void test_info_route(void) {
     BsHttpResult result = BsHandleHttpRequest(request, strlen(request), &arena, &config, response, sizeof(response));
     assert(result.status_code == 200);
     assert(result.response_len == strlen(response));
+    assert(!result.is_move);
+    assert(!result.fallback_used);
+    assert(result.game_timeout_ms == 0);
+    assert(result.elapsed_before_search_ms == 0);
     assert(strstr(response, "HTTP/1.0 200 OK") != 0);
     assert(strstr(response, "\"apiversion\":\"1\"") != 0);
     assert(strstr(response, "Content-Type: application/json") != 0);
@@ -101,6 +114,112 @@ static void test_move_route(void) {
     assert(strstr(response, "HTTP/1.1 200 OK") != 0);
     assert(strstr(response, "\"move\":\"") != 0);
     assert_content_length_matches_body(response);
+    BsArenaFree(&arena);
+}
+
+static void test_move_route_accounts_for_elapsed_request_age(void) {
+    BsArena arena;
+    BsStrategyConfig config = BsStrategyConfigDefault();
+    BsHttpRequestContext request_context = {0};
+    char request[4096];
+    char response[2048];
+
+    config.default_time_budget_ms = 10;
+    config.safety_margin_ms = 150;
+    config.min_time_budget_ms = 50;
+    assert(BsArenaInit(&arena, 65536));
+    request_from_body_with_headers(
+        request, sizeof(request), "POST", "/move", "Content-Length", 0, DUEL_MOVE_BODY
+    );
+
+    request_context.elapsed_before_handle_ms = 100;
+    BsHttpResult normal = BsHandleHttpRequestTimed(
+        request,
+        strlen(request),
+        &arena,
+        &config,
+        &request_context,
+        response,
+        sizeof(response)
+    );
+    assert(normal.status_code == 200);
+    assert(normal.is_move);
+    assert(!normal.fallback_used);
+    assert(normal.game_timeout_ms == 500);
+    assert(normal.elapsed_before_search_ms >= 100);
+    assert(strstr(response, "\"move\":\"") != 0);
+
+    request_context.elapsed_before_handle_ms = 301;
+    BsHttpResult aged = BsHandleHttpRequestTimed(
+        request,
+        strlen(request),
+        &arena,
+        &config,
+        &request_context,
+        response,
+        sizeof(response)
+    );
+    assert(aged.status_code == 200);
+    assert(aged.is_move);
+    assert(aged.fallback_used);
+    assert(aged.game_timeout_ms == 500);
+    assert(aged.elapsed_before_search_ms >= 301);
+    assert(strstr(response, "\"move\":\"") != 0);
+
+    request_context.elapsed_before_handle_ms = INT_MAX;
+    BsHttpResult saturated = BsHandleHttpRequestTimed(
+        request,
+        strlen(request),
+        &arena,
+        &config,
+        &request_context,
+        response,
+        sizeof(response)
+    );
+    assert(saturated.status_code == 200);
+    assert(saturated.is_move);
+    assert(saturated.fallback_used);
+    assert(saturated.game_timeout_ms == 500);
+    assert(saturated.elapsed_before_search_ms == INT_MAX);
+    assert(strstr(response, "\"move\":\"") != 0);
+
+    BsArenaFree(&arena);
+}
+
+static void test_move_route_clamps_negative_elapsed_request_age(void) {
+    BsArena arena;
+    BsStrategyConfig config = BsStrategyConfigDefault();
+    const int negative_ages[] = {-1, INT_MIN};
+    char request[4096];
+    char response[2048];
+
+    config.default_time_budget_ms = 10;
+    assert(BsArenaInit(&arena, 65536));
+    request_from_body_with_headers(
+        request, sizeof(request), "POST", "/move", "Content-Length", 0, DUEL_MOVE_BODY
+    );
+
+    for (size_t i = 0; i < sizeof(negative_ages) / sizeof(negative_ages[0]); i++) {
+        BsHttpRequestContext request_context = {
+            .elapsed_before_handle_ms = negative_ages[i],
+        };
+        BsHttpResult result = BsHandleHttpRequestTimed(
+            request,
+            strlen(request),
+            &arena,
+            &config,
+            &request_context,
+            response,
+            sizeof(response)
+        );
+        assert(result.status_code == 200);
+        assert(result.is_move);
+        assert(!result.fallback_used);
+        assert(result.game_timeout_ms == 500);
+        assert(result.elapsed_before_search_ms >= 0);
+        assert(strstr(response, "\"move\":\"") != 0);
+    }
+
     BsArenaFree(&arena);
 }
 
@@ -139,6 +258,8 @@ static void test_wrong_method_returns_405(void) {
     assert(BsArenaInit(&arena, 65536));
     BsHttpResult result = BsHandleHttpRequest(request, strlen(request), &arena, &config, response, sizeof(response));
     assert(result.status_code == 405);
+    assert(result.is_move);
+    assert(result.game_timeout_ms == 0);
     assert(strstr(response, "HTTP/1.1 405 Method Not Allowed") != 0);
     BsArenaFree(&arena);
 }
@@ -213,6 +334,8 @@ static void test_malformed_json_returns_400(void) {
     request_from_body_with_headers(request, sizeof(request), "POST", "/move", "Content-Length", 0, MALFORMED_BODY);
     BsHttpResult move_result = BsHandleHttpRequest(request, strlen(request), &arena, &config, response, sizeof(response));
     assert(move_result.status_code == 400);
+    assert(move_result.is_move);
+    assert(move_result.game_timeout_ms == 0);
     assert(strstr(response, "HTTP/1.1 400 Bad Request") != 0);
 
     BsArenaFree(&arena);
@@ -402,6 +525,8 @@ static void test_malformed_header_syntax_returns_400(void) {
     assert(BsArenaInit(&arena, 65536));
     BsHttpResult result = BsHandleHttpRequest(request, strlen(request), &arena, &config, response, sizeof(response));
     assert(result.status_code == 400);
+    assert(result.is_move);
+    assert(result.game_timeout_ms == 0);
     assert(strstr(response, "HTTP/1.1 400 Bad Request") != 0);
     BsArenaFree(&arena);
 }
@@ -487,6 +612,8 @@ int main(void) {
     test_frame_overflow_content_length_clamps();
     test_info_route();
     test_move_route();
+    test_move_route_accounts_for_elapsed_request_age();
+    test_move_route_clamps_negative_elapsed_request_age();
     test_unknown_route();
     test_post_without_content_length();
     test_wrong_method_returns_405();

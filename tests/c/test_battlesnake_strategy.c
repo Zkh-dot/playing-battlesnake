@@ -2,6 +2,7 @@
 #include "../../battlesnake/c-core/core/core_algorithms.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -1963,6 +1964,37 @@ static void test_effective_budget_allows_zero_margin(void) {
     assert(BsStrategyEffectiveBudgetMs(&config) == 400);
 }
 
+static void test_request_age_controls_search_window_and_exposes_fallback(void) {
+    Board* board = BoardCreate(7, 7, "standard", 0);
+    Coord me_body[] = {{1, 3}, {1, 2}, {1, 1}};
+    Coord you_body[] = {{5, 3}, {5, 2}, {5, 1}};
+    Snake me = make_snake("me", me_body, 3, 90);
+    Snake you = make_snake("you", you_body, 3, 90);
+    BsStrategyConfig config = BsStrategyConfigDefault();
+    MoveDirection move = MOVE_INVALID;
+
+    config.game_timeout_ms = 500;
+    config.safety_margin_ms = 150;
+    config.min_time_budget_ms = 50;
+    assert(BsStrategyHasSearchWindow(&config, 299));
+    assert(BsStrategyHasSearchWindow(&config, 300));
+    assert(!BsStrategyHasSearchWindow(&config, 301));
+
+    config.game_timeout_ms = INT_MIN;
+    config.safety_margin_ms = INT_MAX;
+    config.min_time_budget_ms = INT_MIN;
+    assert(!BsStrategyHasSearchWindow(&config, INT_MAX));
+
+    assert(BoardAddSnake(board, &me));
+    assert(BoardAddSnake(board, &you));
+    assert(BsChooseFallbackMove(board, "me", &move) == BS_STRATEGY_FALLBACK_USED);
+    assert(move >= MOVE_UP && move <= MOVE_RIGHT);
+
+    SnakeFree(&me);
+    SnakeFree(&you);
+    BoardFree(board);
+}
+
 static void test_duel_root_profile_prefers_contingent_survival_over_terminal_moves(void) {
     Board* board = BoardCreate(11, 11, "standard", 0);
     Coord me_body[] = {{6, 10}, {7, 10}, {7, 9}, {6, 9}};
@@ -2243,6 +2275,7 @@ int main(void) {
     test_effective_budget_preserves_smaller_env_budget();
     test_effective_budget_floors_tiny_request_timeout();
     test_effective_budget_allows_zero_margin();
+    test_request_age_controls_search_window_and_exposes_fallback();
     test_duel_root_profile_prefers_contingent_survival_over_terminal_moves();
     test_production_minimax_structural_precedence_searches_deficient_root();
     test_production_minimax_terminal_outcome_precedes_structural_proof();

@@ -2,6 +2,7 @@
 
 #include "../core/core_algorithms.h"
 
+#include <stdint.h>
 #include <string.h>
 
 BsStrategyConfig BsStrategyConfigDefault(void) {
@@ -17,7 +18,21 @@ static bool is_legal_move(MoveDirection move) {
     return move == MOVE_UP || move == MOVE_DOWN || move == MOVE_LEFT || move == MOVE_RIGHT;
 }
 
-static BsStrategyStatus fallback_move(const Board* board, const char* snake_id, MoveDirection* out_move) {
+BsStrategyStatus BsChooseFallbackMove(
+    const Board* board,
+    const char* snake_id,
+    MoveDirection* out_move
+) {
+    if (out_move != 0) {
+        *out_move = MOVE_INVALID;
+    }
+    if (board == 0 || snake_id == 0 || out_move == 0) {
+        return BS_STRATEGY_ERROR;
+    }
+    if (BoardFindSnakeConst(board, snake_id) == 0) {
+        return BS_STRATEGY_ERROR;
+    }
+
     MoveDirection moves[4];
     int count = BoardSafeMoves(board, snake_id, moves);
     if (count > 0) {
@@ -46,6 +61,17 @@ static BsStrategyStatus fallback_move(const Board* board, const char* snake_id, 
     }
     *out_move = MOVE_UP;
     return BS_STRATEGY_FALLBACK_USED;
+}
+
+bool BsStrategyHasSearchWindow(const BsStrategyConfig* config, int elapsed_ms) {
+    BsStrategyConfig effective = BsStrategyConfigDefault();
+    if (config != 0) {
+        effective = *config;
+    }
+
+    int64_t remaining_ms = (int64_t)effective.game_timeout_ms - (int64_t)elapsed_ms;
+    remaining_ms -= (int64_t)effective.safety_margin_ms;
+    return remaining_ms >= (int64_t)effective.min_time_budget_ms;
 }
 
 int BsStrategyEffectiveBudgetMs(const BsStrategyConfig* config) {
@@ -102,5 +128,5 @@ BsStrategyStatus BsChooseMove(
         }
     }
 
-    return fallback_move(board, snake_id, out_move);
+    return BsChooseFallbackMove(board, snake_id, out_move);
 }

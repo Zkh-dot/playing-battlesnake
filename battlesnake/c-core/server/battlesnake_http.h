@@ -3,11 +3,21 @@
 #include "arena.h"
 #include "battlesnake_strategy.h"
 
+#include <stdbool.h>
 #include <stddef.h>
+
+typedef struct {
+    /* Nonnegative monotonic duration; negative values are clamped to zero. */
+    int elapsed_before_handle_ms;
+} BsHttpRequestContext;
 
 typedef struct {
     int status_code;
     size_t response_len;
+    bool is_move;
+    bool fallback_used;
+    int game_timeout_ms;
+    int elapsed_before_search_ms;
 } BsHttpResult;
 
 typedef enum {
@@ -37,6 +47,16 @@ BsHttpResult BsHandleHttpRequest(
     size_t request_len,
     BsArena* arena,
     const BsStrategyConfig* strategy_config,
+    char* response,
+    size_t response_capacity
+);
+
+BsHttpResult BsHandleHttpRequestTimed(
+    const char* request,
+    size_t request_len,
+    BsArena* arena,
+    const BsStrategyConfig* strategy_config,
+    const BsHttpRequestContext* request_context,
     char* response,
     size_t response_capacity
 );
