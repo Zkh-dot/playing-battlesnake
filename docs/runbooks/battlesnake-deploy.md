@@ -224,6 +224,7 @@ set -euo pipefail
 test -x "$CANDIDATE_BINARY"
 CANDIDATE_BINARY=$(readlink -f -- "$CANDIDATE_BINARY")
 CANDIDATE_LOG="/tmp/battlesnake-candidate-8129.$$.log"
+: >"$CANDIDATE_LOG"
 CANDIDATE_PID=""
 
 stop_candidate() {

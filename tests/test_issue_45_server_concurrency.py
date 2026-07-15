@@ -3,6 +3,8 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -241,6 +243,102 @@ def _move_request(body: str) -> bytes:
         + f"Content-Length: {len(body_bytes)}\r\n\r\n".encode()
         + body_bytes
     )
+
+
+def _candidate_verification_script() -> str:
+    runbook = Path("docs/runbooks/battlesnake-deploy.md").read_text(encoding="utf-8")
+    section = runbook.split("## Isolated candidate functional verification", 1)[1]
+    section = section.split("\n## ", 1)[0]
+    bash_blocks = [
+        fragment.split("\n```", 1)[0]
+        for fragment in section.split("```bash\n")[1:]
+    ]
+    scripts = [
+        block for block in bash_blocks if block.startswith("set -euo pipefail\n")
+    ]
+    assert len(scripts) == 1
+    return scripts[0]
+
+
+def _run_candidate_verification(
+    binary: Path,
+    **environment: str,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash"],
+        input=_candidate_verification_script(),
+        text=True,
+        capture_output=True,
+        timeout=15.0,
+        env={**os.environ, "CANDIDATE_BINARY": str(binary), **environment},
+    )
+
+
+def _reported_candidate_log(result: subprocess.CompletedProcess[str]) -> Path:
+    output = result.stdout + result.stderr
+    match = re.search(r"log retained at (\S+)", output)
+    assert match is not None, output
+    return Path(match.group(1))
+
+
+def test_runbook_candidate_verification_handles_occupied_success_and_failure(
+    tmp_path: Path,
+) -> None:
+    for command in ("ss", "curl", "python3"):
+        if shutil.which(command) is None:
+            pytest.skip(f"runbook dependency {command} is unavailable")
+    subprocess.run(["bash", "tools/build_native_server.sh"], check=True)
+    candidate = Path("build/battlesnake-server").resolve()
+
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as occupied:
+        occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        occupied.bind(("127.0.0.1", 8129))
+        occupied.listen()
+        occupied_result = _run_candidate_verification(candidate)
+        assert occupied_result.returncode != 0
+        assert "port 8129 is already occupied" in occupied_result.stderr
+        assert "No such file or directory" not in occupied_result.stderr
+        occupied_log = _reported_candidate_log(occupied_result)
+        assert occupied_log.is_file()
+        occupied.settimeout(0.1)
+        with pytest.raises(socket.timeout):
+            occupied.accept()
+    occupied_log.unlink()
+
+    pid_file = tmp_path / "failing-candidate.pid"
+    failing_candidate = tmp_path / "failing-candidate"
+    failing_candidate.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$$" > "$CANDIDATE_PID_FILE"\n'
+        "printf '%s\\n' "
+        "'battlesnake native server listening on 127.0.0.1:8129'\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    failing_candidate.chmod(0o755)
+    failure_result = _run_candidate_verification(
+        failing_candidate,
+        CANDIDATE_PID_FILE=str(pid_file),
+    )
+    assert failure_result.returncode != 0
+    assert "did not create the expected loopback listener" in failure_result.stderr
+    assert "No such file or directory" not in failure_result.stderr
+    failed_pid = int(pid_file.read_text(encoding="utf-8"))
+    assert not Path(f"/proc/{failed_pid}").exists()
+    failure_log = _reported_candidate_log(failure_result)
+    assert failure_log.is_file()
+    failure_log.unlink()
+
+    success_result = _run_candidate_verification(candidate)
+    assert success_result.returncode == 0, (
+        success_result.stdout + success_result.stderr
+    )
+    assert "candidate verification passed" in success_result.stdout
+    success_log = _reported_candidate_log(success_result)
+    assert success_log.is_file()
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", 8129), timeout=0.1)
+    success_log.unlink()
 
 
 @pytest.mark.parametrize(
