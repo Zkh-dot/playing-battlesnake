@@ -285,6 +285,57 @@ def test_result_gate_exposes_and_fails_bad_server_lifecycle(
     assert failure_reason in result["failure_reasons"]
 
 
+def test_run_benchmark_passes_exact_strategy_environment_to_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_environment: dict[str, str] = {}
+
+    class _CapturedProcess:
+        pass
+
+    def capture_popen(
+        _arguments: object,
+        *,
+        cwd: object,
+        env: dict[str, str],
+        stdout: object,
+        stderr: object,
+    ) -> _CapturedProcess:
+        del cwd, stdout, stderr
+        captured_environment.update(env)
+        return _CapturedProcess()
+
+    monkeypatch.setattr(benchmark.subprocess, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(benchmark.subprocess, "Popen", capture_popen)
+    monkeypatch.setattr(benchmark, "_free_port", lambda: 8121)
+    monkeypatch.setattr(benchmark, "_load_payload", lambda _deadline_ms: b"{}")
+    monkeypatch.setattr(benchmark, "_wait_for_ready", lambda *_args: None)
+    monkeypatch.setattr(
+        benchmark,
+        "_request",
+        lambda *_args, **_kwargs: {"status": 200, "error": None},
+    )
+    monkeypatch.setattr(benchmark, "wait_for_move_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(benchmark, "_server_events", lambda _log_file: [])
+    monkeypatch.setattr(benchmark, "run_batch", lambda **_kwargs: [])
+    monkeypatch.setattr(benchmark, "shutdown_server", lambda _process: _healthy_lifecycle())
+
+    result = benchmark.run_benchmark(
+        workers=2,
+        queue_capacity=8,
+        concurrency=1,
+        batches=1,
+        deadline_ms=500,
+        search_budget_ms=301,
+        safety_margin_ms=201,
+    )
+
+    assert captured_environment["BATTLESNAKE_SEARCH_BUDGET_MS"] == "301"
+    assert captured_environment["BATTLESNAKE_MOVE_SAFETY_MARGIN_MS"] == "201"
+    assert result["configuration"]["search_budget_ms"] == 301
+    assert result["configuration"]["safety_margin_ms"] == 201
+
+
 def test_cli_accepts_server_maximum_search_budget(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
