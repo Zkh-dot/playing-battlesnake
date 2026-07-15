@@ -301,6 +301,80 @@ def test_cli_accepts_server_maximum_search_budget(
     assert json.loads(capsys.readouterr().out) == {"passed": True}
 
 
+def test_cli_defaults_match_production_strategy_configuration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, int] = {}
+
+    def fake_run_benchmark(**arguments: int) -> dict[str, object]:
+        captured.update(arguments)
+        return {"passed": True}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", fake_run_benchmark)
+
+    assert benchmark.main([]) == 0
+    assert captured["search_budget_ms"] == 300
+    assert captured["safety_margin_ms"] == 200
+    assert json.loads(capsys.readouterr().out) == {"passed": True}
+
+
+def test_cli_passes_explicit_strategy_configuration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, int] = {}
+
+    def fake_run_benchmark(**arguments: int) -> dict[str, object]:
+        captured.update(arguments)
+        return {"passed": True}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", fake_run_benchmark)
+
+    assert benchmark.main(
+        ["--search-budget-ms", "301", "--safety-margin-ms", "201"]
+    ) == 0
+    assert captured["search_budget_ms"] == 301
+    assert captured["safety_margin_ms"] == 201
+    assert json.loads(capsys.readouterr().out) == {"passed": True}
+
+
+@pytest.mark.parametrize("safety_margin_ms", [0, 65535])
+def test_cli_accepts_server_safety_margin_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    safety_margin_ms: int,
+) -> None:
+    captured: dict[str, int] = {}
+
+    def fake_run_benchmark(**arguments: int) -> dict[str, object]:
+        captured.update(arguments)
+        return {"passed": True}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", fake_run_benchmark)
+
+    assert benchmark.main(["--safety-margin-ms", str(safety_margin_ms)]) == 0
+    assert captured["safety_margin_ms"] == safety_margin_ms
+    assert json.loads(capsys.readouterr().out) == {"passed": True}
+
+
+def test_cli_rejects_safety_margin_above_server_parser_maximum(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    called = False
+
+    def fake_run_benchmark(**_arguments: int) -> dict[str, object]:
+        nonlocal called
+        called = True
+        return {"passed": True}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", fake_run_benchmark)
+
+    with pytest.raises(SystemExit) as error:
+        benchmark.main(["--safety-margin-ms", "65536"])
+    assert error.value.code == 2
+    assert called is False
+    assert "--safety-margin-ms must be at most 65535" in capsys.readouterr().err
+
+
 def test_cli_rejects_search_budget_above_server_parser_maximum(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -9,27 +9,30 @@ Two snakes are served from `ya.sergeiscv.ru`:
 
 ## Current Deployment
 
-- Server: `ya.sergeiscv.ru`
+- Server: `45.10.166.244` (`ya.sergeiscv.ru`)
 - Public URL: `https://ya.sergeiscv.ru/snake/`
-- Server checkout: `~/deploy/playing-battlesnake`
-- Container: `playing-battlesnake`
-- Local service port: `8121`
-- Container port: `8000`
-- Runtime process: `/app/battlesnake-server`
-- Current image pattern: `playing-battlesnake:native-<timestamp-or-commit>`
+- Direct native endpoint: `http://45.10.166.244:8121/`
+- Runtime: systemd unit `playing-battlesnake.service`
+- Native service port: `8121`
+
+The checkout and executable paths are properties of the installed unit, not a
+repository convention. Discover them with `systemctl show` before updating;
+do not assume a home directory or Docker path.
 
 Port `8120` is already used by the MTG backend. Keep Battlesnake on `8121`
 unless that service is intentionally moved.
 
 ## Native Runtime
 
-The deployed container runs `/app/battlesnake-server`.
+The deployed `playing-battlesnake.service` runs the native server named by its
+`ExecStart` property.
 
 Required environment:
 
 ```text
-BATTLESNAKE_PORT=8000
-BATTLESNAKE_SEARCH_BUDGET_MS=400
+BATTLESNAKE_PORT=8121
+BATTLESNAKE_SEARCH_BUDGET_MS=300
+BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200
 BATTLESNAKE_WORKERS=2
 BATTLESNAKE_QUEUE_CAPACITY=8
 ```
@@ -86,18 +89,23 @@ python3 -m benchmarks.bench_issue_45_server_concurrency \
   --concurrency 2 \
   --batches 20 \
   --deadline-ms 500 \
-  --search-budget-ms 400 \
+  --search-budget-ms 300 \
+  --safety-margin-ms 200 \
   --output /tmp/issue45-server-concurrency.json
 ```
+
+The benchmark defaults for search budget and safety margin are the current
+production values (`300` and `200` ms); both are written explicitly above so a
+copied gate command remains an auditable snapshot of the tested service profile.
 
 The gate releases each request pair together, applies a 500 ms external socket
 deadline, and fails on a timeout/error/503 or when external/server-total p99
 reaches the deadline. Its `server_lifecycle` object records unexpected exit,
 final return code, and forced-kill status; any unhealthy lifecycle fails the
-gate. The 2026-07-15 local production-build result was 40/40
+gate. The 2026-07-15 local production-profile result was 40/40
 legal 200 responses, zero timeout/error/503, zero fallback, external p99
-`349.283 ms`, server queue p99 `0.300 ms`, handler p99 `348.780 ms`, and total
-p99 `348.997 ms`. The measured external safety margin was `150.717 ms`.
+`299.204 ms`, server queue p99 `0.230 ms`, handler p99 `298.665 ms`, and total
+p99 `298.817 ms`. The measured external deadline margin was `200.796 ms`.
 
 Do not increase the worker or queue settings automatically from one result.
 Raise capacity only after repeated representative load runs remain below the
@@ -110,10 +118,10 @@ Routing behavior:
   while the experimental native Standard FFA scorer remains parity-gated;
 - timeout/error fallback remains first-safe.
 
-Container-local health check:
+Service-local health check on the production host:
 
 ```bash
-curl -sS http://127.0.0.1:8000/
+curl -fsS http://127.0.0.1:8121/
 ```
 
 Expected response:
@@ -127,19 +135,28 @@ Expected response:
 SSH to the server:
 
 ```bash
-ssh ya.sergeiscv.ru
+ssh <production-user>@45.10.166.244
 ```
 
-Check the container:
+Do not assume a checkout or binary location. Inspect the current unit and its
+effective configuration first:
 
 ```bash
-docker ps --filter name=playing-battlesnake
-docker logs --tail=100 playing-battlesnake
+sudo systemctl cat playing-battlesnake.service
+sudo systemctl show playing-battlesnake.service \
+  --property=FragmentPath \
+  --property=WorkingDirectory \
+  --property=ExecStart \
+  --property=Environment
+sudo systemctl status playing-battlesnake.service
+sudo journalctl -u playing-battlesnake.service -n 100 --no-pager
 ```
 
-Check the public endpoint:
+Check both the native port and the nginx route. The first URL talks directly to
+the systemd service; the second goes through the public `/snake/` upstream.
 
 ```bash
+curl -fsS http://45.10.166.244:8121/
 curl -fsS https://ya.sergeiscv.ru/snake/
 ```
 
@@ -149,44 +166,57 @@ Expected response:
 {"apiversion":"1","author":"codex","color":"#2563eb","head":"default","tail":"default","version":"0.1.0-native"}
 ```
 
-## Rebuild Native Image
+## Update the Native systemd Service
 
-Build on `ya.sergeiscv.ru`.
-
-```bash
-cd ~/deploy/playing-battlesnake
-
-TAG=playing-battlesnake:native-$(date +%Y%m%d-%H%M%S)
-
-docker build -f battlesnake/Dockerfile -t "$TAG" .
-```
-
-## Restart Container
-
-Use the image tag produced by the build step.
+On `45.10.166.244`, derive the deployment path from the unit. Stop if
+`WorkingDirectory` is empty or `ExecStart` does not identify the expected
+native binary; inspect the unit's existing deployment procedure instead of
+inventing a path.
 
 ```bash
-docker rm -f playing-battlesnake
+WORKDIR=$(sudo systemctl show playing-battlesnake.service \
+  --property=WorkingDirectory --value)
+sudo systemctl show playing-battlesnake.service --property=ExecStart --value
+test -n "$WORKDIR"
+cd "$WORKDIR"
 
-docker run -d \
-  --name playing-battlesnake \
-  --restart unless-stopped \
-  -e BATTLESNAKE_PORT=8000 \
-  -e BATTLESNAKE_SEARCH_BUDGET_MS=400 \
-  -e BATTLESNAKE_WORKERS=2 \
-  -e BATTLESNAKE_QUEUE_CAPACITY=8 \
-  -p 0.0.0.0:8121:8000 \
-  "$TAG"
+git status --short
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+bash tools/build_native_server.sh
 ```
 
-## Verify Native Process
+Confirm that the resulting binary is the executable shown by `ExecStart`. If
+the unit points to a separately installed copy, use that host's established
+install step to update that exact path before restarting.
+
+Set the live service values with a systemd drop-in:
 
 ```bash
-pid=$(docker inspect -f '{{.State.Pid}}' playing-battlesnake)
-ps -o pid,comm,args -p "$pid"
+sudo systemctl edit playing-battlesnake.service
 ```
 
-Expected: command includes `/app/battlesnake-server`.
+```ini
+[Service]
+Environment=BATTLESNAKE_PORT=8121
+Environment=BATTLESNAKE_SEARCH_BUDGET_MS=300
+Environment=BATTLESNAKE_MOVE_SAFETY_MARGIN_MS=200
+Environment=BATTLESNAKE_WORKERS=2
+Environment=BATTLESNAKE_QUEUE_CAPACITY=8
+```
+
+Then restart and inspect the actual service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart playing-battlesnake.service
+sudo systemctl status playing-battlesnake.service
+sudo journalctl -u playing-battlesnake.service -n 100 --no-pager
+sudo systemctl show playing-battlesnake.service \
+  --property=ExecStart --property=Environment
+curl -fsS http://127.0.0.1:8121/
+```
 
 ## API Smoke Test
 
@@ -220,10 +250,11 @@ Standard FFA parity work is still gated.
 
 ## Ladder Observation
 
-After deploying a native image, watch at least the first ladder observation
+After deploying a native release, watch at least the first ladder observation
 window before considering the rollout healthy:
 
-- no `/move` timeout or error spikes in container logs;
+- no `/move` timeout or error spikes in
+  `journalctl -u playing-battlesnake.service`;
 - no unexpected first-safe fallback surge;
 - standard 3+ snake games return legal fallback moves under the configured
   Battlesnake timeout;
@@ -321,26 +352,26 @@ Behavior notes:
 
 ## Rollback
 
-List previous local images:
+Record a known-good commit before deployment. To roll back code, use the same
+`WorkingDirectory` and `ExecStart` discovered from the unit; do not substitute
+a guessed checkout or a retired container image.
 
 ```bash
-docker images 'playing-battlesnake'
+WORKDIR=$(sudo systemctl show playing-battlesnake.service \
+  --property=WorkingDirectory --value)
+test -n "$WORKDIR"
+cd "$WORKDIR"
+git checkout <known-good-commit>
+bash tools/build_native_server.sh
+
+# If ExecStart names a separately installed copy, repeat the host's established
+# install step for that exact path before restarting.
+sudo systemctl restart playing-battlesnake.service
+sudo systemctl status playing-battlesnake.service
+sudo journalctl -u playing-battlesnake.service -n 100 --no-pager
 ```
 
-Restart with a known-good tag:
-
-```bash
-docker rm -f playing-battlesnake
-
-docker run -d \
-  --name playing-battlesnake \
-  --restart unless-stopped \
-  -e BATTLESNAKE_PORT=8000 \
-  -e BATTLESNAKE_SEARCH_BUDGET_MS=400 \
-  -e BATTLESNAKE_WORKERS=2 \
-  -e BATTLESNAKE_QUEUE_CAPACITY=8 \
-  -p 0.0.0.0:8121:8000 \
-  playing-battlesnake:OLD_TAG
-```
-
-Then rerun the status checks and smoke test.
+If the rollback also requires earlier environment values, edit the existing
+drop-in with `sudo systemctl edit playing-battlesnake.service`, run
+`sudo systemctl daemon-reload`, and restart again. Then rerun the direct-port
+and public status checks plus both smoke tests.

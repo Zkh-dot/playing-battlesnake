@@ -375,7 +375,7 @@ def shutdown_server(process: Any, timeout_seconds: float = 5.0) -> dict[str, obj
 
 def run_benchmark(
     *, workers: int, queue_capacity: int, concurrency: int, batches: int,
-    deadline_ms: int, search_budget_ms: int,
+    deadline_ms: int, search_budget_ms: int, safety_margin_ms: int,
 ) -> dict[str, object]:
     subprocess.run(
         ["bash", "tools/build_native_server.sh"],
@@ -395,6 +395,7 @@ def run_benchmark(
                 "BATTLESNAKE_WORKERS": str(workers),
                 "BATTLESNAKE_QUEUE_CAPACITY": str(queue_capacity),
                 "BATTLESNAKE_SEARCH_BUDGET_MS": str(search_budget_ms),
+                "BATTLESNAKE_MOVE_SAFETY_MARGIN_MS": str(safety_margin_ms),
             },
             stdout=server_log,
             stderr=subprocess.STDOUT,
@@ -448,6 +449,7 @@ def run_benchmark(
             "batches": batches,
             "deadline_ms": deadline_ms,
             "search_budget_ms": search_budget_ms,
+            "safety_margin_ms": safety_margin_ms,
         },
         samples=samples,
         move_events=move_events,
@@ -469,7 +471,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--batches", type=int, default=20)
     parser.add_argument("--deadline-ms", type=int, default=500)
-    parser.add_argument("--search-budget-ms", type=int, default=400)
+    parser.add_argument("--search-budget-ms", type=int, default=300)
+    parser.add_argument("--safety-margin-ms", type=int, default=200)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     for option in (
@@ -480,6 +483,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--workers must be at most 64")
     if args.search_budget_ms > 65535:
         parser.error("--search-budget-ms must be at most 65535")
+    if args.safety_margin_ms < 0:
+        parser.error("--safety-margin-ms must be at least 0")
+    if args.safety_margin_ms > 65535:
+        parser.error("--safety-margin-ms must be at most 65535")
 
     result = run_benchmark(
         workers=args.workers,
@@ -488,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
         batches=args.batches,
         deadline_ms=args.deadline_ms,
         search_budget_ms=args.search_budget_ms,
+        safety_margin_ms=args.safety_margin_ms,
     )
     document = json.dumps(result, sort_keys=True, allow_nan=False)
     print(document)
