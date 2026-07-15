@@ -4,11 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
+import os
+import platform
 import random
+import resource
+import socket
+import subprocess
 import sys
-from dataclasses import asdict, dataclass
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +39,7 @@ class ScheduledMatch:
     pair: int
     scenario: Scenario
     after_side: int
+    first_profile: Agent
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,7 @@ class MatchResult:
     before_health: int
     after_health: int
     moves: tuple[MoveResult, ...]
+    first_profile: Agent = "before"
 
 
 def _clone_snake(source: Snake, snake_id: Agent) -> Snake:
@@ -107,8 +116,10 @@ def experiment_schedule(*, seed: int, scenario_count: int) -> list[ScheduledMatc
         scenario_seed = rng.getrandbits(64)
         scenario = _generated_standard_duel_scenario(scenario_seed, pair)
         first_after_side = rng.randrange(2)
-        for after_side in (first_after_side, 1 - first_after_side):
-            scheduled.append(ScheduledMatch(len(scheduled), pair, scenario, after_side))
+        first_profile: Agent = "after" if rng.randrange(2) else "before"
+        for index, after_side in enumerate((first_after_side, 1 - first_after_side)):
+            search_first: Agent = first_profile if index == 0 else ("before" if first_profile == "after" else "after")
+            scheduled.append(ScheduledMatch(len(scheduled), pair, scenario, after_side, search_first))
     return scheduled
 
 
@@ -185,6 +196,7 @@ def _winner(board: Board) -> Winner | None:
 
 
 def play_match(*, match_index: int, pair: int, scenario: Scenario, after_side: int,
+               first_profile: Agent,
                before_weights: dict[str, float], after_weights: dict[str, float],
                fixed_depth: int, time_budget_ms: int, max_turns: int) -> MatchResult:
     board = _build_match_board(scenario, after_side)
@@ -196,10 +208,20 @@ def play_match(*, match_index: int, pair: int, scenario: Scenario, after_side: i
         if result is not None:
             turns = turn
             break
-        before = _choose_move(board, "before", before_weights, turn=turn,
-                              physical_side=1 - after_side, fixed_depth=fixed_depth, time_budget_ms=time_budget_ms)
-        after = _choose_move(board, "after", after_weights, turn=turn,
-                             physical_side=after_side, fixed_depth=fixed_depth, time_budget_ms=time_budget_ms)
+        arguments = {
+            "before": (before_weights, 1 - after_side),
+            "after": (after_weights, after_side),
+        }
+        search_order = (first_profile, "after" if first_profile == "before" else "before")
+        selected: dict[str, MoveResult] = {}
+        for profile in search_order:
+            weights, physical_side = arguments[profile]
+            selected[profile] = _choose_move(
+                board, profile, weights, turn=turn, physical_side=physical_side,
+                fixed_depth=fixed_depth, time_budget_ms=time_budget_ms,
+            )
+        before = selected["before"]
+        after = selected["after"]
         moves.extend((before, after))
         board = board.clone_and_apply({"before": before.move, "after": after.move})
         turns = turn + 1
@@ -212,7 +234,7 @@ def play_match(*, match_index: int, pair: int, scenario: Scenario, after_side: i
     after_alive, after_length, after_health = _snake_status(board, "after")
     return MatchResult(match_index, pair, scenario.name, after_side, result, turns,
                        before_alive, after_alive, before_length, after_length,
-                       before_health, after_health, tuple(moves))
+                       before_health, after_health, tuple(moves), first_profile)
 
 
 def percentile(values: list[float], quantile: float) -> float:
@@ -241,13 +263,57 @@ def _wilson_interval(successes: int, total: int) -> list[float]:
     return [max(0.0, center - margin), min(1.0, center + margin)]
 
 
-def summarize(results: list[MatchResult]) -> dict[str, object]:
-    pairs: dict[int, list[MatchResult]] = {}
-    for result in results:
-        pairs.setdefault(result.pair, []).append(result)
+MATCH_FIELDS = (
+    "match", "pair", "scenario", "after_side", "first_profile", "winner", "turns",
+    "before_alive", "after_alive", "before_length", "after_length",
+    "before_health", "after_health",
+)
+EVENT_FIELDS = ("match", "turn", "physical_side", "move")
+
+
+def _event(row: MatchResult, move: MoveResult, detail: str | None = None) -> list[object]:
+    event: list[object] = [row.match, move.turn, move.physical_side, move.move]
+    if detail is not None:
+        event.append(detail)
+    return event
+
+
+def compact_evidence(results: list[MatchResult]) -> dict[str, object]:
+    measurements: dict[str, dict[str, object]] = {}
+    for profile in ("before", "after"):
+        moves = [move for row in results for move in row.moves if move.profile == profile]
+        measurements[profile] = {
+            "latency_ms": sorted(float(move.elapsed_ms) for move in moves if move.elapsed_ms is not None),
+            "timeouts": [_event(row, move) for row in results for move in row.moves if move.profile == profile and move.timed_out],
+            "search_errors": [_event(row, move, move.error) for row in results for move in row.moves if move.profile == profile and move.error is not None],
+            "audit_errors": [_event(row, move, move.audit_error) for row in results for move in row.moves if move.profile == profile and move.audit_error is not None],
+            "structural_risks": [_event(row, move) for row in results for move in row.moves if move.profile == profile and move.structural_risk],
+            "policy_violations": [_event(row, move) for row in results for move in row.moves if move.profile == profile and move.policy_violation],
+        }
+    return {
+        "match_fields": list(MATCH_FIELDS),
+        "event_fields": list(EVENT_FIELDS),
+        "error_event_fields": [*EVENT_FIELDS, "error"],
+        "matches": [[getattr(row, field) for field in MATCH_FIELDS] for row in results],
+        "measurements": measurements,
+    }
+
+
+def _decoded_matches(raw: dict[str, object]) -> list[dict[str, object]]:
+    fields = raw["match_fields"]
+    if fields != list(MATCH_FIELDS):
+        raise ValueError("unexpected compact match fields")
+    return [dict(zip(fields, values, strict=True)) for values in raw["matches"]]
+
+
+def summarize_compact(raw: dict[str, object]) -> dict[str, object]:
+    matches = _decoded_matches(raw)
+    pairs: dict[int, list[dict[str, object]]] = {}
+    for result in matches:
+        pairs.setdefault(int(result["pair"]), []).append(result)
     paired = {"after_sweeps": 0, "before_sweeps": 0, "split_pairs": 0, "pairs_with_draw": 0}
     for pair_results in pairs.values():
-        winners = [row.winner for row in pair_results]
+        winners = [row["winner"] for row in pair_results]
         if "draw" in winners or len(winners) != 2:
             paired["pairs_with_draw"] += 1
         elif winners == ["after", "after"]:
@@ -259,36 +325,38 @@ def summarize(results: list[MatchResult]) -> dict[str, object]:
 
     profiles: dict[str, object] = {}
     for profile in ("before", "after"):
-        latencies = [move.elapsed_ms for row in results for move in row.moves
-                     if move.profile == profile and move.elapsed_ms is not None]
-        alive = [row.before_alive if profile == "before" else row.after_alive for row in results]
-        moves = [move for row in results for move in row.moves if move.profile == profile]
-        lengths = [row.before_length if profile == "before" else row.after_length for row in results]
+        measured = raw["measurements"][profile]
+        latencies = [float(value) for value in measured["latency_ms"]]
+        alive_field = f"{profile}_alive"
+        length_field = f"{profile}_length"
         profiles[profile] = {
-            "games": len(results),
-            "wins": sum(row.winner == profile for row in results),
-            "losses": sum(row.winner not in {profile, "draw"} for row in results),
-            "draws": sum(row.winner == "draw" for row in results),
-            "turns_survived_total": sum(row.turns for row in results),
-            "turns_survived_mean": sum(row.turns for row in results) / len(results) if results else 0.0,
-            "terminal_survivals": sum(row.winner == profile and keep for row, keep in zip(results, alive)),
-            "alive_at_cap": sum(row.winner == "draw" and keep for row, keep in zip(results, alive)),
-            "alive_at_cap_rate": sum(row.winner == "draw" and keep for row, keep in zip(results, alive)) / len(results) if results else 0.0,
-            "final_length_total": sum(lengths),
-            "move_count": len(moves),
-            "search_errors": sum(move.error is not None for move in moves),
-            "audit_errors": sum(move.audit_error is not None for move in moves),
-            "search_timeouts": sum(move.timed_out for move in moves),
-            "structural_risk_selections": sum(move.structural_risk for move in moves),
-            "policy_violations": sum(move.policy_violation for move in moves),
-            "physical_side_games": {str(side): sum((row.after_side if profile == "after" else 1 - row.after_side) == side for row in results) for side in (0, 1)},
+            "games": len(matches),
+            "wins": sum(row["winner"] == profile for row in matches),
+            "losses": sum(row["winner"] not in {profile, "draw"} for row in matches),
+            "draws": sum(row["winner"] == "draw" for row in matches),
+            "terminal_survivals": sum(row["winner"] == profile and row[alive_field] for row in matches),
+            "alive_at_cap": sum(row["winner"] == "draw" and row[alive_field] for row in matches),
+            "alive_at_cap_rate": sum(row["winner"] == "draw" and row[alive_field] for row in matches) / len(matches) if matches else 0.0,
+            "final_length_total": sum(int(row[length_field]) for row in matches),
+            "move_count": len(latencies) + len(measured["search_errors"]),
+            "search_errors": len(measured["search_errors"]),
+            "audit_errors": len(measured["audit_errors"]),
+            "search_timeouts": len(measured["timeouts"]),
+            "structural_risk_selections": len(measured["structural_risks"]),
+            "policy_violations": len(measured["policy_violations"]),
+            "physical_side_games": {str(side): sum((row["after_side"] if profile == "after" else 1 - int(row["after_side"])) == side for row in matches) for side in (0, 1)},
             "latency_ms": {"source": "native minimax_diagnostics.elapsed_ms", "semantics": "nearest-rank",
                            "p50": percentile(latencies, .50), "p95": percentile(latencies, .95),
                            "p99": percentile(latencies, .99), "max": max(latencies, default=0.0)},
         }
     decisive = paired["after_sweeps"] + paired["before_sweeps"]
     return {
-        "matches": len(results), "pairs": len(pairs), "paired_outcomes": paired,
+        "matches": len(matches), "pairs": len(pairs),
+        "shared_match_duration": {
+            "turns_total": sum(int(row["turns"]) for row in matches),
+            "turns_mean": sum(int(row["turns"]) for row in matches) / len(matches) if matches else 0.0,
+        },
+        "paired_outcomes": paired,
         "paired_uncertainty": {
             "method": "exact two-sided sign test on decisive non-split pairs",
             "unit": "paired scenario sweep; split and draw-containing pairs excluded",
@@ -301,8 +369,72 @@ def summarize(results: list[MatchResult]) -> dict[str, object]:
     }
 
 
+def summarize(results: list[MatchResult]) -> dict[str, object]:
+    return summarize_compact(compact_evidence(results))
+
+
+def _format_number_array(values: list[float], *, per_line: int = 12) -> str:
+    if not values:
+        return "[]"
+    lines = []
+    for offset in range(0, len(values), per_line):
+        chunk = ", ".join(json.dumps(value, allow_nan=False) for value in values[offset:offset + per_line])
+        lines.append("        " + chunk)
+    return "[\n" + ",\n".join(lines) + "\n      ]"
+
+
+def write_compact_json(path: Path, payload: dict[str, object]) -> None:
+    shadow = copy.deepcopy(payload)
+    markers = {}
+    for profile in ("before", "after"):
+        marker = f"__{profile}_latency_samples__"
+        values = shadow["raw"]["measurements"][profile]["latency_ms"]
+        markers[marker] = _format_number_array(values)
+        shadow["raw"]["measurements"][profile]["latency_ms"] = marker
+    serialized = json.dumps(shadow, indent=2, sort_keys=True, allow_nan=False)
+    for marker, replacement in markers.items():
+        serialized = serialized.replace(json.dumps(marker), replacement)
+    path.write_text(serialized + "\n")
+
+
 def write_markdown(path: Path, summary: dict[str, object]) -> None:
     path.write_text("# Generated duel weight comparison\n\n```json\n" + json.dumps(summary, indent=2, sort_keys=True) + "\n```\n")
+
+
+def _experiment_environment() -> dict[str, object]:
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=REPO_ROOT, text=True,
+        capture_output=True, check=True,
+    ).stdout
+    if status:
+        raise RuntimeError("experiment must start from a clean git worktree")
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True,
+    ).strip()
+    cpu_model = "unknown"
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                cpu_model = line.split(":", 1)[1].strip()
+                break
+    except OSError:
+        pass
+    try:
+        compiler = subprocess.check_output(
+            ["x86_64-linux-gnu-gcc", "--version"], text=True,
+        ).splitlines()[0]
+    except (OSError, subprocess.SubprocessError):
+        compiler = "unknown"
+    return {
+        "experiment_input_commit": commit,
+        "host": socket.gethostname(),
+        "kernel": platform.release(),
+        "architecture": platform.machine(),
+        "cpu": cpu_model,
+        "logical_cpus": os.cpu_count(),
+        "python": platform.python_version(),
+        "compiler": compiler,
+    }
 
 
 def main() -> int:
@@ -317,26 +449,32 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--markdown-output", type=Path, required=True)
     args = parser.parse_args()
+    environment = _experiment_environment()
+    started = time.perf_counter()
     before_profile = load_profile(args.before_weights)
     after_profile = load_profile(args.after_weights)
     schedule = experiment_schedule(seed=args.seed, scenario_count=args.scenario_count)
     results = [play_match(match_index=row.match, pair=row.pair, scenario=row.scenario,
-                          after_side=row.after_side, before_weights=dict(before_profile.weights),
+                          after_side=row.after_side, first_profile=row.first_profile,
+                          before_weights=dict(before_profile.weights),
                           after_weights=dict(after_profile.weights), fixed_depth=args.fixed_depth,
                           time_budget_ms=args.time_budget_ms, max_turns=args.max_turns) for row in schedule]
     summary = summarize(results)
+    environment["wall_seconds"] = time.perf_counter() - started
+    environment["max_rss_kb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "settings": {"seed": args.seed, "scenario_count": args.scenario_count,
                      "fixed_depth": args.fixed_depth, "time_budget_ms": args.time_budget_ms,
                      "max_turns": args.max_turns, "paired_games_per_scenario": 2},
         "profiles": {"before": {"identifier": f"{before_profile.name}@{before_profile.version}", "sha256": before_profile.sha256},
                      "after": {"identifier": f"{after_profile.name}@{after_profile.version}", "sha256": after_profile.sha256}},
+        "environment": environment,
         "summary": summary,
-        "results": [asdict(result) for result in results],
+        "raw": compact_evidence(results),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    write_compact_json(args.output, payload)
     write_markdown(args.markdown_output, summary)
     print(json.dumps(summary, sort_keys=True))
     return 1 if any(

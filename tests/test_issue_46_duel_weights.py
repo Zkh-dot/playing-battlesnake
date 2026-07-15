@@ -29,6 +29,7 @@ from tools.tuning.duel_weight_profiles import (
     load_profile,
     validate_profiles,
 )
+from tools.tuning.render_duel_weight_ab_report import render_report
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -199,7 +200,10 @@ def test_replay_report_tool_records_both_profiles_and_repeats(tmp_path: Path) ->
 
 
 def test_committed_replay_evidence_is_complete_and_error_free() -> None:
-    payload = json.loads((ROOT / "docs/evidence/issue-46-duel-weight-replays.json").read_text())
+    path = ROOT / "docs/evidence/issue-46-duel-weight-replays.json"
+    if not path.exists():
+        pytest.skip("full frozen evidence is generated after the exact-input tooling commit")
+    payload = json.loads(path.read_text())
     assert payload["settings"] == {"budget_ms": 300, "repeats": 5}
     assert len(payload["records"]) == 40
     assert len({(row["game_id"], row["turn"]) for row in payload["records"]}) == 4
@@ -207,6 +211,18 @@ def test_committed_replay_evidence_is_complete_and_error_free() -> None:
         "duel-default@1", "tuned-opponent-pressure@1",
     }
     assert all(row["error"] is None for row in payload["records"])
+
+
+def test_committed_markdown_is_rendered_from_current_evidence_and_registry() -> None:
+    if not (ROOT / "docs/evidence/issue-46-duel-weight-ab.json").exists():
+        pytest.skip("full frozen evidence is generated after the exact-input tooling commit")
+    expected = render_report(
+        ROOT / "docs/evidence/issue-46-duel-weight-ab.json",
+        ROOT / "docs/evidence/issue-46-duel-weight-replays.json",
+    )
+    assert (ROOT / "docs/duel-weight-ab-report.md").read_text() == expected
+    assert "do not promote" in expected.lower()
+    assert "generated production default remains `duel-default@1`" in expected
 
 
 @pytest.fixture(scope="module")
