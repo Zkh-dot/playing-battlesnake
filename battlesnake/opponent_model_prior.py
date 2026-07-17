@@ -14,7 +14,7 @@ from battlesnake.strategies.standard_gates import MOVE_ORDER
 
 DEFAULT_MODEL_PATH = Path("ai-artifacts/opponent-model/gbdt_lightgbm.joblib.gz")
 DEFAULT_EPSILON = 0.12
-DEFAULT_TIMEOUT_MS = 20.0
+DEFAULT_TIMEOUT_MS = 40.0
 
 MODEL_FEATURE_COLUMNS = [
     "feature_candidate_move",
@@ -106,7 +106,8 @@ class LightGBMOpponentPrior:
 
     def preload(self) -> bool:
         try:
-            _load_model(self.model_path)
+            model = _load_model(self.model_path)
+            _positive_probabilities(model, _warmup_rows())
         except Exception:
             self.last_status = "preload_error"
             return False
@@ -123,9 +124,22 @@ class LightGBMOpponentPrior:
         fallback: dict[str, list[tuple[str, float]]],
     ) -> dict[str, list[tuple[str, float]]]:
         priors: dict[str, list[tuple[str, float]]] = {}
+        row_blocks: list[tuple[str, list[tuple[str, float]], list[dict[str, Any]]]] = []
+        all_rows: list[dict[str, Any]] = []
         for opponent_id, uniform_moves in fallback.items():
             rows = _model_rows(board, opponent_id, turn=turn)
-            positive = _positive_probabilities(model, rows)
+            row_blocks.append((opponent_id, uniform_moves, rows))
+            all_rows.extend(rows)
+
+        positive_values = _positive_probability_values(model, all_rows)
+        offset = 0
+        for opponent_id, uniform_moves, rows in row_blocks:
+            row_positive_values = positive_values[offset : offset + len(rows)]
+            offset += len(rows)
+            positive = {
+                str(row["feature_candidate_move"]): probability
+                for row, probability in zip(rows, row_positive_values)
+            }
             safe_moves = [move for move, _probability in uniform_moves]
             model_scores = {move: positive.get(move, 0.0) for move in safe_moves}
             total = sum(model_scores.values())
@@ -164,6 +178,16 @@ def _model_rows(board: Board, snake_id: str, *, turn: int) -> list[dict[str, Any
 
 
 def _positive_probabilities(model: Any, rows: list[dict[str, Any]]) -> dict[str, float]:
+    probabilities = _positive_probability_values(model, rows)
+    return {
+        str(row["feature_candidate_move"]): probability
+        for row, probability in zip(rows, probabilities)
+    }
+
+
+def _positive_probability_values(model: Any, rows: list[dict[str, Any]]) -> list[float]:
+    if not rows:
+        return []
     import numpy as np
     import pandas as pd
 
@@ -182,10 +206,30 @@ def _positive_probabilities(model: Any, rows: list[dict[str, Any]]) -> dict[str,
     if len(class_matches) != 1:
         raise ValueError("opponent model classes_ must contain exactly one positive class 1")
     probabilities = model.predict_proba(frame[MODEL_FEATURE_COLUMNS])[:, int(class_matches[0])]
-    return {
-        str(move): float(probability)
-        for move, probability in zip(moves, probabilities)
-    }
+    return [float(probability) for probability in probabilities]
+
+
+def _warmup_rows() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for move in MOVES:
+        row = {column: 0.0 for column in MODEL_FEATURE_COLUMNS}
+        row.update(
+            {
+                "feature_candidate_move": move,
+                "board_width": 7.0,
+                "board_height": 7.0,
+                "alive_snakes": 3.0,
+                "snake_health": 100.0,
+                "snake_length": 3.0,
+                "safe_moves_count": 4.0,
+                "candidate_is_safe": 1.0,
+                "candidate_in_bounds": 1.0,
+                "candidate_center_distance": 3.0,
+                "candidate_reachable_space": 20.0,
+            }
+        )
+        rows.append(row)
+    return rows
 
 
 def _feature_column_name(name: str) -> str:

@@ -6,6 +6,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 import battlesnake.decision_telemetry as decision_telemetry
 import battlesnake.main as main_module
 from battlesnake.battlesnake_native import Board, Coord, Snake
@@ -82,6 +84,40 @@ def test_move_endpoint_writes_decision_jsonl(tmp_path: Path, monkeypatch) -> Non
     assert rows[0]["game_id"] == "game-telemetry"
     assert rows[0]["candidates"]
     assert rows[0]["fallback_used"] is False
+
+
+def test_standard_v1_real_artifact_move_uses_model_prior(tmp_path: Path, monkeypatch) -> None:
+    if sys.version_info < (3, 11):
+        pytest.skip("committed LightGBM artifact requires the Python 3.11 ML runtime")
+    pytest.importorskip("joblib")
+    pytest.importorskip("lightgbm")
+    pytest.importorskip("pandas")
+    pytest.importorskip("sklearn")
+
+    from battlesnake.opponent_model_prior import DEFAULT_MODEL_PATH, _load_model
+
+    if not DEFAULT_MODEL_PATH.exists():
+        pytest.skip(f"missing committed opponent model artifact: {DEFAULT_MODEL_PATH}")
+    if hasattr(_load_model, "cache_clear"):
+        _load_model.cache_clear()
+
+    log_path = tmp_path / "real-artifact-decisions.jsonl"
+    monkeypatch.setenv("STANDARD_DECISION_LOG", str(log_path))
+    monkeypatch.setenv("STANDARD_DECISION_TELEMETRY", "1")
+    monkeypatch.setenv("STRATEGY_VARIANT", "standard-v1")
+    monkeypatch.delenv("STANDARD_OPPONENT_PRIOR_TIMEOUT_MS", raising=False)
+    monkeypatch.setattr(main_module, "_standard_prior_preload_attempted", False)
+
+    response = move(GameState.model_validate(payload(game_id="real-artifact-prior", turn=7)))
+    flush()
+
+    rows = [json.loads(line) for line in log_path.read_text().splitlines()]
+    prior_status = rows[0]["opponent_prior_status"]
+    assert response["move"] in {"up", "down", "left", "right"}
+    assert rows[0]["fallback_used"] is False
+    assert rows[0]["candidates"]
+    assert prior_status["source"] == "model"
+    assert prior_status["status"] == "model"
 
 
 def test_telemetry_can_be_disabled(tmp_path: Path, monkeypatch) -> None:

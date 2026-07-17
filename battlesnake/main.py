@@ -58,13 +58,38 @@ DEFAULT_SEARCH_BUDGET_MS = 400
 # snake variants register here; duel/royale/constrictor routing is unaffected.
 def _standard_v1_strategy() -> Strategy:
     theta_path = Path(__file__).resolve().parent.parent / "configs" / "evaluation_weights" / "standard-ffa-v1-tuned.json"
-    return StrategyStandard(theta=json.loads(theta_path.read_text(encoding="utf-8")))
+    return StrategyStandard(theta=json.loads(theta_path.read_text(encoding="utf-8")), opponent_prior="model")
 
 
 STANDARD_VARIANTS: dict[str, Callable[[], Strategy]] = {
     "first-safe": StrategyFirstSafe,
     "standard-v1": _standard_v1_strategy,
 }
+
+_standard_prior_preload_attempted = False
+
+
+def _standard_prior_preload_enabled() -> bool:
+    if os.environ.get("STANDARD_OPPONENT_MODEL_PRELOAD", "1").strip().lower() in {"0", "false", "no"}:
+        return False
+    return True
+
+
+def _ensure_standard_prior_preloaded() -> None:
+    global _standard_prior_preload_attempted
+    if _standard_prior_preload_attempted or not _standard_prior_preload_enabled():
+        return
+    _standard_prior_preload_attempted = True
+    strategy = _standard_v1_strategy()
+    model_prior = getattr(strategy, "_model_prior", None)
+    if model_prior is not None and not model_prior.preload():
+        logger.warning("standard-v1 opponent model preload failed; moves will use uniform-safe fallback")
+
+
+def _preload_configured_standard_prior() -> None:
+    if os.environ.get("STRATEGY_VARIANT", DEFAULT_STRATEGY_VARIANT).strip() == "standard-v1":
+        _ensure_standard_prior_preloaded()
+
 
 _decide_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="decide")
 
@@ -90,6 +115,7 @@ def _detect_git_revision() -> str:
 
 
 GIT_REVISION = _detect_git_revision()
+_preload_configured_standard_prior()
 
 
 def strategy_variant() -> str:
@@ -125,6 +151,8 @@ def select_strategy(state: GameState) -> Strategy:
         return StrategyDuel(time_budget_ms=effective_search_budget_ms(state.game.timeout))
 
     variant = strategy_variant()
+    if variant == "standard-v1":
+        _ensure_standard_prior_preloaded()
     factory = STANDARD_VARIANTS.get(variant)
     if factory is None:
         logger.warning("unknown STRATEGY_VARIANT %r, using %r", variant, DEFAULT_STRATEGY_VARIANT)
